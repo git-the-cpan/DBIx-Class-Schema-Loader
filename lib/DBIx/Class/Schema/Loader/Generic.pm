@@ -6,6 +6,7 @@ use base qw/Class::Accessor::Fast/;
 use Class::C3;
 use Carp;
 use Lingua::EN::Inflect;
+use UNIVERSAL::require;
 require DBIx::Class::Core;
 
 # The first group are all arguments which are may be defaulted within,
@@ -22,6 +23,8 @@ __PACKAGE__->mk_ro_accessors(qw/
                                 additional_classes
                                 additional_base_classes
                                 left_base_classes
+                                components
+                                resultset_components
                                 relationships
                                 inflect
                                 db_schema
@@ -60,6 +63,18 @@ List of additional base classes, that need to be leftmost.
 =head2 additional_classes
 
 List of additional classes which your table classes will use.
+
+=head2 components
+
+List of additional components to be loaded into your table classes.
+A good example would be C<ResultSetManager>.
+
+=head2 resultset_components
+
+List of additional resultset components to be loaded into your table
+classes.  A good example would be C<AlwaysRS>.  Component
+C<ResultSetManager> will be automatically added to the above
+C<components> list if this option is set.
 
 =head2 constraint
 
@@ -129,7 +144,12 @@ sub new {
     $self->{inflect}    ||= {};
     $self->_ensure_arrayref(qw/additional_classes
                                additional_base_classes
-                               left_base_classes/);
+                               left_base_classes
+                               components
+                               resultset_components/);
+
+    push(@{$self->{components}}, 'ResultSetManager')
+        if @{$self->{resultset_components}};
 
     $self->{monikers} = {};
     $self->{classes} = {};
@@ -224,8 +244,8 @@ sub _make_cond_rel {
     my $rev_cond = { reverse %$cond };
 
     for (keys %$rev_cond) {
-	$rev_cond->{"foreign.$_"} = "self.".$rev_cond->{$_};
-	delete $rev_cond->{$_};
+        $rev_cond->{"foreign.$_"} = "self.".$rev_cond->{$_};
+        delete $rev_cond->{$_};
     }
 
     my $cond_printable = _stringify_hash($cond)
@@ -298,10 +318,14 @@ sub _load_classes {
         my $table_moniker = $self->_table2moniker($db_schema, $tbl);
         my $table_class = $schema . q{::} . $table_moniker;
 
-        $self->_inject($table_class, 'DBIx::Class::Core');
-        $self->_inject($table_class, @db_classes);
-        $self->_inject($table_class, @{$self->additional_base_classes});
+        { no strict 'refs';
+          @{"${table_class}::ISA"} = ($schema);
+        }
         $self->_use   ($table_class, @{$self->additional_classes});
+        $self->_inject($table_class, @{$self->additional_base_classes});
+        $table_class->load_components(@{$self->components}, @db_classes, 'Core');
+        $table_class->load_resultset_components(@{$self->resultset_components})
+            if @{$self->resultset_components};
         $self->_inject($table_class, @{$self->left_base_classes});
 
         warn qq/\# Initializing table "$tablename" as "$table_class"\n/
@@ -319,6 +343,15 @@ sub _load_classes {
         my $primaries = join "', '", @$pks;
         warn qq/$table_class->set_primary_key('$primaries')\n/
             if $self->debug && @$pks;
+
+        $table_class->require;
+        if($@ && $@ !~ /^Can't locate /) {
+            croak "Failed to load external class definition"
+                  . "for '$table_class': $@";
+        }
+
+        warn qq/# Loaded external class definition for '$table_class'\n/
+            if $self->debug;
 
         $schema->register_class($table_moniker, $table_class);
         $self->classes->{$lc_tblname} = $table_class;

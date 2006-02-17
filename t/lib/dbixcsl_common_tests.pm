@@ -37,11 +37,11 @@ sub skip_tests {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 42;
+    plan tests => 49;
 
     $self->create();
 
-    my $schema_class = 'DBIXCSL_Test_' . $self->{vendor} . '::Schema';
+    my $schema_class = 'DBIXCSL_Test::Schema';
 
     my $debug = ($self->{verbose} > 1) ? 1 : 0;
 
@@ -54,6 +54,8 @@ sub run_tests {
         additional_classes      => 'TestAdditional',
         additional_base_classes => 'TestAdditionalBase',
         left_base_classes       => [ qw/TestLeftBase/ ],
+        components              => [ qw/TestComponent/ ],
+        resultset_components    => [ qw/TestRSComponent/ ],
         debug                   => $debug,
     );
 
@@ -83,18 +85,65 @@ sub run_tests {
     isa_ok( $rsobj1, "DBIx::Class::ResultSet" );
     isa_ok( $rsobj2, "DBIx::Class::ResultSet" );
 
-    can_ok( $class1, 'test_additional_base' );
-    can_ok( $class1, 'test_additional_base_override' );
-    can_ok( $class1, 'test_additional_base_additional' );
+    {
+        my ($skip_tab, $skip_tabo, $skip_taba, $skip_cmeth,
+            $skip_rsmeth, $skip_tcomp, $skip_trscomp);
 
-    is( $class1->test_additional_base, "test_additional_base",
-        "Additional Base method" );
+        can_ok( $class1, 'test_additional_base' ) or $skip_tab = 1;
+        can_ok( $class1, 'test_additional_base_override' ) or $skip_tabo = 1;
+        can_ok( $class1, 'test_additional_base_additional' ) or $skip_taba = 1;
+        can_ok( $class1, 'dbix_class_testcomponent' ) or $skip_tcomp = 1;
+        can_ok( $rsobj1, 'dbix_class_testrscomponent' ) or $skip_trscomp = 1;
+        can_ok( $class1, 'loader_test1_classmeth' ) or $skip_cmeth = 1;
 
-    is( $class1->test_additional_base_override, "test_left_base_override",
-        "Left Base overrides Additional Base method" );
+	TODO: {
+	    local $TODO = "Not yet supported by ResultSetManger code";
+            can_ok( $rsobj1, 'loader_test1_rsmeth' ) or $skip_rsmeth = 1;
+	}
 
-    is( $class1->test_additional_base_additional, "test_additional",
-        "Additional Base can use Additional package method" );
+        SKIP: {
+            skip "Pre-requisite test failed", 1 if $skip_tab;
+            is( $class1->test_additional_base, "test_additional_base",
+                "Additional Base method" );
+        }
+
+        SKIP: {
+            skip "Pre-requisite test failed", 1 if $skip_tabo;
+            is( $class1->test_additional_base_override,
+                "test_left_base_override",
+                "Left Base overrides Additional Base method" );
+        }
+
+        SKIP: {
+            skip "Pre-requisite test failed", 1 if $skip_taba;
+            is( $class1->test_additional_base_additional, "test_additional",
+                "Additional Base can use Additional package method" );
+        }
+
+        SKIP: {
+            skip "Pre-requisite test failed", 1 if $skip_tcomp;
+            is( $class1->dbix_class_testcomponent,
+                'dbix_class_testcomponent works' );
+        }
+
+        SKIP: {
+            skip "Pre-requisite test failed", 1 if $skip_trscomp;
+            is( $rsobj1->dbix_class_testrscomponent,
+                'dbix_class_testrscomponent works' );
+        }
+
+        SKIP: {
+            skip "Pre-requisite test failed", 1 if $skip_cmeth;
+            is( $class1->loader_test1_classmeth, 'all is well' );
+        }
+
+        # XXX put this back in when the TODO above works...
+        #SKIP: {
+        #    skip "Pre-requisite test failed", 1 if $skip_rsmeth;
+        #    is( $rsobj1->loader_test1_rsmeth, 'all is still well' );
+        #}
+    }
+
 
     my $obj    = $rsobj1->find(1);
     is( $obj->id,  1 );
@@ -147,9 +196,9 @@ sub run_tests {
         my $obj4 = $rsobj4->find(123);
         isa_ok( $obj4->fkid, $class3);
 
-	my $obj3 = $rsobj3->find(1);
-	my $rs_rel4 = $obj3->search_related('loader_test4s');
-	isa_ok( $rs_rel4->first, $class4);
+        my $obj3 = $rsobj3->find(1);
+        my $rs_rel4 = $obj3->search_related('loader_test4s');
+        isa_ok( $rs_rel4->first, $class4);
 
         # fk def in comments should not be parsed
         my $obj5 = $rsobj5->find( id1 => 1, id2 => 1 );
