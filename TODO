@@ -12,5 +12,3 @@ Relationship stuff:
    Check NULLability of columns involved in the relationship, which might suggest a more optimal non-default -join-type?
    While scanning for many-to-many, scan for implied rels as well? (if foo->belongs_to('bar') and baz->belongs_to('bar'), does that impliy foo->might_have('baz') and the reverse?)
 ...
-
-monikermap argument, hashref or coderef
