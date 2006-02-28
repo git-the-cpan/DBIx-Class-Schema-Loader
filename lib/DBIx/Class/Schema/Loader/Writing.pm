@@ -16,8 +16,13 @@ DBIx::Class::Schema::Loader::Writing - Loader subclass writing guide
 
   use strict;
   use warnings;
-  use base 'DBIx::Class::Schema::Loader::Base';
+  use base 'DBIx::Class::Schema::Loader::Generic';
   use Class::C3;
+
+  sub _db_classes {
+      return qw/PK::Auto::Foo/;
+          # You may want to return more, or less, than this.
+  }
 
   sub _tables {
       my $self = shift;

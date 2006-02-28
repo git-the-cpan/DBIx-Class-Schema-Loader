@@ -1,38 +1,38 @@
-package DBIx::Class::Schema::Loader::DBI::DB2;
+package DBIx::Class::Schema::Loader::DB2;
 
 use strict;
 use warnings;
-use base 'DBIx::Class::Schema::Loader::DBI';
+use base 'DBIx::Class::Schema::Loader::Generic';
 use Class::C3;
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::DBI::DB2 - DBIx::Class::Schema::Loader DB2 Implementation.
+DBIx::Class::Schema::Loader::DB2 - DBIx::Class::Schema::Loader DB2 Implementation.
 
 =head1 SYNOPSIS
 
   package My::Schema;
   use base qw/DBIx::Class::Schema::Loader/;
 
-  __PACKAGE_->connection(
+  __PACKAGE__->load_from_connection(
     dsn         => "dbi:DB2:dbname",
     user        => "myuser",
     password    => "",
-  );
-
-  __PACKAGE__->load_from_connection(
-    relationships => 1,
-    db_schema     => "MYSCHEMA",
-    drop_schema   => 1,
+    db_schema   => "MYSCHEMA",
+    drop_schema => 1,
   );
 
   1;
 
 =head1 DESCRIPTION
 
-See L<DBIx::Class::Schema::Loader::Base>.
+See L<DBIx::Class::Schema::Loader>.
 
 =cut
+
+sub _db_classes {
+    return qw/PK::Auto::DB2/;
+}
 
 sub _tables {
     my $self = shift;

@@ -1,11 +1,11 @@
-package DBIx::Class::Schema::Loader::Base;
+package DBIx::Class::Schema::Loader::Generic;
 
 use strict;
 use warnings;
 use base qw/Class::Accessor::Fast/;
 use Class::C3;
 use Carp;
-use Lingua::EN::Inflect::Number ();
+use Lingua::EN::Inflect;
 use UNIVERSAL::require;
 require DBIx::Class;
 
@@ -14,6 +14,7 @@ require DBIx::Class;
 
 __PACKAGE__->mk_ro_accessors(qw/
                                 schema
+                                connect_info
                                 exclude
                                 constraint
                                 additional_classes
@@ -34,7 +35,7 @@ __PACKAGE__->mk_ro_accessors(qw/
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::Base - Base DBIx::Class::Schema::Loader Implementation.
+DBIx::Class::Schema::Loader::Generic - Generic DBIx::Class::Schema::Loader Implementation.
 
 =head1 SYNOPSIS
 
@@ -48,6 +49,16 @@ classes, and implements the common functionality between them.
 =head1 OPTIONS
 
 Available constructor options are:
+
+=head2 connect_info
+
+Identical to the connect_info arguments to C<connect> and C<connection>
+that are mentioned in L<DBIx::Class::Schema>.
+
+An arrayref of connection information.  For DBI-based Schemas,
+this takes the form:
+
+  connect_info => [ $dsn, $user, $pass, { AutoCommit => 1 } ],
 
 =head2 additional_base_classes
 
@@ -109,28 +120,31 @@ Deprecated.  Equivalent to L</inflect_map>, but previously only took
 a hashref argument, not a coderef.  If you set C<inflect> to anything,
 that setting will be copied to L</inflect_map>.
 
-=head2 connect_info
-
-DEPRECATED, just use C<__PACKAGE__->connection()> instead, like you would
-with any other L<DBIx::Class::Schema> (see those docs for details).
-Similarly, if you wish to use a non-default storage_type, use
-C<__PACKAGE__->storage_type()>.
-
 =head2 dsn
 
-DEPRECATED, see above...
+DEPRECATED, use L</connect_info> instead.
+
+DBI Data Source Name.
 
 =head2 user
 
-DEPRECATED, see above...
+DEPRECATED, use L</connect_info> instead.
+
+Username.
 
 =head2 password
 
-DEPRECATED, see above...
+DEPRECATED, use L</connect_info> instead.
+
+Password.
 
 =head2 options
 
-DEPRECATED, see above...
+DEPRECATED, use L</connect_info> instead.
+
+DBI connection options hashref, like:
+
+  { AutoCommit => 1 }
 
 =head1 METHODS
 
@@ -150,7 +164,7 @@ sub _ensure_arrayref {
 
 =head2 new
 
-Constructor for L<DBIx::Class::Schema::Loader::Base>, used internally
+Constructor for L<DBIx::Class::Schema::Loader::Generic>, used internally
 by L<DBIx::Class::Schema::Loader>.
 
 =cut
@@ -169,7 +183,7 @@ sub new {
                                left_base_classes
                                components
                                resultset_components
-                              /);
+                               connect_info/);
 
     push(@{$self->{components}}, 'ResultSetManager')
         if @{$self->{resultset_components}};
@@ -179,6 +193,13 @@ sub new {
 
     # Support deprecated argument name
     $self->{inflect_map} ||= $self->{inflect};
+
+    # Support deprecated connect_info args, even mixed
+    #  with a valid partially-filled connect_info
+    $self->{connect_info}->[0] ||= $self->{dsn};
+    $self->{connect_info}->[1] ||= $self->{user};
+    $self->{connect_info}->[2] ||= $self->{password};
+    $self->{connect_info}->[3] ||= $self->{options};
 
     $self;
 }
@@ -193,19 +214,40 @@ L<DBIx::Class::Schema::Loader> right after object construction.
 sub load {
     my $self = shift;
 
+    $self->schema->connection(@{$self->connect_info});
+
     warn qq/\### START DBIx::Class::Schema::Loader dump ###\n/
         if $self->debug;
 
     $self->_load_classes;
     $self->_load_relationships if $self->relationships;
+    $self->_load_external;
 
     warn qq/\### END DBIx::Class::Schema::Loader dump ###\n/
         if $self->debug;
-
     $self->schema->storage->disconnect;
 
     $self;
 }
+
+sub _load_external {
+    my $self = shift;
+
+    foreach my $table_class (values %{$self->classes}) {
+        $table_class->require;
+        if($@ && $@ !~ /^Can't locate /) {
+            croak "Failed to load external class definition"
+                  . "for '$table_class': $@";
+        }
+        elsif(!$@) {
+            warn qq/# Loaded external class definition for '$table_class'\n/
+                if $self->debug;
+        }
+    }
+}
+
+# Overload in your driver class
+sub _db_classes { croak "ABSTRACT METHOD" }
 
 # Inflect a relationship name
 sub _inflect_relname {
@@ -220,7 +262,7 @@ sub _inflect_relname {
         return $inflected if $inflected;
     }
 
-    return Lingua::EN::Inflect::Number::to_PL($relname);
+    return Lingua::EN::Inflect::PL($relname);
 }
 
 # Set up a simple relation with just a local col and foreign table
@@ -326,6 +368,7 @@ sub _load_classes {
     my $self = shift;
 
     my @tables     = $self->_tables();
+    my @db_classes = $self->_db_classes();
     my $schema     = $self->schema;
 
     foreach my $table (@tables) {
@@ -350,7 +393,7 @@ sub _load_classes {
         }
         $self->_use   ($table_class, @{$self->additional_classes});
         $self->_inject($table_class, @{$self->additional_base_classes});
-        $table_class->load_components(@{$self->components}, qw/PK::Auto Core/);
+        $table_class->load_components(@{$self->components}, @db_classes, 'Core');
         $table_class->load_resultset_components(@{$self->resultset_components})
             if @{$self->resultset_components};
         $self->_inject($table_class, @{$self->left_base_classes});
@@ -371,16 +414,6 @@ sub _load_classes {
         warn qq/$table_class->set_primary_key('$primaries')\n/
             if $self->debug && @$pks;
 
-        $table_class->require;
-        if($@ && $@ !~ /^Can't locate /) {
-            croak "Failed to load external class definition"
-                  . "for '$table_class': $@";
-        }
-        elsif(!$@) {
-            warn qq/# Loaded external class definition for '$table_class'\n/
-                if $self->debug;
-        }
-
         $schema->register_class($table_moniker, $table_class);
         $self->classes->{$lc_tblname} = $table_class;
         $self->monikers->{$lc_tblname} = $table_moniker;
@@ -400,6 +433,40 @@ sub tables {
     my $self = shift;
 
     return sort keys %{ $self->monikers };
+}
+
+# Find and setup relationships
+sub _load_relationships {
+    my $self = shift;
+
+    my $dbh = $self->schema->storage->dbh;
+    my $quoter = $dbh->get_info(29) || q{"};
+    foreach my $table ( $self->tables ) {
+        my $rels = {};
+        my $sth = $dbh->foreign_key_info( '',
+            $self->db_schema, '', '', '', $table );
+        next if !$sth;
+        while(my $raw_rel = $sth->fetchrow_hashref) {
+            my $uk_tbl  = lc $raw_rel->{UK_TABLE_NAME};
+            my $uk_col  = lc $raw_rel->{UK_COLUMN_NAME};
+            my $fk_col  = lc $raw_rel->{FK_COLUMN_NAME};
+            my $relid   = lc $raw_rel->{UK_NAME};
+            $uk_tbl =~ s/$quoter//g;
+            $uk_col =~ s/$quoter//g;
+            $fk_col =~ s/$quoter//g;
+            $relid  =~ s/$quoter//g;
+            $rels->{$relid}->{tbl} = $uk_tbl;
+            $rels->{$relid}->{cols}->{$uk_col} = $fk_col;
+        }
+
+        foreach my $relid (keys %$rels) {
+            my $reltbl = $rels->{$relid}->{tbl};
+            my $cond   = $rels->{$relid}->{cols};
+            eval { $self->_make_cond_rel( $table, $reltbl, $cond ) };
+              warn qq/\# belongs_to_many failed "$@"\n\n/
+                if $@ && $self->debug;
+        }
+    }
 }
 
 # Make a moniker from a table
@@ -433,8 +500,8 @@ sub _table2moniker {
 
 # Overload in driver class
 sub _tables { croak "ABSTRACT METHOD" }
+
 sub _table_info { croak "ABSTRACT METHOD" }
-sub _load_relationships { croak "ABSTRACT METHOD" }
 
 =head2 monikers
 

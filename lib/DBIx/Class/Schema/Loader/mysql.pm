@@ -1,36 +1,36 @@
-package DBIx::Class::Schema::Loader::DBI::mysql;
+package DBIx::Class::Schema::Loader::mysql;
 
 use strict;
 use warnings;
-use base 'DBIx::Class::Schema::Loader::DBI';
+use base 'DBIx::Class::Schema::Loader::Generic';
 use Class::C3;
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::DBI::mysql - DBIx::Schema::Class::Loader mysql Implementation.
+DBIx::Class::Schema::Loader::mysql - DBIx::Schema::Class::Loader mysql Implementation.
 
 =head1 SYNOPSIS
 
   package My::Schema;
   use base qw/DBIx::Class::Schema::Loader/;
 
-  __PACKAGE__->connection(
+  __PACKAGE__->load_from_connection(
     dsn       => "dbi:mysql:dbname",
     user      => "root",
     password  => "",
-  );
-
-  __PACKAGE__->load_from_connection(
-    relationships => 1,
   );
 
   1;
 
 =head1 DESCRIPTION
 
-See L<DBIx::Class::Schema::Loader::Base>.
+See L<DBIx::Class::Schema::Loader>.
 
 =cut
+
+sub _db_classes {
+    return qw/PK::Auto::MySQL/;
+}
 
 sub _load_relationships {
     my $self   = shift;
