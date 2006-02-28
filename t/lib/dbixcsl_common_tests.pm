@@ -51,9 +51,8 @@ sub run_tests {
 
     my $debug = ($self->{verbose} > 1) ? 1 : 0;
 
+    my @connect_info = ( $self->{dsn}, $self->{user}, $self->{password} );
     my %loader_opts = (
-        connect_info            => [ $self->{dsn}, $self->{user},
-                                     $self->{password} ],
         constraint              => '^(?:\S+\.)?(?i:loader_test)[0-9]+$',
         relationships           => 1,
         additional_classes      => 'TestAdditional',
@@ -73,11 +72,12 @@ sub run_tests {
         package $schema_class;
         use base qw/DBIx::Class::Schema::Loader/;
 
+        __PACKAGE__->connection(\@connect_info);
         __PACKAGE__->load_from_connection(\%loader_opts);
     };
     ok(!$@, "Loader initialization") or diag $@;
 
-    my $conn = $schema_class->connect($self->{dsn},$self->{user},$self->{password});
+    my $conn = $schema_class->clone;
     my $monikers = $schema_class->loader->monikers;
     my $classes = $schema_class->loader->classes;
 

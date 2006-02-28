@@ -10,7 +10,7 @@ use UNIVERSAL::require;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.02004';
+our $VERSION = '0.02999_01';
 
 __PACKAGE__->mk_classaccessor('loader');
 
@@ -29,22 +29,24 @@ DBIx::Class::Schema::Loader - Dynamic definition of a DBIx::Class::Schema
       $name;
   }
 
+  # __PACKAGE__->storage_type('::DBI'); # <- this is the default anyways
+  __PACKAGE__->connection(
+    "dbi:mysql:dbname",
+    "root",
+    "mypassword",
+    { AutoCommit => 1 },
+  );
+
   __PACKAGE__->load_from_connection(
-    connect_info            => [ "dbi:mysql:dbname",
-                                 "root",
-                                 "mypassword",
-                                 { AutoCommit => 1 },
-                               ],
+    relationships           => 1,
+    constraint              => '^foo.*',
+    inflect_map             => { child => 'children' },
+    moniker_map             => \&_monikerize,
     additional_classes      => [qw/DBIx::Class::Foo/],
     additional_base_classes => [qw/My::Stuff/],
     left_base_classes       => [qw/DBIx::Class::Bar/],
     components              => [qw/ResultSetManager/],
     resultset_components    => [qw/AlwaysRS/],
-    constraint              => '^foo.*',
-    relationships           => 1,
-    options                 => { AutoCommit => 1 }, 
-    inflect_map             => { child => 'children' },
-    moniker_map             => \&_monikerize,
     debug                   => 1,
   );
 
@@ -79,7 +81,7 @@ DBIx::Class::Schema by scanning table schemas and setting up
 columns and primary keys.
 
 DBIx::Class::Schema::Loader supports MySQL, Postgres, SQLite and DB2.  See
-L<DBIx::Class::Schema::Loader::Generic> for more, and
+L<DBIx::Class::Schema::Loader::Base> for more, and
 L<DBIx::Class::Schema::Loader::Writing> for notes on writing your own
 db-specific subclass for an unsupported db.
 
@@ -108,35 +110,18 @@ the road.
 
 Example in Synopsis above demonstrates the available arguments.  For
 detailed information on the arguments, see the
-L<DBIx::Class::Schema::Loader::Generic> documentation.
+L<DBIx::Class::Schema::Loader::Base> documentation.
 
 =cut
 
-# XXX this is DBI-specific, as it peers into the dsn to determine
-# the vendor class to use...
 sub load_from_connection {
     my ( $class, %args ) = @_;
 
-    my $dsn;
-
-    if($args{connect_info} && $args{connect_info}->[0]) {
-        $dsn = $args{connect_info}->[0];
-    }
-    elsif($args{dsn}) {
-        warn "dsn argument is deprecated, please use connect_info instead";
-        $dsn = $args{dsn};
-    }
-    else {
-        croak 'connect_info arrayref argument with valid '
-              . 'first element is required';
-    }
-
-    my ($driver) = $dsn =~ m/^dbi:(\w*?)(?:\((.*?)\))?:/i;
-    $driver = 'SQLite' if $driver eq 'SQLite2';
-    my $impl = "DBIx::Class::Schema::Loader::" . $driver;
+    # XXX this only works for relative storage_type, like ::DBI ...
+    my $impl = "DBIx::Class::Schema::Loader" . $class->storage_type;
 
     $impl->require or
-      croak qq/Couldn't require loader class "$impl",/ .
+      croak qq/Could not load storage_type loader "$impl": / .
             qq/"$UNIVERSAL::require::ERROR"/;
 
     $args{schema} = $class;
@@ -148,9 +133,9 @@ sub load_from_connection {
 =head2 loader
 
 This is an accessor in the generated Schema class for accessing
-the L<DBIx::Class::Schema::Loader::Generic> -based loader object
+the L<DBIx::Class::Schema::Loader::Base> -based loader object
 that was used during construction.  See the
-L<DBIx::Class::Schema::Loader::Generic> docs for more information
+L<DBIx::Class::Schema::Loader::Base> docs for more information
 on the available loader methods there.
 
 =head1 KNOWN BUGS
@@ -172,7 +157,8 @@ Based upon the work of IKEBE Tomohiro
 =head1 THANK YOU
 
 Adam Anderson, Andy Grundman, Autrijus Tang, Dan Kubb, David Naughton,
-Randal Schwartz, Simon Flack and all the others who've helped.
+Randal Schwartz, Simon Flack, Matt S Trout, everyone on #dbix-class, and
+all the others who've helped.
 
 =head1 LICENSE
 

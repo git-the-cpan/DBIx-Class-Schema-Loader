@@ -1,35 +1,30 @@
-package DBIx::Class::Schema::Loader::SQLite;
+package DBIx::Class::Schema::Loader::DBI::SQLite;
 
 use strict;
 use warnings;
-use base qw/DBIx::Class::Schema::Loader::Generic/;
+use base qw/DBIx::Class::Schema::Loader::DBI/;
 use Class::C3;
 use Text::Balanced qw( extract_bracketed );
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::SQLite - DBIx::Class::Schema::Loader SQLite Implementation.
+DBIx::Class::Schema::Loader::DBI::SQLite - DBIx::Class::Schema::Loader SQLite Implementation.
 
 =head1 SYNOPSIS
 
   package My::Schema;
   use base qw/DBIx::Class::Schema::Loader/;
 
-  __PACKAGE__->load_from_connection(
-    dsn       => "dbi:SQLite:dbname=/path/to/dbfile",
-  );
+  __PACKAGE__->connection("dbi:SQLite:dbname=/path/to/dbfile");
+  __PACKAGE__->load_from_connection( relationships => 1 );
 
   1;
 
 =head1 DESCRIPTION
 
-See L<DBIx::Class::Schema::Loader>.
+See L<DBIx::Class::Schema::Loader::Base>.
 
 =cut
-
-sub _db_classes {
-    return qw/PK::Auto::SQLite/;
-}
 
 # XXX this really needs a re-factor
 sub _load_relationships {
