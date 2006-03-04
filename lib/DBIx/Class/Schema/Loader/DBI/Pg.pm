@@ -1,23 +1,27 @@
-package DBIx::Class::Schema::Loader::Pg;
+package DBIx::Class::Schema::Loader::DBI::Pg;
 
 use strict;
 use warnings;
+use base 'DBIx::Class::Schema::Loader::DBI';
 use Class::C3;
-use base 'DBIx::Class::Schema::Loader::Generic';
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::Pg - DBIx::Class::Schema::Loader Postgres Implementation.
+DBIx::Class::Schema::Loader::DBI::Pg - DBIx::Class::Schema::Loader Postgres Implementation.
 
 =head1 SYNOPSIS
 
   package My::Schema;
   use base qw/DBIx::Class::Schema::Loader/;
 
-  __PACKAGE__->load_from_connection(
+  __PACKAGE__->connection(
     dsn       => "dbi:Pg:dbname=dbname",
     user      => "postgres",
     password  => "",
+  );
+
+  __PACKAGE__->load_from_connection(
+    relationships => 1,
   );
 
   1;
@@ -28,24 +32,19 @@ See L<DBIx::Class::Schema::Loader>.
 
 =head1 METHODS
 
-=head2 new
+=head2 load
 
-Overrides L<DBIx::Class::Schema::Loader::Generic>'s C<new()> to default the postgres
+Overlays L<DBIx::Class::Schema::Loader::Base>'s C<load()> to default the postgres
 schema to C<public> rather than blank.
 
 =cut
 
-sub new {
-    my ($class, %args) = @_;
+sub load {
+    my $self = shift;
 
-    my $self = $class->next::method(%args);
     $self->{db_schema} ||= 'public';
 
-    $self;
-}
-
-sub _db_classes {
-    return qw/PK::Auto::Pg/;
+    $self->next::method(@_);
 }
 
 sub _tables {

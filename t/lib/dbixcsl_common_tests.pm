@@ -43,7 +43,7 @@ sub _monikerize {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 50;
+    plan tests => 54;
 
     $self->create();
 
@@ -51,9 +51,8 @@ sub run_tests {
 
     my $debug = ($self->{verbose} > 1) ? 1 : 0;
 
+    my @connect_info = ( $self->{dsn}, $self->{user}, $self->{password} );
     my %loader_opts = (
-        connect_info            => [ $self->{dsn}, $self->{user},
-                                     $self->{password} ],
         constraint              => '^(?:\S+\.)?(?i:loader_test)[0-9]+$',
         relationships           => 1,
         additional_classes      => 'TestAdditional',
@@ -73,11 +72,12 @@ sub run_tests {
         package $schema_class;
         use base qw/DBIx::Class::Schema::Loader/;
 
+        __PACKAGE__->connection(\@connect_info);
         __PACKAGE__->load_from_connection(\%loader_opts);
     };
     ok(!$@, "Loader initialization") or diag $@;
 
-    my $conn = $schema_class->connect($self->{dsn},$self->{user},$self->{password});
+    my $conn = $schema_class->clone;
     my $monikers = $schema_class->loader->monikers;
     my $classes = $schema_class->loader->classes;
 
@@ -158,6 +158,17 @@ sub run_tests {
     is( $obj->id,  1 );
     is( $obj->dat, "foo" );
     is( $rsobj2->count, 4 );
+    my $saved_id;
+    eval {
+        my $new_obj1 = $rsobj1->create({ dat => 'newthing' });
+	$saved_id = $new_obj1->id;
+    };
+    ok(!$@) or diag "Died during create new record using a PK::Auto key: $@";
+    ok($saved_id) or diag "Failed to get PK::Auto-generated id";
+
+    my $new_obj1 = $rsobj1->search({ dat => 'newthing' })->first;
+    ok($new_obj1) or diag "Cannot find newly inserted PK::Auto record";
+    is($new_obj1->id, $saved_id);
 
     my ($obj2) = $rsobj2->find( dat => 'bbb' );
     is( $obj2->id, 2 );

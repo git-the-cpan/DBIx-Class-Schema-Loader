@@ -1,12 +1,13 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
-0.02005 Mon Feb 27 23:53:17 UTC 2006
-        - Move the external file loading to after everything else
-	  loader does, in case people want to define, override, or
-	  build on top of the rels.
+0.02999_02 Sat Mar  4 16:53:21 UTC 2006
+        - Merged in relevant changes from trunk since the split
 
-0.02004 Mon Feb 27 23:53:17 UTC 2006
-        - Minor fix to debugging message for loading external files
+0.02999_01 Sun Feb 28 00:24:00 UTC 2006
+        - Shuffle the modules around
+        - Make ourselves theoretically storage_type-agnostic
+        - Remove the _db_classes stuff, bump PK::Auto to Base
+        - Change default inflections to Lingua::EN::Inflect::Number::to_PL()
 
 0.02003 Sun Feb 19 20:42:01 UTC 2006
         - Deprecated arguments: dsn, user, password, options
