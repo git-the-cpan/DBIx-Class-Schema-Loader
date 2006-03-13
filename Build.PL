@@ -1,14 +1,11 @@
 use strict;
 use Module::Build;
 
-# XXX
-warn "---- Requires branches/DBIx-Class-current installed ----";
-
 my %arguments = (
     license            => 'perl',
     module_name        => 'DBIx::Class::Schema::Loader',
     requires           => {
-        'DBIx::Class'                   => 0.06, # XXX or whatever -current becomes with the PK::Auto change
+        'DBIx::Class'                   => 0.05999_02,
         'UNIVERSAL::require'            => 0.10,
         'Lingua::EN::Inflect::Number'   => 1.1,
         'Text::Balanced'                => 0,

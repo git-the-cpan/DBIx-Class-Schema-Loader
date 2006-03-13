@@ -23,7 +23,6 @@ DBIx::Class::Schema::Loader::DBI::DB2 - DBIx::Class::Schema::Loader DB2 Implemen
   __PACKAGE__->load_from_connection(
     relationships => 1,
     db_schema     => "MYSCHEMA",
-    drop_schema   => 1,
   );
 
   1;
@@ -34,98 +33,55 @@ See L<DBIx::Class::Schema::Loader::Base>.
 
 =cut
 
-sub _tables {
+sub _setup {
     my $self = shift;
-    my %args = @_; 
-    my $db_schema = uc $self->db_schema;
-    my $dbh = $self->schema->storage->dbh;
-    my $quoter = $dbh->get_info(29) || q{"};
 
-    # this is split out to avoid version parsing errors...
-    my $is_dbd_db2_gte_114 = ( $DBD::DB2::VERSION >= 1.14 );
-    my @tables = $is_dbd_db2_gte_114 ? 
-    $dbh->tables( { TABLE_SCHEM => '%', TABLE_TYPE => 'TABLE,VIEW' } )
-        : $dbh->tables;
-    # People who use table or schema names that aren't identifiers deserve
-    # what they get.  Still, FIXME?
-    s/$quoter//g for @tables;
-    @tables = grep {!/^SYSIBM\./ and !/^SYSCAT\./ and !/^SYSSTAT\./} @tables;
-    @tables = grep {/^$db_schema\./} @tables if($db_schema);
-    return @tables;
+    $self->next::method(@_);
+    $self->{_column_info_broken} = 1;
 }
 
-sub _table_info {
+# DB2 wants the table name in uppercase, but
+#   otherwise the standard methods work for these
+#   two methods
+sub _table_pk_info {
     my ( $self, $table ) = @_;
-#    $|=1;
-#    print "_table_info($table)\n";
-    my ($db_schema, $tabname) = split /\./, $table, 2;
-    # print "DB_Schema: $db_schema, Table: $tabname\n";
-    
-    # FIXME: Horribly inefficient and just plain evil. (JMM)
-    my $dbh = $self->schema->storage->dbh;
-    $dbh->{RaiseError} = 1;
-
-    my $sth = $dbh->prepare(<<'SQL') or die;
-SELECT c.COLNAME
-FROM SYSCAT.COLUMNS as c
-WHERE c.TABSCHEMA = ? and c.TABNAME = ?
-SQL
-
-    $sth->execute($db_schema, $tabname) or die;
-    my @cols = map { lc } map { @$_ } @{$sth->fetchall_arrayref};
-
-    undef $sth;
-
-    $sth = $dbh->prepare(<<'SQL') or die;
-SELECT kcu.COLNAME
-FROM SYSCAT.TABCONST as tc
-JOIN SYSCAT.KEYCOLUSE as kcu ON tc.constname = kcu.constname
-WHERE tc.TABSCHEMA = ? and tc.TABNAME = ? and tc.TYPE = 'P'
-SQL
-
-    $sth->execute($db_schema, $tabname) or die;
-
-    my @pri = map { lc } map { @$_ } @{$sth->fetchall_arrayref};
-
-    return ( \@cols, \@pri );
+    $self->next::method(uc $table);
 }
 
-# Find and setup relationships
-sub _load_relationships {
-    my $self = shift;
+sub _table_fk_info {
+    my ($self, $table) = @_;
+    $self->next::method(uc $table);
+}
+
+sub _table_uniq_info {
+    my ($self, $table) = @_;
+
+    my @uniqs;
 
     my $dbh = $self->schema->storage->dbh;
 
     my $sth = $dbh->prepare(<<'SQL') or die;
-SELECT SR.COLCOUNT, SR.REFTBNAME, SR.PKCOLNAMES, SR.FKCOLNAMES
-FROM SYSIBM.SYSRELS SR WHERE SR.TBNAME = ?
+SELECT kcu.COLNAME, kcu.CONSTNAME, kcu.COLSEQ
+FROM SYSCAT.TABCONST as tc
+JOIN SYSCAT.KEYCOLUSE as kcu ON tc.CONSTNAME = kcu.CONSTNAME
+WHERE tc.TABSCHEMA = ? and tc.TABNAME = ? and tc.TYPE = 'U'
 SQL
 
-    foreach my $table ( $self->tables ) {
-        next if ! $sth->execute(uc $table);
-        while(my $res = $sth->fetchrow_arrayref()) {
-            my ($colcount, $other, $other_column, $column) =
-                map { lc } @$res;
+    $sth->execute($self->db_schema, uc $table) or die;
 
-            my @self_cols = split(' ',$column);
-            my @other_cols = split(' ',$other_column);
-            if(@self_cols != $colcount || @other_cols != $colcount) {
-                die "Column count discrepancy while getting rel info";
-            }
-
-            my %cond;
-            for(my $i = 0; $i < @self_cols; $i++) {
-                $cond{$other_cols[$i]} = $self_cols[$i];
-            }
-
-            eval { $self->_make_cond_rel ($table, $other, \%cond); };
-            warn qq/\# belongs_to_many failed "$@"\n\n/
-              if $@ && $self->debug;
-        }
+    my %keydata;
+    while(my $row = $sth->fetchrow_arrayref) {
+        my ($col, $constname, $seq) = map { lc } @$row;
+        push(@{$keydata{$constname}}, [ $seq, $col ]);
     }
-
+    foreach my $keyname (keys %keydata) {
+        my @ordered_cols = map { $_->[1] } sort { $a->[0] <=> $b->[0] }
+            @{$keydata{$keyname}};
+        push(@uniqs, { $keyname => \@ordered_cols });
+    }
     $sth->finish;
-    $dbh->disconnect;
+    
+    return \@uniqs;
 }
 
 =head1 SEE ALSO

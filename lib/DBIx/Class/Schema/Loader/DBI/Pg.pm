@@ -39,44 +39,45 @@ schema to C<public> rather than blank.
 
 =cut
 
-sub load {
+sub _setup {
     my $self = shift;
-
-    $self->{db_schema} ||= 'public';
 
     $self->next::method(@_);
+    $self->{db_schema} ||= 'public';
 }
 
-sub _tables {
-    my $self = shift;
+sub _table_uniq_info {
+    my ($self, $table) = @_;
+
+    my @uniqs;
     my $dbh = $self->schema->storage->dbh;
-    my $quoter = $dbh->get_info(29) || q{"};
 
-    # This is split out to avoid version parsing errors...
-    my $is_dbd_pg_gte_131 = ( $DBD::Pg::VERSION >= 1.31 );
-    my @tables = $is_dbd_pg_gte_131
-        ?  $dbh->tables( undef, $self->db_schema, "",
-                         "table", { noprefix => 1, pg_noprefix => 1 } )
-        : $dbh->tables;
+    my $sth = $dbh->prepare_cached(
+        qq{SELECT conname,indexdef FROM pg_indexes JOIN pg_constraint }
+      . qq{ON (pg_indexes.indexname = pg_constraint.conname) }
+      . qq{WHERE schemaname=? and tablename=? and contype = 'u'}
+    ,{}, 1);
 
-    s/$quoter//g for @tables;
-    return @tables;
-}
+    $sth->execute($self->db_schema, $table);
+    while(my $constr = $sth->fetchrow_arrayref) {
+        my $constr_name = $constr->[0];
+        my $constr_def  = $constr->[1];
+        my @cols;
+        if($constr_def =~ /\(\s*([^)]+)\)\s*$/) {
+            my $cols_text = $1;
+            $cols_text =~ s/\s+$//;
+            @cols = split(/\s*,\s*/, $cols_text);
+            s/\Q$self->{_quoter}\E// for @cols;
+        }
+        if(!@cols) {
+            warn "Failed to parse unique constraint $constr_name on $table";
+        }
+        else {
+            push(@uniqs, { $constr_name => \@cols });
+        }
+    }
 
-sub _table_info {
-    my ( $self, $table ) = @_;
-    my $dbh = $self->schema->storage->dbh;
-    my $quoter = $dbh->get_info(29) || q{"};
-
-    my $sth = $dbh->column_info(undef, $self->db_schema, $table, undef);
-    my @cols = map { $_->[3] } @{ $sth->fetchall_arrayref };
-    s/$quoter//g for @cols;
-    
-    my @primary = $dbh->primary_key(undef, $self->db_schema, $table);
-
-    s/$quoter//g for @primary;
-
-    return ( \@cols, \@primary );
+    return \@uniqs;
 }
 
 =head1 SEE ALSO

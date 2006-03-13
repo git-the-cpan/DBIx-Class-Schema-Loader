@@ -43,7 +43,7 @@ sub _monikerize {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 54;
+    plan tests => 58;
 
     $self->create();
 
@@ -66,16 +66,23 @@ sub run_tests {
     );
 
     $loader_opts{db_schema} = $self->{db_schema} if $self->{db_schema};
-    $loader_opts{drop_db_schema} = $self->{drop_db_schema} if $self->{drop_db_schema};
 
-    eval qq{
-        package $schema_class;
-        use base qw/DBIx::Class::Schema::Loader/;
-
-        __PACKAGE__->connection(\@connect_info);
-        __PACKAGE__->load_from_connection(\%loader_opts);
-    };
-    ok(!$@, "Loader initialization") or diag $@;
+    {
+       my @loader_warnings;
+       local $SIG{__WARN__} = sub { push(@loader_warnings, $_[0]); };
+        eval qq{
+            package $schema_class;
+            use base qw/DBIx::Class::Schema::Loader/;
+    
+            __PACKAGE__->connection(\@connect_info);
+            __PACKAGE__->load_from_connection(\%loader_opts);
+        };
+        ok(!$@, "Loader initialization") or diag $@;
+        is(scalar(@loader_warnings), 1)
+          or diag "Did not get the expected 1 warning.  Warnings are: "
+            . join('',@loader_warnings);
+        like($loader_warnings[0], qr/loader_test9 has no primary key/);
+    }
 
     my $conn = $schema_class->clone;
     my $monikers = $schema_class->loader->monikers;
@@ -91,6 +98,30 @@ sub run_tests {
 
     isa_ok( $rsobj1, "DBIx::Class::ResultSet" );
     isa_ok( $rsobj2, "DBIx::Class::ResultSet" );
+
+    my %uniq1 = $class1->unique_constraints;
+    my $uniq1_test = 0;
+    foreach my $ucname (keys %uniq1) {
+        my $cols_arrayref = $uniq1{$ucname};
+        if(@$cols_arrayref == 1 && $cols_arrayref->[0] eq 'dat') {
+           $uniq1_test = 1;
+           last;
+        }
+    }
+    ok($uniq1_test) or diag "Unique constraints not working";
+
+    my %uniq2 = $class2->unique_constraints;
+    my $uniq2_test = 0;
+    foreach my $ucname (keys %uniq2) {
+        my $cols_arrayref = $uniq2{$ucname};
+        if(@$cols_arrayref == 2
+           && $cols_arrayref->[0] eq 'dat'
+           && $cols_arrayref->[1] eq 'dat2') {
+            $uniq2_test = 2;
+            last;
+        }
+    }
+    ok($uniq2_test) or diag "Multi-col unique constraints not working";
 
     is($moniker2, 'LoaderTest2X', "moniker_map testing");
 
@@ -161,7 +192,7 @@ sub run_tests {
     my $saved_id;
     eval {
         my $new_obj1 = $rsobj1->create({ dat => 'newthing' });
-	$saved_id = $new_obj1->id;
+        $saved_id = $new_obj1->id;
     };
     ok(!$@) or diag "Died during create new record using a PK::Auto key: $@";
     ok($saved_id) or diag "Failed to get PK::Auto-generated id";
@@ -220,9 +251,9 @@ sub run_tests {
         my $rs_rel4 = $obj3->search_related('loader_test4zes');
         isa_ok( $rs_rel4->first, $class4);
 
-        # fk def in comments should not be parsed
+        # find on multi-col pk
         my $obj5 = $rsobj5->find( id1 => 1, id2 => 1 );
-        is( ref( $obj5->id2 ), '' );
+        is( $obj5->id2, 1 );
 
         # mulit-col fk def
         my $obj6 = $rsobj6->find(1);
@@ -347,7 +378,7 @@ sub create {
         qq{
             CREATE TABLE loader_test1 (
                 id $self->{auto_inc_pk},
-                dat VARCHAR(32)
+                dat VARCHAR(32) NOT NULL UNIQUE
             ) $self->{innodb}
         },
 
@@ -358,14 +389,16 @@ sub create {
         qq{ 
             CREATE TABLE loader_test2 (
                 id $self->{auto_inc_pk},
-                dat VARCHAR(32)
+                dat VARCHAR(32) NOT NULL,
+                dat2 VARCHAR(32) NOT NULL,
+                UNIQUE (dat, dat2)
             ) $self->{innodb}
         },
 
-        q{ INSERT INTO loader_test2 (dat) VALUES('aaa') }, 
-        q{ INSERT INTO loader_test2 (dat) VALUES('bbb') }, 
-        q{ INSERT INTO loader_test2 (dat) VALUES('ccc') }, 
-        q{ INSERT INTO loader_test2 (dat) VALUES('ddd') }, 
+        q{ INSERT INTO loader_test2 (dat, dat2) VALUES('aaa', 'zzz') }, 
+        q{ INSERT INTO loader_test2 (dat, dat2) VALUES('bbb', 'yyy') }, 
+        q{ INSERT INTO loader_test2 (dat, dat2) VALUES('ccc', 'xxx') }, 
+        q{ INSERT INTO loader_test2 (dat, dat2) VALUES('ddd', 'www') }, 
     );
 
     my @statements_reltests = (
@@ -398,7 +431,7 @@ sub create {
         qq{
             CREATE TABLE loader_test5 (
                 id1 INTEGER NOT NULL,
-                id2 INTEGER NOT NULL, -- , id2 INTEGER REFERENCES loader_test1,
+                id2 INTEGER NOT NULL,
                 dat VARCHAR(8),
                 PRIMARY KEY (id1,id2)
             ) $self->{innodb}
@@ -519,8 +552,6 @@ sub create {
 
     $self->drop_tables;
 
-    $self->{created} = 1;
-
     my $dbh = $self->dbconnect(1);
 
     # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
@@ -534,9 +565,6 @@ sub create {
         # hack for now, since DB2 doesn't like inline comments, and we need
         # to test one for mysql, which works on everyone else...
         # this all needs to be refactored anyways.
-        if($self->{vendor} =~ /DB2/i) {
-            @statements_reltests = map { s/--.*\n//; $_ } @statements_reltests;
-        }
         $dbh->do($_) for (@statements_reltests);
         unless($self->{vendor} =~ /sqlite/i) {
             $dbh->do($_) for (@statements_advanced);
@@ -553,8 +581,6 @@ sub create {
 
 sub drop_tables {
     my $self = shift;
-
-    return unless $self->{created};
 
     my @tables = qw/
         loader_test1

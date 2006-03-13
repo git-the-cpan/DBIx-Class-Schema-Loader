@@ -105,6 +105,25 @@ KNOWN BUGS
     between the same pair of tables. All of the relationship code will be
     overhauled on the way to 0.03, at which time that bug will be addressed.
 
+EXAMPLE
+    Using the example in DBIx::Class::Manual::ExampleSchema as a basis
+    replace the DB::Main with the following code:
+
+      package DB::Main;
+
+      use base qw/DBIx::Class::Schema::Loader/;
+
+      __PACKAGE__->connection('dbi:SQLite:example.db');
+      __PACKAGE__->load_from_connection(
+          relationships => 1,
+          debug         => 1,
+      );
+
+      1;
+
+    and remove the Main directory tree (optional). Every thing else should
+    work the same
+
 AUTHOR
     Brandon Black, "blblack@gmail.com"
 
@@ -122,5 +141,5 @@ LICENSE
     under the same terms as Perl itself.
 
 SEE ALSO
-    DBIx::Class
+    DBIx::Class, DBIx::Class::Manual::ExampleSchema
 

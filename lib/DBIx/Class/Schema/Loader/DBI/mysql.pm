@@ -32,74 +32,83 @@ See L<DBIx::Class::Schema::Loader::Base>.
 
 =cut
 
-sub _load_relationships {
-    my $self   = shift;
-    my @tables = $self->tables;
+sub _table_fk_info {
+    my ($self, $table) = @_;
+
     my $dbh    = $self->schema->storage->dbh;
 
-    my $quoter = $dbh->get_info(29) || q{`};
-
-    foreach my $table (@tables) {
-        my $query = "SHOW CREATE TABLE ${table}";
-        my $sth   = $dbh->prepare($query)
-          or die("Cannot get table definition: $table");
-        $sth->execute;
-        my $table_def = $sth->fetchrow_arrayref->[1] || '';
-        
-        my (@reldata) = ($table_def =~ /CONSTRAINT `.*` FOREIGN KEY \(`(.*)`\) REFERENCES `(.*)` \(`(.*)`\)/ig);
-
-        while (scalar @reldata > 0) {
-            my $cols = shift @reldata;
-            my $f_table = shift @reldata;
-            my $f_cols = shift @reldata;
-
-            my @cols = map { s/$quoter//; $_ } split(/\s*,\s*/,$cols);
-            my @f_cols = map { s/$quoter//; $_ } split(/\s*,\s*/,$f_cols);
-            die "Mismatched column count in rel for $table => $f_table"
-              if @cols != @f_cols;
-            
-            my $cond = {};
-            for(my $i = 0; $i < @cols; $i++) {
-                $cond->{$f_cols[$i]} = $cols[$i];
-            }
-
-            eval { $self->_make_cond_rel( $table, $f_table, $cond) };
-            warn qq/\# belongs_to_many failed "$@"\n\n/ if $@ && $self->debug;
-        }
-        
-        $sth->finish;
-    }
-}
-
-sub _tables {
-    my $self = shift;
-    my $dbh    = $self->schema->storage->dbh;
-    my @tables;
-    my $quoter = $dbh->get_info(29) || q{`};
-    foreach my $table ( $dbh->tables ) {
-        $table =~ s/$quoter//g;
-        push @tables, $1
-          if $table =~ /\A(\w+)\z/;
-    }
-    return @tables;
-}
-
-sub _table_info {
-    my ( $self, $table ) = @_;
-    my $dbh    = $self->schema->storage->dbh;
-
-    # MySQL 4.x doesn't support quoted tables
-    my $query = "DESCRIBE $table";
-    my $sth = $dbh->prepare($query) or die("Cannot get table status: $table");
+    my $query = "SHOW CREATE TABLE ${table}";
+    my $sth   = $dbh->prepare($query)
+      or die("Cannot get table definition: $table");
     $sth->execute;
-    my ( @cols, @pri );
-    while ( my $hash = $sth->fetchrow_hashref ) {
-        my ($col) = $hash->{Field} =~ /(\w+)/;
-        push @cols, $col;
-        push @pri, $col if $hash->{Key} eq "PRI";
+    my $table_def = $sth->fetchrow_arrayref->[1] || '';
+    $sth->finish;
+    
+    my (@reldata) = ($table_def =~ /CONSTRAINT `.*` FOREIGN KEY \(`(.*)`\) REFERENCES `(.*)` \(`(.*)`\)/ig);
+
+    my @rels;
+    while (scalar @reldata > 0) {
+        my $cols = shift @reldata;
+        my $f_table = shift @reldata;
+        my $f_cols = shift @reldata;
+
+        my @cols = map { s/\Q$self->{_quoter}\E//; $_ } split(/\s*,\s*/,$cols);
+        my @f_cols = map { s/\Q$self->{_quoter}\E//; $_ } split(/\s*,\s*/,$f_cols);
+
+        push(@rels, {
+            local_columns => \@cols,
+            remote_columns => \@f_cols,
+            remote_table => $f_table
+        });
     }
 
-    return ( \@cols, \@pri );
+    return \@rels;
+}
+
+# primary and unique info comes from the same sql statement,
+#   so cache it here for both routines to use
+sub _mysql_table_get_keys {
+    my ($self, $table) = @_;
+
+    if(!exists($self->{_mysql_keys}->{$table})) {
+        my %keydata;
+        my $dbh = $self->schema->storage->dbh;
+        my $sth = $dbh->prepare("SHOW INDEX FROM $table");
+        $sth->execute;
+        while(my $row = $sth->fetchrow_hashref) {
+            next if $row->{Non_unique};
+            push(@{$keydata{$row->{Key_name}}},
+                [ $row->{Seq_in_index}, $row->{Column_name} ]
+            );
+        }
+        foreach my $keyname (keys %keydata) {
+            my @ordered_cols = map { $_->[1] } sort { $a->[0] <=> $b->[0] }
+                @{$keydata{$keyname}};
+            $keydata{$keyname} = \@ordered_cols;
+        }
+        $self->{_mysql_keys}->{$table} = \%keydata;
+    }
+
+    return $self->{_mysql_keys}->{$table};
+}
+
+sub _table_pk_info {
+    my ( $self, $table ) = @_;
+
+    return $self->_mysql_table_get_keys($table)->{PRIMARY};
+}
+
+sub _table_uniq_info {
+    my ( $self, $table ) = @_;
+
+    my @uniqs;
+    my $keydata = $self->_mysql_table_get_keys($table);
+    foreach my $keyname (%$keydata) {
+        next if $keyname eq 'PRIMARY';
+        push(@uniqs, { $keyname => $keydata->{$keyname} });
+    }
+
+    return \@uniqs;
 }
 
 =head1 SEE ALSO

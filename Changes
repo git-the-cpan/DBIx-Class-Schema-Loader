@@ -1,5 +1,15 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.02999_03 Mon Mar 13 15:01:11 UTC 2006
+        - Added EXAMPLE section to pod [Kieren Diment]
+        - Invasive heavy changes to the DBI- and vendor-specific code
+          (expect some breakage in some cases until this settles down)
+        - Support for loading UNIQUE constraints
+        - Tests cleaned up a bit
+        - Relationship building seperated out into it's own file for
+          the changes that are coming, but still does basically what
+          it did before (this work is the next step).
+
 0.02999_02 Sat Mar  4 16:53:21 UTC 2006
         - Merged in relevant changes from trunk since the split
 

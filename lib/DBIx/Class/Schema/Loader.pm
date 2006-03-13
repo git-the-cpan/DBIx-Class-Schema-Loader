@@ -10,7 +10,7 @@ use UNIVERSAL::require;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.02999_02';
+our $VERSION = '0.02999_03';
 
 __PACKAGE__->mk_classaccessor('loader');
 
@@ -146,6 +146,26 @@ between the same pair of tables.  All of the relationship code will
 be overhauled on the way to 0.03, at which time that bug will be
 addressed.
 
+=head1 EXAMPLE
+
+Using the example in L<DBIx::Class::Manual::ExampleSchema> as a basis
+replace the DB::Main with the following code:
+
+  package DB::Main;
+
+  use base qw/DBIx::Class::Schema::Loader/;
+
+  __PACKAGE__->connection('dbi:SQLite:example.db');
+  __PACKAGE__->load_from_connection(
+      relationships => 1,
+      debug         => 1,
+  );
+
+  1;
+
+and remove the Main directory tree (optional).  Every thing else
+should work the same
+
 =head1 AUTHOR
 
 Brandon Black, C<blblack@gmail.com>
@@ -167,7 +187,7 @@ the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-L<DBIx::Class>
+L<DBIx::Class>, L<DBIx::Class::Manual::ExampleSchema>
 
 =cut
 

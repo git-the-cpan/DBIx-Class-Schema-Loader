@@ -5,8 +5,8 @@ use warnings;
 use base qw/Class::Accessor::Fast/;
 use Class::C3;
 use Carp;
-use Lingua::EN::Inflect::Number ();
 use UNIVERSAL::require;
+use DBIx::Class::Schema::Loader::RelBuilder;
 require DBIx::Class;
 
 # The first group are all arguments which are may be defaulted within,
@@ -25,7 +25,6 @@ __PACKAGE__->mk_ro_accessors(qw/
                                 inflect_map
                                 moniker_map
                                 db_schema
-                                drop_db_schema
                                 debug
 
                                 classes
@@ -224,98 +223,6 @@ sub load {
     $self;
 }
 
-# Inflect a relationship name
-sub _inflect_relname {
-    my ($self, $relname) = @_;
-
-    if( ref $self->{inflect_map} eq 'HASH' ) {
-        return $self->inflect_map->{$relname}
-            if exists $self->inflect_map->{$relname};
-    }
-    elsif( ref $self->{inflect_map} eq 'CODE' ) {
-        my $inflected = $self->inflect_map->($relname);
-        return $inflected if $inflected;
-    }
-
-    return Lingua::EN::Inflect::Number::to_PL($relname);
-}
-
-# Set up a simple relation with just a local col and foreign table
-sub _make_simple_rel {
-    my ($self, $table, $other, $col) = @_;
-
-    my $table_class = $self->classes->{$table};
-    my $other_class = $self->classes->{$other};
-    my $table_relname = $self->_inflect_relname(lc $table);
-
-    warn qq/\# Belongs_to relationship\n/ if $self->debug;
-    warn qq/$table_class->belongs_to( '$col' => '$other_class' );\n\n/
-      if $self->debug;
-    $table_class->belongs_to( $col => $other_class );
-
-    warn qq/\# Has_many relationship\n/ if $self->debug;
-    warn qq/$other_class->has_many( '$table_relname' => '$table_class',/
-      .  qq/$col);\n\n/
-      if $self->debug;
-
-    $other_class->has_many( $table_relname => $table_class, $col);
-}
-
-# not a class method, just a helper for cond_rel XXX
-sub _stringify_hash {
-    my $href = shift;
-
-    return '{ ' .
-           join(q{, }, map("$_ => $href->{$_}", keys %$href))
-           . ' }';
-}
-
-# Set up a complex relation based on a hashref condition
-sub _make_cond_rel {
-    my ( $self, $table, $other, $cond ) = @_;
-
-    my $table_class = $self->classes->{$table};
-    my $other_class = $self->classes->{$other};
-    my $table_relname = $self->_inflect_relname(lc $table);
-    my $other_relname = lc $other;
-
-    # for single-column case, set the relname to the column name,
-    # to make filter accessors work
-    if(scalar keys %$cond == 1) {
-        my ($col) = keys %$cond;
-        $other_relname = $cond->{$col};
-    }
-
-    my $rev_cond = { reverse %$cond };
-
-    for (keys %$rev_cond) {
-        $rev_cond->{"foreign.$_"} = "self.".$rev_cond->{$_};
-        delete $rev_cond->{$_};
-    }
-
-    my $cond_printable = _stringify_hash($cond)
-        if $self->debug;
-    my $rev_cond_printable = _stringify_hash($rev_cond)
-        if $self->debug;
-
-    warn qq/\# Belongs_to relationship\n/ if $self->debug;
-
-    warn qq/$table_class->belongs_to( '$other_relname' => '$other_class',/
-      .  qq/$cond_printable);\n\n/
-      if $self->debug;
-
-    $table_class->belongs_to( $other_relname => $other_class, $cond);
-
-    warn qq/\# Has_many relationship\n/ if $self->debug;
-
-    warn qq/$other_class->has_many( '$table_relname' => '$table_class',/
-      .  qq/$rev_cond_printable);\n\n/
-      .  qq/);\n\n/
-      if $self->debug;
-
-    $other_class->has_many( $table_relname => $table_class, $rev_cond);
-}
-
 sub _use {
     my $self = shift;
     my $target = shift;
@@ -342,24 +249,16 @@ sub _inject {
 sub _load_classes {
     my $self = shift;
 
-    my @tables     = $self->_tables();
     my $schema     = $self->schema;
 
-    foreach my $table (@tables) {
+    foreach my $table (sort $self->_tables_list) {
         my $constraint = $self->constraint;
         my $exclude = $self->exclude;
 
         next unless $table =~ /$constraint/;
         next if defined $exclude && $table =~ /$exclude/;
 
-        my ($db_schema, $tbl) = split /\./, $table;
-        my $tablename = lc $table;
-        if($tbl) {
-            $tablename = $self->drop_db_schema ? $tbl : lc $table;
-        }
-        my $lc_tblname = lc $tablename;
-
-        my $table_moniker = $self->_table2moniker($db_schema, $tbl);
+        my $table_moniker = $self->_table2moniker($table);
         my $table_class = $schema . q{::} . $table_moniker;
 
         { no strict 'refs';
@@ -372,25 +271,46 @@ sub _load_classes {
             if @{$self->resultset_components};
         $self->_inject($table_class, @{$self->left_base_classes});
 
-        warn qq/\# Initializing table "$tablename" as "$table_class"\n/
-            if $self->debug;
-        $table_class->table($lc_tblname);
+        warn qq/$table_class->table('$table');\n/ if $self->debug;
+        $table_class->table($table);
 
-        my ( $cols, $pks ) = $self->_table_info($table);
-        carp("$table has no primary key") unless @$pks;
-        $table_class->add_columns(@$cols);
-        $table_class->set_primary_key(@$pks) if @$pks;
+        my %cols_info = $self->_table_columns_info($table);
+        if($self->debug) {
+            my $cols_printable = '';
+            foreach my $col (keys %cols_info) {
+               my $cinfo = $cols_info{$col};
+               my $hstr = '';
+               foreach my $info (keys %$cinfo) {
+                   $hstr .= "\n        $info => '" . $cinfo->{$info} . "', ";
+               }
+               $cols_printable .= "\n    $col => { $hstr\n    },";
+            }
+            warn qq/$table_class->add_columns(/
+               . $cols_printable . qq/\n);\n/;
+        }
+        $table_class->add_columns(%cols_info);
 
-        warn qq/$table_class->table('$tablename');\n/ if $self->debug;
-        my $columns = join "', '", @$cols;
-        warn qq/$table_class->add_columns('$columns')\n/ if $self->debug;
-        my $primaries = join "', '", @$pks;
-        warn qq/$table_class->set_primary_key('$primaries')\n/
-            if $self->debug && @$pks;
+        my $pks = $self->_table_pk_info($table) || [];
+        if(@$pks) {
+            warn qq/$table_class->set_primary_key(/
+               . join(q{,}, map { "'$_'" } @$pks)
+               . qq/);\n/ if $self->debug;
+            $table_class->set_primary_key(@$pks);
+        }
+        else {
+            carp("$table has no primary key");
+        }
+
+        # XXX need uniqs debug dump, and really need to clean
+        #  up all of these with a Dumper-like thing
+        my $uniqs = $self->_table_uniq_info($table) || [];
+        foreach my $uniq (@$uniqs) {
+            $table_class->add_unique_constraint( %$uniq );
+        }
 
         $schema->register_class($table_moniker, $table_class);
-        $self->classes->{$lc_tblname} = $table_class;
-        $self->monikers->{$lc_tblname} = $table_moniker;
+        $self->classes->{$table} = $table_class;
+        $self->monikers->{$table} = $table_moniker;
     }
 }
 
@@ -411,16 +331,7 @@ sub tables {
 
 # Make a moniker from a table
 sub _table2moniker {
-    my ( $self, $db_schema, $table ) = @_;
-
-    my $db_schema_ns;
-
-    if($table) {
-        $db_schema = ucfirst lc $db_schema;
-        $db_schema_ns = $db_schema if(!$self->drop_db_schema);
-    } else {
-        $table = $db_schema;
-    }
+    my ( $self, $table ) = @_;
 
     my $moniker;
 
@@ -433,15 +344,50 @@ sub _table2moniker {
 
     $moniker ||= join '', map ucfirst, split /[\W_]+/, lc $table;
 
-    $moniker = $db_schema_ns ? $db_schema_ns . $moniker : $moniker;
-
     return $moniker;
 }
 
-# Overload in driver class
-sub _tables { croak "ABSTRACT METHOD" }
-sub _table_info { croak "ABSTRACT METHOD" }
-sub _load_relationships { croak "ABSTRACT METHOD" }
+sub _load_relationships {
+    my $self = shift;
+
+    # Construct the fk_info RelBuilder wants to see, by
+    # translating table names to monikers in the _fk_info output
+    my %fk_info;
+    foreach my $table ($self->tables) {
+        my $tbl_fk_info = $self->_table_fk_info($table);
+        foreach my $fkdef (@$tbl_fk_info) {
+            $fkdef->{remote_source} =
+                $self->monikers->{delete $fkdef->{remote_table}};
+        }
+        my $moniker = $self->monikers->{$table};
+        $fk_info{$moniker} = $tbl_fk_info;
+    }
+
+    # Let RelBuilder take over from here
+    my $relbuilder = DBIx::Class::Schema::Loader::RelBuilder->new(
+        $self->schema, \%fk_info, $self->inflect_map
+    );
+    $relbuilder->setup_rels($self->debug);
+}
+
+# Overload these in driver class:
+
+# Returns an array ( col1name => { is_nullable => 1 }, ... )
+sub _table_columns_info { croak "ABSTRACT METHOD" }
+
+# Returns arrayref of pk col names
+sub _table_pk_info { croak "ABSTRACT METHOD" }
+
+# Returns an arrayref of uniqs [ { foo => [ col1, col2 ] }, { bar => [ ... ] } ]
+sub _table_uniq_info { croak "ABSTRACT METHOD" }
+
+# Returns an arrayref of foreign key constraints, each
+#   being a hashref with 3 keys:
+#   local_columns (arrayref), remote_columns (arrayref), remote_table
+sub _table_fk_info { croak "ABSTRACT METHOD" }
+
+# Returns an array of lower case table names
+sub _tables_list { croak "ABSTRACT METHOD" }
 
 =head2 monikers
 
