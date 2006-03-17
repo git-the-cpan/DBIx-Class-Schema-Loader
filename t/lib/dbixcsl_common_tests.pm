@@ -43,7 +43,7 @@ sub _monikerize {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 60;
+    plan tests => 54;
 
     $self->create();
 
@@ -51,9 +51,10 @@ sub run_tests {
 
     my $debug = ($self->{verbose} > 1) ? 1 : 0;
 
-    my @connect_info = ( $self->{dsn}, $self->{user}, $self->{password} );
     my %loader_opts = (
-        constraint              => qr/^(?:\S+\.)?loader_test[0-9]+$/i,
+        connect_info            => [ $self->{dsn}, $self->{user},
+                                     $self->{password} ],
+        constraint              => '^(?:\S+\.)?(?i:loader_test)[0-9]+$',
         relationships           => 1,
         additional_classes      => 'TestAdditional',
         additional_base_classes => 'TestAdditionalBase',
@@ -66,25 +67,17 @@ sub run_tests {
     );
 
     $loader_opts{db_schema} = $self->{db_schema} if $self->{db_schema};
+    $loader_opts{drop_db_schema} = $self->{drop_db_schema} if $self->{drop_db_schema};
 
-    {
-       my @loader_warnings;
-       local $SIG{__WARN__} = sub { push(@loader_warnings, $_[0]); };
-        eval qq{
-            package $schema_class;
-            use base qw/DBIx::Class::Schema::Loader/;
-    
-            __PACKAGE__->connection(\@connect_info);
-            __PACKAGE__->load_from_connection(\%loader_opts);
-        };
-        ok(!$@, "Loader initialization") or diag $@;
-        is(scalar(@loader_warnings), 1)
-          or diag "Did not get the expected 1 warning.  Warnings are: "
-            . join('',@loader_warnings);
-        like($loader_warnings[0], qr/loader_test9 has no primary key/i);
-    }
+    eval qq{
+        package $schema_class;
+        use base qw/DBIx::Class::Schema::Loader/;
 
-    my $conn = $schema_class->clone;
+        __PACKAGE__->load_from_connection(\%loader_opts);
+    };
+    ok(!$@, "Loader initialization") or diag $@;
+
+    my $conn = $schema_class->connect($self->{dsn},$self->{user},$self->{password});
     my $monikers = $schema_class->loader->monikers;
     my $classes = $schema_class->loader->classes;
 
@@ -96,42 +89,8 @@ sub run_tests {
     my $class2   = $classes->{loader_test2};
     my $rsobj2   = $conn->resultset($moniker2);
 
-    my $moniker23 = $monikers->{LOADER_TEST23};
-    my $class23   = $classes->{LOADER_TEST23};
-    my $rsobj23   = $conn->resultset($moniker1);
-
-    my $moniker24 = $monikers->{LoAdEr_test24};
-    my $class24   = $classes->{LoAdEr_test24};
-    my $rsobj24   = $conn->resultset($moniker2);
-
     isa_ok( $rsobj1, "DBIx::Class::ResultSet" );
     isa_ok( $rsobj2, "DBIx::Class::ResultSet" );
-    isa_ok( $rsobj23, "DBIx::Class::ResultSet" );
-    isa_ok( $rsobj24, "DBIx::Class::ResultSet" );
-
-    my %uniq1 = $class1->unique_constraints;
-    my $uniq1_test = 0;
-    foreach my $ucname (keys %uniq1) {
-        my $cols_arrayref = $uniq1{$ucname};
-        if(@$cols_arrayref == 1 && $cols_arrayref->[0] eq 'dat') {
-           $uniq1_test = 1;
-           last;
-        }
-    }
-    ok($uniq1_test) or diag "Unique constraints not working";
-
-    my %uniq2 = $class2->unique_constraints;
-    my $uniq2_test = 0;
-    foreach my $ucname (keys %uniq2) {
-        my $cols_arrayref = $uniq2{$ucname};
-        if(@$cols_arrayref == 2
-           && $cols_arrayref->[0] eq 'dat'
-           && $cols_arrayref->[1] eq 'dat2') {
-            $uniq2_test = 2;
-            last;
-        }
-    }
-    ok($uniq2_test) or diag "Multi-col unique constraints not working";
 
     is($moniker2, 'LoaderTest2X', "moniker_map testing");
 
@@ -202,7 +161,7 @@ sub run_tests {
     my $saved_id;
     eval {
         my $new_obj1 = $rsobj1->create({ dat => 'newthing' });
-        $saved_id = $new_obj1->id;
+	$saved_id = $new_obj1->id;
     };
     ok(!$@) or diag "Died during create new record using a PK::Auto key: $@";
     ok($saved_id) or diag "Failed to get PK::Auto-generated id";
@@ -261,9 +220,9 @@ sub run_tests {
         my $rs_rel4 = $obj3->search_related('loader_test4zes');
         isa_ok( $rs_rel4->first, $class4);
 
-        # find on multi-col pk
+        # fk def in comments should not be parsed
         my $obj5 = $rsobj5->find( id1 => 1, id2 => 1 );
-        is( $obj5->id2, 1 );
+        is( ref( $obj5->id2 ), '' );
 
         # mulit-col fk def
         my $obj6 = $rsobj6->find(1);
@@ -384,13 +343,11 @@ sub dbconnect {
 sub create {
     my $self = shift;
 
-    $self->{_created} = 1;
-
     my @statements = (
         qq{
             CREATE TABLE loader_test1 (
                 id $self->{auto_inc_pk},
-                dat VARCHAR(32) NOT NULL UNIQUE
+                dat VARCHAR(32)
             ) $self->{innodb}
         },
 
@@ -401,30 +358,14 @@ sub create {
         qq{ 
             CREATE TABLE loader_test2 (
                 id $self->{auto_inc_pk},
-                dat VARCHAR(32) NOT NULL,
-                dat2 VARCHAR(32) NOT NULL,
-                UNIQUE (dat, dat2)
+                dat VARCHAR(32)
             ) $self->{innodb}
         },
 
-        q{ INSERT INTO loader_test2 (dat, dat2) VALUES('aaa', 'zzz') }, 
-        q{ INSERT INTO loader_test2 (dat, dat2) VALUES('bbb', 'yyy') }, 
-        q{ INSERT INTO loader_test2 (dat, dat2) VALUES('ccc', 'xxx') }, 
-        q{ INSERT INTO loader_test2 (dat, dat2) VALUES('ddd', 'www') }, 
-
-        qq{
-            CREATE TABLE LOADER_TEST23 (
-                ID INTEGER NOT NULL PRIMARY KEY,
-                DAT VARCHAR(32) NOT NULL UNIQUE
-            ) $self->{innodb}
-        },
-
-        qq{
-            CREATE TABLE LoAdEr_test24 (
-                iD INTEGER NOT NULL PRIMARY KEY,
-                DaT VARCHAR(32) NOT NULL UNIQUE
-            ) $self->{innodb}
-        },
+        q{ INSERT INTO loader_test2 (dat) VALUES('aaa') }, 
+        q{ INSERT INTO loader_test2 (dat) VALUES('bbb') }, 
+        q{ INSERT INTO loader_test2 (dat) VALUES('ccc') }, 
+        q{ INSERT INTO loader_test2 (dat) VALUES('ddd') }, 
     );
 
     my @statements_reltests = (
@@ -457,7 +398,7 @@ sub create {
         qq{
             CREATE TABLE loader_test5 (
                 id1 INTEGER NOT NULL,
-                iD2 INTEGER NOT NULL,
+                id2 INTEGER NOT NULL, -- , id2 INTEGER REFERENCES loader_test1,
                 dat VARCHAR(8),
                 PRIMARY KEY (id1,id2)
             ) $self->{innodb}
@@ -468,11 +409,11 @@ sub create {
         qq{
             CREATE TABLE loader_test6 (
                 id INTEGER NOT NULL PRIMARY KEY,
-                Id2 INTEGER,
+                id2 INTEGER,
                 loader_test2 INTEGER,
                 dat VARCHAR(8),
                 FOREIGN KEY (loader_test2) REFERENCES loader_test2 (id),
-                FOREIGN KEY (id, Id2 ) REFERENCES loader_test5 (id1,iD2)
+                FOREIGN KEY (id, id2 ) REFERENCES loader_test5 (id1,id2)
             ) $self->{innodb}
         },
 
@@ -506,92 +447,6 @@ sub create {
                 loader_test9 VARCHAR(8) NOT NULL
             ) $self->{innodb}
         },
-
-        qq{
-            CREATE TABLE loader_test16 (
-                id INTEGER NOT NULL PRIMARY KEY,
-                dat  VARCHAR(8)
-            ) $self->{innodb}
-        },
-
-        qq{ INSERT INTO loader_test16 (id,dat) VALUES (2,'x16') },
-        qq{ INSERT INTO loader_test16 (id,dat) VALUES (4,'y16') },
-        qq{ INSERT INTO loader_test16 (id,dat) VALUES (6,'z16') },
-
-        qq{
-            CREATE TABLE loader_test17 (
-                id INTEGER NOT NULL PRIMARY KEY,
-                loader16_one INTEGER,
-                loader16_two INTEGER,
-                FOREIGN KEY (loader16_one) REFERENCES loader_test16 (id),
-                FOREIGN KEY (loader16_two) REFERENCES loader_test16 (id)
-            ) $self->{innodb}
-        },
-
-        qq{ INSERT INTO loader_test17 (id, loader16_one, loader16_two) VALUES (3, 2, 4) },
-        qq{ INSERT INTO loader_test17 (id, loader16_one, loader16_two) VALUES (33, 4, 6) },
-
-        qq{
-            CREATE TABLE loader_test18 (
-                id INTEGER NOT NULL PRIMARY KEY,
-                dat  VARCHAR(8)
-            ) $self->{innodb}
-        },
-
-        qq{ INSERT INTO loader_test18 (id,dat) VALUES (1,'x18') },
-        qq{ INSERT INTO loader_test18 (id,dat) VALUES (2,'y18') },
-        qq{ INSERT INTO loader_test18 (id,dat) VALUES (3,'z18') },
-
-        qq{
-            CREATE TABLE loader_test19 (
-                id INTEGER NOT NULL PRIMARY KEY,
-                dat  VARCHAR(8)
-            ) $self->{innodb}
-        },
-
-        qq{ INSERT INTO loader_test19 (id,dat) VALUES (4,'x19') },
-        qq{ INSERT INTO loader_test19 (id,dat) VALUES (5,'y19') },
-        qq{ INSERT INTO loader_test19 (id,dat) VALUES (6,'z19') },
-
-        qq{
-            CREATE TABLE loader_test20 (
-                parent INTEGER NOT NULL,
-                child INTEGER NOT NULL,
-                PRIMARY KEY (parent, child),
-                FOREIGN KEY (parent) REFERENCES loader_test18 (id),
-                FOREIGN KEY (child) REFERENCES loader_test19 (id)
-            ) $self->{innodb}
-        },
-
-        q{ INSERT INTO loader_test20 (parent, child) VALUES (1,4) },
-        q{ INSERT INTO loader_test20 (parent, child) VALUES (2,5) },
-        q{ INSERT INTO loader_test20 (parent, child) VALUES (3,6) },
-
-        qq{
-            CREATE TABLE loader_test21 (
-                id INTEGER NOT NULL PRIMARY KEY,
-                dat  VARCHAR(8)
-            ) $self->{innodb}
-        },
-
-        q{ INSERT INTO loader_test21 (id,dat) VALUES (7,'a21')},
-        q{ INSERT INTO loader_test21 (id,dat) VALUES (11,'b21')},
-        q{ INSERT INTO loader_test21 (id,dat) VALUES (13,'c21')},
-        q{ INSERT INTO loader_test21 (id,dat) VALUES (17,'d21')},
-
-        qq{
-            CREATE TABLE loader_test22 (
-                parent INTEGER NOT NULL,
-                child INTEGER NOT NULL,
-                PRIMARY KEY (parent, child),
-                FOREIGN KEY (parent) REFERENCES loader_test21 (id),
-                FOREIGN KEY (child) REFERENCES loader_test21 (id)
-            ) $self->{innodb}
-        },
-
-        q{ INSERT INTO loader_test22 (parent, child) VALUES (7,11)},
-        q{ INSERT INTO loader_test22 (parent, child) VALUES (11,13)},
-        q{ INSERT INTO loader_test22 (parent, child) VALUES (13,17)},
     );
 
     my @statements_advanced = (
@@ -664,6 +519,8 @@ sub create {
 
     $self->drop_tables;
 
+    $self->{created} = 1;
+
     my $dbh = $self->dbconnect(1);
 
     # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
@@ -677,6 +534,9 @@ sub create {
         # hack for now, since DB2 doesn't like inline comments, and we need
         # to test one for mysql, which works on everyone else...
         # this all needs to be refactored anyways.
+        if($self->{vendor} =~ /DB2/i) {
+            @statements_reltests = map { s/--.*\n//; $_ } @statements_reltests;
+        }
         $dbh->do($_) for (@statements_reltests);
         unless($self->{vendor} =~ /sqlite/i) {
             $dbh->do($_) for (@statements_advanced);
@@ -694,11 +554,11 @@ sub create {
 sub drop_tables {
     my $self = shift;
 
+    return unless $self->{created};
+
     my @tables = qw/
         loader_test1
         loader_test2
-        LOADER_TEST23
-        LoAdEr_test24
     /;
 
     my @tables_reltests = qw/
@@ -709,13 +569,6 @@ sub drop_tables {
         loader_test8
         loader_test7
         loader_test9
-        loader_test17
-        loader_test16
-        loader_test20
-        loader_test19
-        loader_test18
-        loader_test22
-        loader_test21
     /;
 
     my @tables_advanced = qw/
@@ -763,9 +616,6 @@ sub drop_tables {
     $dbh->disconnect;
 }
 
-sub DESTROY {
-    my $self = shift;
-    $self->drop_tables if $self->{_created};
-}
+sub DESTROY { shift->drop_tables; }
 
 1;

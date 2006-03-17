@@ -12,24 +12,22 @@ SYNOPSIS
           $name;
       }
 
-      # __PACKAGE__->storage_type('::DBI'); # <- this is the default anyways
-      __PACKAGE__->connection(
-        "dbi:mysql:dbname",
-        "root",
-        "mypassword",
-        { AutoCommit => 1 },
-      );
-
       __PACKAGE__->load_from_connection(
-        relationships           => 1,
-        constraint              => '^foo.*',
-        inflect_map             => { child => 'children' },
-        moniker_map             => \&_monikerize,
+        connect_info            => [ "dbi:mysql:dbname",
+                                     "root",
+                                     "mypassword",
+                                     { AutoCommit => 1 },
+                                   ],
         additional_classes      => [qw/DBIx::Class::Foo/],
         additional_base_classes => [qw/My::Stuff/],
         left_base_classes       => [qw/DBIx::Class::Bar/],
         components              => [qw/ResultSetManager/],
         resultset_components    => [qw/AlwaysRS/],
+        constraint              => '^foo.*',
+        relationships           => 1,
+        options                 => { AutoCommit => 1 }, 
+        inflect_map             => { child => 'children' },
+        moniker_map             => \&_monikerize,
         debug                   => 1,
       );
 
@@ -63,7 +61,7 @@ DESCRIPTION
     primary keys.
 
     DBIx::Class::Schema::Loader supports MySQL, Postgres, SQLite and DB2.
-    See DBIx::Class::Schema::Loader::Base for more, and
+    See DBIx::Class::Schema::Loader::Generic for more, and
     DBIx::Class::Schema::Loader::Writing for notes on writing your own
     db-specific subclass for an unsupported db.
 
@@ -91,38 +89,19 @@ METHODS
   load_from_connection
     Example in Synopsis above demonstrates the available arguments. For
     detailed information on the arguments, see the
-    DBIx::Class::Schema::Loader::Base documentation.
+    DBIx::Class::Schema::Loader::Generic documentation.
 
   loader
     This is an accessor in the generated Schema class for accessing the
-    DBIx::Class::Schema::Loader::Base -based loader object that was used
-    during construction. See the DBIx::Class::Schema::Loader::Base docs for
-    more information on the available loader methods there.
+    DBIx::Class::Schema::Loader::Generic -based loader object that was used
+    during construction. See the DBIx::Class::Schema::Loader::Generic docs
+    for more information on the available loader methods there.
 
 KNOWN BUGS
     Aside from relationship definitions being less than ideal in general,
     this version is known not to handle the case of multiple relationships
     between the same pair of tables. All of the relationship code will be
     overhauled on the way to 0.03, at which time that bug will be addressed.
-
-EXAMPLE
-    Using the example in DBIx::Class::Manual::ExampleSchema as a basis
-    replace the DB::Main with the following code:
-
-      package DB::Main;
-
-      use base qw/DBIx::Class::Schema::Loader/;
-
-      __PACKAGE__->connection('dbi:SQLite:example.db');
-      __PACKAGE__->load_from_connection(
-          relationships => 1,
-          debug         => 1,
-      );
-
-      1;
-
-    and remove the Main directory tree (optional). Every thing else should
-    work the same
 
 AUTHOR
     Brandon Black, "blblack@gmail.com"
@@ -133,13 +112,12 @@ AUTHOR
 
 THANK YOU
     Adam Anderson, Andy Grundman, Autrijus Tang, Dan Kubb, David Naughton,
-    Randal Schwartz, Simon Flack, Matt S Trout, everyone on #dbix-class, and
-    all the others who've helped.
+    Randal Schwartz, Simon Flack and all the others who've helped.
 
 LICENSE
     This library is free software; you can redistribute it and/or modify it
     under the same terms as Perl itself.
 
 SEE ALSO
-    DBIx::Class, DBIx::Class::Manual::ExampleSchema
+    DBIx::Class
 
