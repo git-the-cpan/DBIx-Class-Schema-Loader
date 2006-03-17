@@ -1,18 +1,23 @@
 ---
 name: DBIx-Class-Schema-Loader
-version: 0.02999_03
+version: 0.02999_04
 author:
   - 'Brandon Black, C<blblack@gmail.com>'
 abstract: Dynamic definition of a DBIx::Class::Schema
 license: perl
 requires:
   Class::Accessor::Fast: 0.22
-  Class::C3: 0.09
+  Class::C3: 0.11
   Class::Data::Accessor: 0.02
-  DBIx::Class: 0.0599902
+  DBIx::Class: 0.0599904
   Lingua::EN::Inflect::Number: 1.1
   Text::Balanced: 0
   UNIVERSAL::require: 0.1
+recommends:
+  DBD::DB2: 0.78
+  DBD::Pg: 1.45
+  DBD::SQLite: 1.11
+  DBD::mysql: 3.0002
 build_requires:
   DBD::SQLite: 1.11
   DBI: 1.5
@@ -20,7 +25,7 @@ build_requires:
 provides:
   DBIx::Class::Schema::Loader:
     file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.02999_03
+    version: 0.02999_04
   DBIx::Class::Schema::Loader::Base:
     file: lib/DBIx/Class/Schema/Loader/Base.pm
   DBIx::Class::Schema::Loader::DBI:
@@ -37,4 +42,4 @@ provides:
     file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
   DBIx::Class::Schema::Loader::Writing:
     file: lib/DBIx/Class/Schema/Loader/Writing.pm
-generated_by: Module::Build version 0.2611
+generated_by: Module::Build version 0.2612

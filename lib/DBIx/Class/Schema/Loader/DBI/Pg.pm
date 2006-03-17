@@ -66,14 +66,14 @@ sub _table_uniq_info {
         if($constr_def =~ /\(\s*([^)]+)\)\s*$/) {
             my $cols_text = $1;
             $cols_text =~ s/\s+$//;
-            @cols = split(/\s*,\s*/, $cols_text);
+            @cols = map { lc } split(/\s*,\s*/, $cols_text);
             s/\Q$self->{_quoter}\E// for @cols;
         }
         if(!@cols) {
             warn "Failed to parse unique constraint $constr_name on $table";
         }
         else {
-            push(@uniqs, { $constr_name => \@cols });
+            push(@uniqs, [ $constr_name => \@cols ]);
         }
     }
 

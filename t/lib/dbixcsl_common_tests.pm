@@ -43,7 +43,7 @@ sub _monikerize {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 58;
+    plan tests => 60;
 
     $self->create();
 
@@ -53,7 +53,7 @@ sub run_tests {
 
     my @connect_info = ( $self->{dsn}, $self->{user}, $self->{password} );
     my %loader_opts = (
-        constraint              => '^(?:\S+\.)?(?i:loader_test)[0-9]+$',
+        constraint              => qr/^(?:\S+\.)?loader_test[0-9]+$/i,
         relationships           => 1,
         additional_classes      => 'TestAdditional',
         additional_base_classes => 'TestAdditionalBase',
@@ -81,7 +81,7 @@ sub run_tests {
         is(scalar(@loader_warnings), 1)
           or diag "Did not get the expected 1 warning.  Warnings are: "
             . join('',@loader_warnings);
-        like($loader_warnings[0], qr/loader_test9 has no primary key/);
+        like($loader_warnings[0], qr/loader_test9 has no primary key/i);
     }
 
     my $conn = $schema_class->clone;
@@ -96,8 +96,18 @@ sub run_tests {
     my $class2   = $classes->{loader_test2};
     my $rsobj2   = $conn->resultset($moniker2);
 
+    my $moniker23 = $monikers->{LOADER_TEST23};
+    my $class23   = $classes->{LOADER_TEST23};
+    my $rsobj23   = $conn->resultset($moniker1);
+
+    my $moniker24 = $monikers->{LoAdEr_test24};
+    my $class24   = $classes->{LoAdEr_test24};
+    my $rsobj24   = $conn->resultset($moniker2);
+
     isa_ok( $rsobj1, "DBIx::Class::ResultSet" );
     isa_ok( $rsobj2, "DBIx::Class::ResultSet" );
+    isa_ok( $rsobj23, "DBIx::Class::ResultSet" );
+    isa_ok( $rsobj24, "DBIx::Class::ResultSet" );
 
     my %uniq1 = $class1->unique_constraints;
     my $uniq1_test = 0;
@@ -374,6 +384,8 @@ sub dbconnect {
 sub create {
     my $self = shift;
 
+    $self->{_created} = 1;
+
     my @statements = (
         qq{
             CREATE TABLE loader_test1 (
@@ -399,6 +411,20 @@ sub create {
         q{ INSERT INTO loader_test2 (dat, dat2) VALUES('bbb', 'yyy') }, 
         q{ INSERT INTO loader_test2 (dat, dat2) VALUES('ccc', 'xxx') }, 
         q{ INSERT INTO loader_test2 (dat, dat2) VALUES('ddd', 'www') }, 
+
+        qq{
+            CREATE TABLE LOADER_TEST23 (
+                ID INTEGER NOT NULL PRIMARY KEY,
+                DAT VARCHAR(32) NOT NULL UNIQUE
+            ) $self->{innodb}
+        },
+
+        qq{
+            CREATE TABLE LoAdEr_test24 (
+                iD INTEGER NOT NULL PRIMARY KEY,
+                DaT VARCHAR(32) NOT NULL UNIQUE
+            ) $self->{innodb}
+        },
     );
 
     my @statements_reltests = (
@@ -431,7 +457,7 @@ sub create {
         qq{
             CREATE TABLE loader_test5 (
                 id1 INTEGER NOT NULL,
-                id2 INTEGER NOT NULL,
+                iD2 INTEGER NOT NULL,
                 dat VARCHAR(8),
                 PRIMARY KEY (id1,id2)
             ) $self->{innodb}
@@ -442,11 +468,11 @@ sub create {
         qq{
             CREATE TABLE loader_test6 (
                 id INTEGER NOT NULL PRIMARY KEY,
-                id2 INTEGER,
+                Id2 INTEGER,
                 loader_test2 INTEGER,
                 dat VARCHAR(8),
                 FOREIGN KEY (loader_test2) REFERENCES loader_test2 (id),
-                FOREIGN KEY (id, id2 ) REFERENCES loader_test5 (id1,id2)
+                FOREIGN KEY (id, Id2 ) REFERENCES loader_test5 (id1,iD2)
             ) $self->{innodb}
         },
 
@@ -480,6 +506,92 @@ sub create {
                 loader_test9 VARCHAR(8) NOT NULL
             ) $self->{innodb}
         },
+
+        qq{
+            CREATE TABLE loader_test16 (
+                id INTEGER NOT NULL PRIMARY KEY,
+                dat  VARCHAR(8)
+            ) $self->{innodb}
+        },
+
+        qq{ INSERT INTO loader_test16 (id,dat) VALUES (2,'x16') },
+        qq{ INSERT INTO loader_test16 (id,dat) VALUES (4,'y16') },
+        qq{ INSERT INTO loader_test16 (id,dat) VALUES (6,'z16') },
+
+        qq{
+            CREATE TABLE loader_test17 (
+                id INTEGER NOT NULL PRIMARY KEY,
+                loader16_one INTEGER,
+                loader16_two INTEGER,
+                FOREIGN KEY (loader16_one) REFERENCES loader_test16 (id),
+                FOREIGN KEY (loader16_two) REFERENCES loader_test16 (id)
+            ) $self->{innodb}
+        },
+
+        qq{ INSERT INTO loader_test17 (id, loader16_one, loader16_two) VALUES (3, 2, 4) },
+        qq{ INSERT INTO loader_test17 (id, loader16_one, loader16_two) VALUES (33, 4, 6) },
+
+        qq{
+            CREATE TABLE loader_test18 (
+                id INTEGER NOT NULL PRIMARY KEY,
+                dat  VARCHAR(8)
+            ) $self->{innodb}
+        },
+
+        qq{ INSERT INTO loader_test18 (id,dat) VALUES (1,'x18') },
+        qq{ INSERT INTO loader_test18 (id,dat) VALUES (2,'y18') },
+        qq{ INSERT INTO loader_test18 (id,dat) VALUES (3,'z18') },
+
+        qq{
+            CREATE TABLE loader_test19 (
+                id INTEGER NOT NULL PRIMARY KEY,
+                dat  VARCHAR(8)
+            ) $self->{innodb}
+        },
+
+        qq{ INSERT INTO loader_test19 (id,dat) VALUES (4,'x19') },
+        qq{ INSERT INTO loader_test19 (id,dat) VALUES (5,'y19') },
+        qq{ INSERT INTO loader_test19 (id,dat) VALUES (6,'z19') },
+
+        qq{
+            CREATE TABLE loader_test20 (
+                parent INTEGER NOT NULL,
+                child INTEGER NOT NULL,
+                PRIMARY KEY (parent, child),
+                FOREIGN KEY (parent) REFERENCES loader_test18 (id),
+                FOREIGN KEY (child) REFERENCES loader_test19 (id)
+            ) $self->{innodb}
+        },
+
+        q{ INSERT INTO loader_test20 (parent, child) VALUES (1,4) },
+        q{ INSERT INTO loader_test20 (parent, child) VALUES (2,5) },
+        q{ INSERT INTO loader_test20 (parent, child) VALUES (3,6) },
+
+        qq{
+            CREATE TABLE loader_test21 (
+                id INTEGER NOT NULL PRIMARY KEY,
+                dat  VARCHAR(8)
+            ) $self->{innodb}
+        },
+
+        q{ INSERT INTO loader_test21 (id,dat) VALUES (7,'a21')},
+        q{ INSERT INTO loader_test21 (id,dat) VALUES (11,'b21')},
+        q{ INSERT INTO loader_test21 (id,dat) VALUES (13,'c21')},
+        q{ INSERT INTO loader_test21 (id,dat) VALUES (17,'d21')},
+
+        qq{
+            CREATE TABLE loader_test22 (
+                parent INTEGER NOT NULL,
+                child INTEGER NOT NULL,
+                PRIMARY KEY (parent, child),
+                FOREIGN KEY (parent) REFERENCES loader_test21 (id),
+                FOREIGN KEY (child) REFERENCES loader_test21 (id)
+            ) $self->{innodb}
+        },
+
+        q{ INSERT INTO loader_test22 (parent, child) VALUES (7,11)},
+        q{ INSERT INTO loader_test22 (parent, child) VALUES (11,13)},
+        q{ INSERT INTO loader_test22 (parent, child) VALUES (13,17)},
     );
 
     my @statements_advanced = (
@@ -585,6 +697,8 @@ sub drop_tables {
     my @tables = qw/
         loader_test1
         loader_test2
+        LOADER_TEST23
+        LoAdEr_test24
     /;
 
     my @tables_reltests = qw/
@@ -595,6 +709,13 @@ sub drop_tables {
         loader_test8
         loader_test7
         loader_test9
+        loader_test17
+        loader_test16
+        loader_test20
+        loader_test19
+        loader_test18
+        loader_test22
+        loader_test21
     /;
 
     my @tables_advanced = qw/
@@ -642,6 +763,9 @@ sub drop_tables {
     $dbh->disconnect;
 }
 
-sub DESTROY { shift->drop_tables; }
+sub DESTROY {
+    my $self = shift;
+    $self->drop_tables if $self->{_created};
+}
 
 1;

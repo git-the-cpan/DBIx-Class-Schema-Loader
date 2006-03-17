@@ -10,7 +10,7 @@ use DBIx::Class::Schema::Loader::RelBuilder;
 require DBIx::Class;
 
 # The first group are all arguments which are may be defaulted within,
-# The last two (classes, monikers) are generated locally:
+# The second group is generated locally here.
 
 __PACKAGE__->mk_ro_accessors(qw/
                                 schema
@@ -27,6 +27,7 @@ __PACKAGE__->mk_ro_accessors(qw/
                                 db_schema
                                 debug
 
+                                _tables
                                 classes
                                 monikers
                              /);
@@ -74,11 +75,11 @@ C<components> list if this option is set.
 
 =head2 constraint
 
-Only load tables matching regex.
+Only load tables matching regex.  Best specified as a qr// regex.
 
 =head2 exclude
 
-Exclude tables matching regex.
+Exclude tables matching regex.  Best specified as a qr// regex.
 
 =head2 debug
 
@@ -162,7 +163,7 @@ sub new {
     bless $self => $class;
 
     $self->{db_schema}  ||= '';
-    $self->{constraint} ||= '.*';
+    $self->{constraint} ||= qr//;
     $self->_ensure_arrayref(qw/additional_classes
                                additional_base_classes
                                left_base_classes
@@ -218,9 +219,7 @@ sub load {
     warn qq/\### END DBIx::Class::Schema::Loader dump ###\n/
         if $self->debug;
 
-    $self->schema->storage->disconnect;
-
-    $self;
+    1;
 }
 
 sub _use {
@@ -251,15 +250,27 @@ sub _load_classes {
 
     my $schema     = $self->schema;
 
-    foreach my $table (sort $self->_tables_list) {
-        my $constraint = $self->constraint;
-        my $exclude = $self->exclude;
+    my $constraint = $self->constraint;
+    my $exclude = $self->exclude;
+    my @tables = sort grep
+        { /$constraint/ && (!$exclude || ! /$exclude/) }
+            $self->_tables_list;
 
-        next unless $table =~ /$constraint/;
-        next if defined $exclude && $table =~ /$exclude/;
+    $self->{_tables} = \@tables;
 
+    foreach my $table (@tables) {
         my $table_moniker = $self->_table2moniker($table);
         my $table_class = $schema . q{::} . $table_moniker;
+
+        my $table_normalized = lc $table;
+        $self->classes->{$table} = $table_class;
+        $self->classes->{$table_normalized} = $table_class;
+        $self->monikers->{$table} = $table_moniker;
+        $self->monikers->{$table_normalized} = $table_moniker;
+
+        no warnings 'redefine';
+        local *Class::C3::reinitialize = sub { };
+        use warnings;
 
         { no strict 'refs';
           @{"${table_class}::ISA"} = qw/DBIx::Class/;
@@ -270,25 +281,23 @@ sub _load_classes {
         $table_class->load_resultset_components(@{$self->resultset_components})
             if @{$self->resultset_components};
         $self->_inject($table_class, @{$self->left_base_classes});
+    }
+
+    Class::C3::reinitialize;
+
+    foreach my $table (@tables) {
+        my $table_class = $self->classes->{$table};
+        my $table_moniker = $self->monikers->{$table};
 
         warn qq/$table_class->table('$table');\n/ if $self->debug;
         $table_class->table($table);
 
-        my %cols_info = $self->_table_columns_info($table);
-        if($self->debug) {
-            my $cols_printable = '';
-            foreach my $col (keys %cols_info) {
-               my $cinfo = $cols_info{$col};
-               my $hstr = '';
-               foreach my $info (keys %$cinfo) {
-                   $hstr .= "\n        $info => '" . $cinfo->{$info} . "', ";
-               }
-               $cols_printable .= "\n    $col => { $hstr\n    },";
-            }
-            warn qq/$table_class->add_columns(/
-               . $cols_printable . qq/\n);\n/;
-        }
-        $table_class->add_columns(%cols_info);
+        my $cols = $self->_table_columns($table);
+        warn qq/$table_class->add_columns(/
+           . join(q{,}, map { qq{'$_'} } @$cols)
+           . qq/);\n/
+               if $self->debug;
+        $table_class->add_columns(@$cols);
 
         my $pks = $self->_table_pk_info($table) || [];
         if(@$pks) {
@@ -305,19 +314,17 @@ sub _load_classes {
         #  up all of these with a Dumper-like thing
         my $uniqs = $self->_table_uniq_info($table) || [];
         foreach my $uniq (@$uniqs) {
-            $table_class->add_unique_constraint( %$uniq );
+            $table_class->add_unique_constraint( @$uniq );
         }
 
         $schema->register_class($table_moniker, $table_class);
-        $self->classes->{$table} = $table_class;
-        $self->monikers->{$table} = $table_moniker;
     }
 }
 
 =head2 tables
 
 Returns a sorted list of loaded tables, using the original database table
-names.  Actually generated from the keys of the C<monikers> hash below.
+names.
 
   my @tables = $schema->loader->tables;
 
@@ -326,7 +333,7 @@ names.  Actually generated from the keys of the C<monikers> hash below.
 sub tables {
     my $self = shift;
 
-    return sort keys %{ $self->monikers };
+    return @{$self->_tables};
 }
 
 # Make a moniker from a table
@@ -372,13 +379,13 @@ sub _load_relationships {
 
 # Overload these in driver class:
 
-# Returns an array ( col1name => { is_nullable => 1 }, ... )
-sub _table_columns_info { croak "ABSTRACT METHOD" }
+# Returns an arrayref of column names
+sub _table_columns { croak "ABSTRACT METHOD" }
 
 # Returns arrayref of pk col names
 sub _table_pk_info { croak "ABSTRACT METHOD" }
 
-# Returns an arrayref of uniqs [ { foo => [ col1, col2 ] }, { bar => [ ... ] } ]
+# Returns an arrayref of uniqs [ [ foo => [ col1, col2 ] ], [ bar => [ ... ] ] ]
 sub _table_uniq_info { croak "ABSTRACT METHOD" }
 
 # Returns an arrayref of foreign key constraints, each
@@ -391,8 +398,11 @@ sub _tables_list { croak "ABSTRACT METHOD" }
 
 =head2 monikers
 
-Returns a hashref of loaded table-to-moniker mappings for the original
-database table names.
+Returns a hashref of loaded table-to-moniker mappings.  There will
+be two entries for each table, the original name and the "normalized"
+name, in the case that the two are different (such as databases
+that like uppercase table names, or preserve your original mixed-case
+definitions, or what-have-you).
 
   my $monikers = $schema->loader->monikers;
   my $foo_tbl_moniker = $monikers->{foo_tbl};
@@ -402,8 +412,11 @@ database table names.
 
 =head2 classes
 
-Returns a hashref of table-to-classname mappings for the original database
-table names.  You probably shouldn't be using this for any normal or simple
+Returns a hashref of table-to-classname mappings.  In some cases it will
+contain multiple entries per table for the original and normalized table
+names, as above in C<#monikers>.
+
+You probably shouldn't be using this for any normal or simple
 usage of your Schema.  The usual way to run queries on your tables is via
 C<$schema-E<gt>resultset('FooTbl')>, where C<FooTbl> is a moniker as
 returned by C<monikers> above.

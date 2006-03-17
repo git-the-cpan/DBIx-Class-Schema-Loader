@@ -87,46 +87,22 @@ sub _tables_list {
     my $self = shift;
 
     my $dbh = $self->schema->storage->dbh;
-    my $db_schema = $self->db_schema;
-    my @tables = $dbh->tables(undef, $db_schema, '%', '%');
+    my @tables = $dbh->tables(undef, $self->db_schema, '%', '%');
     s/\Q$self->{_quoter}\E//g for @tables;
     s/^.*\Q$self->{_namesep}\E// for @tables;
 
-    return map { lc } @tables;
+    return @tables;
 }
 
-# Returns a hash ( col1name => { is_nullable => 1 }, ... )
-sub _table_columns_info {
+# Returns an arrayref of column names
+sub _table_columns {
     my ($self, $table) = @_;
 
     my $dbh = $self->schema->storage->dbh;
-    my @result;
-    if ( $dbh->can( 'column_info' ) && !$self->{_column_info_broken}){
-        my $sth = $dbh->column_info( undef, $self->db_schema || undef, $table, '%' );
-        $sth->execute();
-        while ( my $info = $sth->fetchrow_hashref() ){
-            my %column_info;
-            # XXX attempt to translate numeric data_type ?
-            $column_info{data_type} = $info->{TYPE_NAME};
-            $column_info{size} = $info->{COLUMN_SIZE};
-            $column_info{is_nullable} = $info->{NULLABLE} ? 1 : 0;
-            $column_info{default_value} = $info->{COLUMN_DEF};
-            push(@result, lc $info->{COLUMN_NAME}, \%column_info);
-        }
-    } else {
-        my $sth = $dbh->prepare("SELECT * FROM $table WHERE 1=0");
-        $sth->execute;
-        my @columns = @{$sth->{NAME_lc}};
-        for my $i ( 0 .. $#columns ){
-            my %column_info;
-            $column_info{data_type} = $sth->{TYPE}->[$i];
-            $column_info{size} = $sth->{PRECISION}->[$i];
-            $column_info{is_nullable} = $sth->{NULLABLE}->[$i] ? 1 : 0;
-            push(@result, $columns[$i], \%column_info);
-        }
-    }
 
-    return @result;
+    my $sth = $dbh->prepare("SELECT * FROM $table WHERE 1=0");
+    $sth->execute;
+    return \@{$sth->{NAME_lc}};
 }
 
 # Returns arrayref of pk col names
@@ -142,7 +118,7 @@ sub _table_pk_info {
 }
 
 # Override this for uniq info
-sub _table_uniq_info { [] } # XXX croak "ABSTRACT METHOD" ?? 
+sub _table_uniq_info { croak "ABSTRACT METHOD" }
 
 # Find relationships
 sub _table_fk_info {
@@ -157,10 +133,10 @@ sub _table_fk_info {
 
     my $i = 1; # for unnamed rels, which hopefully have only 1 column ...
     while(my $raw_rel = $sth->fetchrow_arrayref) {
-        my $uk_tbl  = lc $raw_rel->[2];
+        my $uk_tbl  = $raw_rel->[2];
         my $uk_col  = lc $raw_rel->[3];
         my $fk_col  = lc $raw_rel->[7];
-        my $relid   = lc ($raw_rel->[12] || ( "__dcsld__" . $i++ ));
+        my $relid   = ($raw_rel->[12] || ( "__dcsld__" . $i++ ));
         $uk_tbl =~ s/\Q$self->{_quoter}\E//g;
         $uk_col =~ s/\Q$self->{_quoter}\E//g;
         $fk_col =~ s/\Q$self->{_quoter}\E//g;

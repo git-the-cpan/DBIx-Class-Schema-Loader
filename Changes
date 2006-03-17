@@ -1,5 +1,12 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.02999_04 Fri Mar 17 03:55:09 UTC 2006
+        - Fixed case-sensitivity issues for table/col names
+        - Punt columns_info_for to ->storage
+        - Large loading speedup (get rid of redundant C3 reinits)
+        - Removed TEST_POD checks
+        - Removed unneccesary storage->disconnect
+
 0.02999_03 Mon Mar 13 15:01:11 UTC 2006
         - Added EXAMPLE section to pod [Kieren Diment]
         - Invasive heavy changes to the DBI- and vendor-specific code

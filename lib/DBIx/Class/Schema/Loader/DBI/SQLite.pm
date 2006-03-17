@@ -80,14 +80,14 @@ SELECT sql FROM sqlite_master WHERE tbl_name = ?
         if($col =~ /^(.*)\s+UNIQUE/) {
             my $colname = $1;
             $colname =~ s/\s+.*$//;
-            push(@uniqs, { "${colname}_unique" => [ $colname ] });
+            push(@uniqs, [ "${colname}_unique" => [ lc $colname ] ]);
         }
         elsif($col =~/^\s*UNIQUE\s*\(\s*(.*)\)/) {
             my $cols = $1;
             $cols =~ s/\s+$//;
-            my @cols = split(/\s*,\s*/, $cols);
+            my @cols = map { lc } split(/\s*,\s*/, $cols);
             my $name = join(q{_}, @cols) . '_unique';
-            push(@uniqs, { $name => \@cols });
+            push(@uniqs, [ $name => \@cols ]);
         }
 
         next if $col !~ /^(.*)\s+REFERENCES\s+(\w+) (?: \s* \( (.*) \) )? /ix;
@@ -102,10 +102,10 @@ SELECT sql FROM sqlite_master WHERE tbl_name = ?
             $cols =~ s/\s+.*$//;
         }
 
-        my @cols = map { s/\s*//g; $_ } split(/\s*,\s*/,$cols);
+        my @cols = map { s/\s*//g; lc $_ } split(/\s*,\s*/,$cols);
         my $rcols;
         if($f_cols) {
-            my @f_cols = map { s/\s*//g; $_ } split(/\s*,\s*/,$f_cols);
+            my @f_cols = map { s/\s*//g; lc $_ } split(/\s*,\s*/,$f_cols);
             die "Mismatched column count in rel for $table => $f_table"
               if @cols != @f_cols;
             $rcols = \@f_cols;

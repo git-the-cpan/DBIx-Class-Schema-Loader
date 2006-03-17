@@ -33,24 +33,17 @@ See L<DBIx::Class::Schema::Loader::Base>.
 
 =cut
 
-sub _setup {
-    my $self = shift;
-
-    $self->next::method(@_);
-    $self->{_column_info_broken} = 1;
-}
-
 # DB2 wants the table name in uppercase, but
 #   otherwise the standard methods work for these
 #   two methods
 sub _table_pk_info {
     my ( $self, $table ) = @_;
-    $self->next::method(uc $table);
+    $self->next::method($table);
 }
 
 sub _table_fk_info {
     my ($self, $table) = @_;
-    $self->next::method(uc $table);
+    $self->next::method($table);
 }
 
 sub _table_uniq_info {
@@ -67,17 +60,17 @@ JOIN SYSCAT.KEYCOLUSE as kcu ON tc.CONSTNAME = kcu.CONSTNAME
 WHERE tc.TABSCHEMA = ? and tc.TABNAME = ? and tc.TYPE = 'U'
 SQL
 
-    $sth->execute($self->db_schema, uc $table) or die;
+    $sth->execute($self->db_schema, $table) or die;
 
     my %keydata;
     while(my $row = $sth->fetchrow_arrayref) {
-        my ($col, $constname, $seq) = map { lc } @$row;
-        push(@{$keydata{$constname}}, [ $seq, $col ]);
+        my ($col, $constname, $seq) = @$row;
+        push(@{$keydata{$constname}}, [ $seq, lc $col ]);
     }
     foreach my $keyname (keys %keydata) {
         my @ordered_cols = map { $_->[1] } sort { $a->[0] <=> $b->[0] }
             @{$keydata{$keyname}};
-        push(@uniqs, { $keyname => \@ordered_cols });
+        push(@uniqs, [ $keyname => \@ordered_cols ]);
     }
     $sth->finish;
     

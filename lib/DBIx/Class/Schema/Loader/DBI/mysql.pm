@@ -52,8 +52,8 @@ sub _table_fk_info {
         my $f_table = shift @reldata;
         my $f_cols = shift @reldata;
 
-        my @cols = map { s/\Q$self->{_quoter}\E//; $_ } split(/\s*,\s*/,$cols);
-        my @f_cols = map { s/\Q$self->{_quoter}\E//; $_ } split(/\s*,\s*/,$f_cols);
+        my @cols = map { s/\Q$self->{_quoter}\E//; lc $_ } split(/\s*,\s*/,$cols);
+        my @f_cols = map { s/\Q$self->{_quoter}\E//; lc $_ } split(/\s*,\s*/,$f_cols);
 
         push(@rels, {
             local_columns => \@cols,
@@ -78,7 +78,7 @@ sub _mysql_table_get_keys {
         while(my $row = $sth->fetchrow_hashref) {
             next if $row->{Non_unique};
             push(@{$keydata{$row->{Key_name}}},
-                [ $row->{Seq_in_index}, $row->{Column_name} ]
+                [ $row->{Seq_in_index}, lc $row->{Column_name} ]
             );
         }
         foreach my $keyname (keys %keydata) {
@@ -105,7 +105,7 @@ sub _table_uniq_info {
     my $keydata = $self->_mysql_table_get_keys($table);
     foreach my $keyname (%$keydata) {
         next if $keyname eq 'PRIMARY';
-        push(@uniqs, { $keyname => $keydata->{$keyname} });
+        push(@uniqs, [ $keyname => $keydata->{$keyname} ]);
     }
 
     return \@uniqs;
