@@ -3,6 +3,7 @@ package DBIx::Class::Schema::Loader::RelBuilder;
 use strict;
 use warnings;
 use Carp;
+use Lingua::EN::Inflect ();
 use Lingua::EN::Inflect::Number ();
 
 =head1 NAME
@@ -97,6 +98,7 @@ sub new {
     $self;
 }
 
+
 # pluralize a relationship name
 sub _inflect_plural {
     my ($self, $relname) = @_;
@@ -110,7 +112,9 @@ sub _inflect_plural {
         return $inflected if $inflected;
     }
 
-    return Lingua::EN::Inflect::Number::to_PL($relname);
+    return $self->{legacy_default_inflections}
+        ? Lingua::EN::Inflect::PL($relname)
+        : Lingua::EN::Inflect::Number::to_PL($relname);
 }
 
 # Singularize a relationship name
@@ -126,7 +130,18 @@ sub _inflect_singular {
         return $inflected if $inflected;
     }
 
-    return Lingua::EN::Inflect::Number::to_S($relname);
+    return $self->{legacy_default_inflections}
+        ? $relname
+        : Lingua::EN::Inflect::Number::to_S($relname);
+}
+
+# not a class method, just a helper for generate_code
+sub _stringify_hash {
+    my $href = shift;
+
+    return '{ ' .
+           join(q{, }, map("'$_' => '$href->{$_}'", keys %$href))
+           . ' }';
 }
 
 sub generate_code {
@@ -136,7 +151,7 @@ sub generate_code {
 
     foreach my $local_moniker (keys %{$self->{fk_info}}) {
         my $local_table = $self->{schema}->source($local_moniker)->from;
-        my $local_class = $self->{schema} . '::' . $local_moniker; # XXX
+        my $local_class = $self->{schema}->class($local_moniker);
         my $rels = $self->{fk_info}->{$local_moniker};
         
         my %counters;
@@ -149,7 +164,7 @@ sub generate_code {
             my $remote_cols = $rel->{remote_columns};
             my $remote_moniker = $rel->{remote_source};
             my $remote_obj = $self->{schema}->source($remote_moniker);
-            my $remote_class = $self->{schema} . '::' . $remote_moniker; # XXX
+            my $remote_class = $self->{schema}->class($remote_moniker);
             my $remote_table = $remote_obj->from;
             $remote_cols ||= [ $remote_obj->primary_columns ];
 
@@ -221,15 +236,6 @@ sub setup_rels {
             die $@ if $@;
         }
     }
-}
-
-# not a class method, just a helper for cond_rel XXX
-sub _stringify_hash {
-    my $href = shift;
-
-    return '{ ' .
-           join(q{, }, map("'$_' => '$href->{$_}'", keys %$href))
-           . ' }';
 }
 
 1;

@@ -14,12 +14,6 @@ DBIx::Class::Schema::Loader::DBI::mysql - DBIx::Schema::Class::Loader mysql Impl
   package My::Schema;
   use base qw/DBIx::Class::Schema::Loader/;
 
-  __PACKAGE__->connection(
-    dsn       => "dbi:mysql:dbname",
-    user      => "root",
-    password  => "",
-  );
-
   __PACKAGE__->load_from_connection(
     relationships => 1,
   );
@@ -113,7 +107,8 @@ sub _table_uniq_info {
 
 =head1 SEE ALSO
 
-L<DBIx::Class::Schema::Loader>
+L<DBIx::Class::Schema::Loader>, L<DBIx::Class::Schema::Loader::Base>,
+L<DBIx::Class::Schema::Loader::DBI>
 
 =cut
 

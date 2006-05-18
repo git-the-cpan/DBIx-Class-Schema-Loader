@@ -6,13 +6,15 @@ use base qw/DBIx::Class::Schema/;
 use base qw/Class::Data::Accessor/;
 use Carp;
 use UNIVERSAL::require;
+use Class::C3;
 
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.02999_05';
+our $VERSION = '0.02999_06';
 
 __PACKAGE__->mk_classaccessor('loader');
+__PACKAGE__->mk_classaccessor('_loader_args');
 
 =head1 NAME
 
@@ -23,32 +25,10 @@ DBIx::Class::Schema::Loader - Dynamic definition of a DBIx::Class::Schema
   package My::Schema;
   use base qw/DBIx::Class::Schema::Loader/;
 
-  sub _monikerize {
-      my $name = shift;
-      $name = join '', map ucfirst, split /[\W_]+/, lc $name;
-      $name;
-  }
-
-  # __PACKAGE__->storage_type('::DBI'); # <- this is the default anyways
-  __PACKAGE__->connection(
-    "dbi:mysql:dbname",
-    "root",
-    "mypassword",
-    { AutoCommit => 1 },
-  );
-
-  __PACKAGE__->load_from_connection(
-    relationships           => 1,
-    constraint              => '^foo.*',
-    inflect_plural          => { child => 'children' },
-    inflect_singular        => { children => 'child' },
-    moniker_map             => \&_monikerize,
-    additional_classes      => [qw/DBIx::Class::Foo/],
-    additional_base_classes => [qw/My::Stuff/],
-    left_base_classes       => [qw/DBIx::Class::Bar/],
-    components              => [qw/ResultSetManager/],
-    resultset_components    => [qw/AlwaysRS/],
-    debug                   => 1,
+  __PACKAGE__->loader_options(
+      relationships           => 1,
+      constraint              => '^foo.*',
+      # debug                 => 1,
   );
 
   # in seperate application code ...
@@ -57,23 +37,7 @@ DBIx::Class::Schema::Loader - Dynamic definition of a DBIx::Class::Schema
 
   my $schema1 = My::Schema->connect( $dsn, $user, $password, $attrs);
   # -or-
-  my $schema1 = "My::Schema";
-  # ^^ defaults to dsn/user/pass from load_from_connection()
-
-  # Get a list of the original (database) names of the tables that
-  #  were loaded
-  my @tables = $schema1->loader->tables;
-
-  # Get a hashref of table_name => 'TableName' table-to-moniker
-  #   mappings.
-  my $monikers = $schema1->loader->monikers;
-
-  # Get a hashref of table_name => 'My::Schema::TableName'
-  #   table-to-classname mappings.
-  my $classes = $schema1->loader->classes;
-
-  # Use the schema as per normal for DBIx::Class::Schema
-  my $rs = $schema1->resultset($monikers->{foo_table})->search(...);
+  my $schema1 = "My::Schema"; $schema1->connection(as above);
 
 =head1 DESCRIPTION
 
@@ -107,45 +71,60 @@ the road.
 
 =head1 METHODS
 
-=head2 load_from_connection
+=head2 loader_options
 
-Example in Synopsis above demonstrates the available arguments.  For
-detailed information on the arguments, see the
+Example in Synopsis above demonstrates a few common arguments.  For
+detailed information on all of the arguments, see the
 L<DBIx::Class::Schema::Loader::Base> documentation.
+
+This method is *required*, for backwards compatibility reasons.  If
+you do not wish to change any options, just call it with an empty
+argument list during schema class initialization.
 
 =cut
 
-sub load_from_connection {
-    my ( $class, %args ) = @_;
+sub loader_options {
+    my ( $self, %args ) = @_;
+
+    $args{schema} = ref $self || $self;
+    $self->_loader_args(\%args);
+
+    $self;
+}
+
+sub _invoke_loader {
+    my $self = shift;
 
     # XXX this only works for relative storage_type, like ::DBI ...
-    my $impl = "DBIx::Class::Schema::Loader" . $class->storage_type;
-
+    my $impl = "DBIx::Class::Schema::Loader" . $self->storage_type;
     $impl->require or
       croak qq/Could not load storage_type loader "$impl": / .
             qq/"$UNIVERSAL::require::ERROR"/;
 
-    $args{schema} = $class;
+    # XXX in the future when we get rid of ->loader, the next two
+    # lines can be replaced by "$impl->new(%{$self->{_loader_args}})->load;"
+    $self->loader($impl->new(%{$self->_loader_args}));
+    $self->loader->load;
 
-    $class->loader($impl->new(%args));
-    $class->loader->load;
+    $self;
 }
 
-=head2 loader
+=head2 connection
 
-This is an accessor in the generated Schema class for accessing
-the L<DBIx::Class::Schema::Loader::Base> -based loader object
-that was used during construction.  See the
-L<DBIx::Class::Schema::Loader::Base> docs for more information
-on the available loader methods there.
+See L<DBIx::Class::Schema::Loader>.  Our local override here is to
+hook in the main functionality of the loader, which occurs at the time
+the connection is specified for a given schema class/object.
 
-=head1 KNOWN BUGS
+=cut
 
-Aside from relationship definitions being less than ideal in general,
-this version is known not to handle the case of multiple relationships
-between the same pair of tables.  All of the relationship code will
-be overhauled on the way to 0.03, at which time that bug will be
-addressed.
+sub connection {
+    my $self = shift;
+    $self->next::method(@_);
+
+    $self->_invoke_loader if $self->_loader_args;
+
+    $self;
+}
 
 =head1 EXAMPLE
 
@@ -156,16 +135,81 @@ replace the DB::Main with the following code:
 
   use base qw/DBIx::Class::Schema::Loader/;
 
-  __PACKAGE__->connection('dbi:SQLite:example.db');
-  __PACKAGE__->load_from_connection(
+  __PACKAGE__->loader_options(
       relationships => 1,
       debug         => 1,
   );
+  __PACKAGE__->connection('dbi:SQLite:example.db');
 
   1;
 
 and remove the Main directory tree (optional).  Every thing else
 should work the same
+
+=head1 DEPRECATED METHODS
+
+You don't need to read anything in this section unless you're upgrading
+code that was written against pre-0.03 versions of this module.  This
+version is intended to be backwards-compatible with pre-0.03 code, but
+will issue warnings about your usage of deprecated features/methods.
+
+=head2 load_from_connection
+
+This deprecated method is now roughly an alias for L</loader_options>.
+
+In the past it was a common idiom to invoke this method
+after defining a connection on the schema class.  That usage is now
+deprecated.  The correct way to do things from now forward is to
+always do C<loader_options> on the class before C<connect> or
+C<connection> is invoked on the class or any derived object.
+
+This method *will* dissappear in a future version.
+
+For now, using this method will invoke the legacy behavior for
+backwards compatibility, and merely emit a warning about upgrading
+your code.
+
+It also reverts the default inflection scheme to
+use L<Lingua::EN::Inflect> just like pre-0.03 versions of this
+module did.
+
+You can force these legacy inflections with the
+option C<legacy_default_inflections>, even after switch over
+to the preferred L</loader_options> way of doing things.
+
+See the source of this method for more details.
+
+=cut
+
+sub load_from_connection {
+    my $self = shift;
+    warn "load_from_connection deprecated, please (re-)read the"
+      . "DBIx::Class::Schema::Loader documentation";
+    $self->loader_options('legacy_default_inflections' => 1, @_);
+    $self->_invoke_loader if $self->storage->connect_info;
+}
+
+=head2 loader
+
+This is an accessor in the generated Schema class for accessing
+the L<DBIx::Class::Schema::Loader::Base> -based loader object
+that was used during construction.  See the
+L<DBIx::Class::Schema::Loader::Base> docs for more information
+on the available loader methods there.
+
+This accessor is deprecated.  Do not use it.  Anything you can
+get from C<loader>, you can get via the normal L<DBIx::Class::Schema>
+methods, and your code will be more robust and forward-thinking
+for doing so.
+
+If you're already using C<loader> in your code, make an effort
+to get rid of it.  If you think you've found a situation where it
+is neccesary, let me know and we'll see what we can do to remedy
+that situation.
+
+In some future version, this accessor *will* disappear.  It was
+apparently quite a design/API mistake to ever have exposed it to
+user-land in the first place, all things considered.
 
 =head1 AUTHOR
 

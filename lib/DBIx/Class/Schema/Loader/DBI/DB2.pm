@@ -14,13 +14,7 @@ DBIx::Class::Schema::Loader::DBI::DB2 - DBIx::Class::Schema::Loader DB2 Implemen
   package My::Schema;
   use base qw/DBIx::Class::Schema::Loader/;
 
-  __PACKAGE_->connection(
-    dsn         => "dbi:DB2:dbname",
-    user        => "myuser",
-    password    => "",
-  );
-
-  __PACKAGE__->load_from_connection(
+  __PACKAGE__->loader_options(
     relationships => 1,
     db_schema     => "MYSCHEMA",
   );
@@ -32,19 +26,6 @@ DBIx::Class::Schema::Loader::DBI::DB2 - DBIx::Class::Schema::Loader DB2 Implemen
 See L<DBIx::Class::Schema::Loader::Base>.
 
 =cut
-
-# DB2 wants the table name in uppercase, but
-#   otherwise the standard methods work for these
-#   two methods
-sub _table_pk_info {
-    my ( $self, $table ) = @_;
-    $self->next::method($table);
-}
-
-sub _table_fk_info {
-    my ($self, $table) = @_;
-    $self->next::method($table);
-}
 
 sub _table_uniq_info {
     my ($self, $table) = @_;
@@ -79,7 +60,8 @@ SQL
 
 =head1 SEE ALSO
 
-L<DBIx::Class::Schema::Loader>
+L<DBIx::Class::Schema::Loader>, L<DBIx::Class::Schema::Loader::Base>,
+L<DBIx::Class::Schema::Loader::DBI>
 
 =cut
 

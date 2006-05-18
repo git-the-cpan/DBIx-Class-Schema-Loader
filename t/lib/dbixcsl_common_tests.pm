@@ -81,14 +81,22 @@ sub run_tests {
             package $schema_class;
             use base qw/DBIx::Class::Schema::Loader/;
     
+            __PACKAGE__->loader_options(\%loader_opts);
             __PACKAGE__->connection(\@connect_info);
-            __PACKAGE__->load_from_connection(\%loader_opts);
         };
         ok(!$@, "Loader initialization") or diag $@;
-        is(scalar(@loader_warnings), 1)
-          or diag "Did not get the expected 1 warning.  Warnings are: "
-            . join('',@loader_warnings);
-        like($loader_warnings[0], qr/loader_test9 has no primary key/i);
+        if($self->{skip_rels}) {
+            is(scalar(@loader_warnings), 0)
+              or diag "Did not get the expected 0 warnings.  Warnings are: "
+                . join('',@loader_warnings);
+            ok(1);
+        }
+        else {
+            is(scalar(@loader_warnings), 1)
+              or diag "Did not get the expected 1 warning.  Warnings are: "
+                . join('',@loader_warnings);
+            like($loader_warnings[0], qr/loader_test9 has no primary key/i);
+        }
     }
 
     my $conn = $schema_class->clone;
@@ -226,7 +234,7 @@ sub run_tests {
     is( $obj2->id, 2 );
 
     SKIP: {
-        skip $self->{skip_rels}, 29 if $self->{skip_rels};
+        skip $self->{skip_rels}, 42 if $self->{skip_rels};
 
         my $moniker3 = $monikers->{loader_test3};
         my $class3   = $classes->{loader_test3};

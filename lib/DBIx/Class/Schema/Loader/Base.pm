@@ -9,11 +9,9 @@ use UNIVERSAL::require;
 use DBIx::Class::Schema::Loader::RelBuilder;
 require DBIx::Class;
 
-# The first group are all arguments which are may be defaulted within,
-# The second group is generated locally here.
-
 __PACKAGE__->mk_ro_accessors(qw/
                                 schema
+
                                 exclude
                                 constraint
                                 additional_classes
@@ -22,12 +20,14 @@ __PACKAGE__->mk_ro_accessors(qw/
                                 components
                                 resultset_components
                                 relationships
+                                moniker_map
                                 inflect_singular
                                 inflect_plural
-                                moniker_map
-                                db_schema
                                 debug
 
+                                legacy_default_inflections
+
+                                db_schema
                                 _tables
                                 classes
                                 monikers
@@ -43,36 +43,21 @@ See L<DBIx::Class::Schema::Loader>
 
 =head1 DESCRIPTION
 
-This is the base class for the vendor-specific C<DBIx::Class::Schema::*>
+This is the base class for the storage-specific C<DBIx::Class::Schema::*>
 classes, and implements the common functionality between them.
 
-=head1 OPTIONS
+=head1 CONSTRUCTOR OPTIONS
 
-Available constructor options are:
+These constructor options are the base options for
+L<DBIx::Class::Schema::Loader/loader_opts>.  Available constructor options are:
 
-=head2 additional_base_classes
+=head2 relationships
 
-List of additional base classes your table classes will use.
+Try to automatically detect/setup has_a and has_many relationships.
 
-=head2 left_base_classes
+=head2 debug
 
-List of additional base classes, that need to be leftmost.
-
-=head2 additional_classes
-
-List of additional classes which your table classes will use.
-
-=head2 components
-
-List of additional components to be loaded into your table classes.
-A good example would be C<ResultSetManager>.
-
-=head2 resultset_components
-
-List of additional resultset components to be loaded into your table
-classes.  A good example would be C<AlwaysRS>.  Component
-C<ResultSetManager> will be automatically added to the above
-C<components> list if this option is set.
+Enable debug messages.
 
 =head2 constraint
 
@@ -82,63 +67,85 @@ Only load tables matching regex.  Best specified as a qr// regex.
 
 Exclude tables matching regex.  Best specified as a qr// regex.
 
-=head2 debug
-
-Enable debug messages.
-
-=head2 relationships
-
-Try to automatically detect/setup has_a and has_many relationships.
-
 =head2 moniker_map
 
 Overrides the default tablename -> moniker translation.  Can be either
 a hashref of table => moniker names, or a coderef for a translator
 function taking a single scalar table name argument and returning
 a scalar moniker.  If the hash entry does not exist, or the function
-returns a false/undef value, the code falls back to default behavior
+returns a false value, the code falls back to default behavior
 for that table name.
+
+The default behavior is: C<join '', map ucfirst, split /[\W_]+/, lc $table>,
+which is to say: lowercase everything, split up the table name into chunks
+anywhere a non-alpha-numeric character occurs, change the case of first letter
+of each chunk to upper case, and put the chunks back together.  Examples:
+
+    Table Name  | Moniker Name
+    ---------------------------
+    luser       | Luser
+    luser_group | LuserGroup
+    luser-opts  | LuserOpts
 
 =head2 inflect_plural
 
-Just like L</moniker_map> above, but for pluralizing relationship names.
+Just like L</moniker_map> above (can be hash/code-ref, falls back to default
+if hash key does not exist or coderef returns false), but acts as a map
+for pluralizing relationship names.  The default behavior is to utilize
+L<Lingua::EN::Inflect::Number/to_PL>.
 
 =head2 inflect_singular
 
-Just like L</moniker_map> above, but for singularizing relationship names.
+As L</inflect_plural> above, but for singularizing relationship names.
+Default behavior is to utilize L<Lingua::EN::Inflect::Number/to_S>.
+
+=head2 additional_base_classes
+
+List of additional base classes all of your table classes will use.
+
+=head2 left_base_classes
+
+List of additional base classes all of your table classes will use
+that need to be leftmost.
+
+=head2 additional_classes
+
+List of additional classes which all of your table classes will use.
+
+=head2 components
+
+List of additional components to be loaded into all of your table
+classes.  A good example would be C<ResultSetManager>.
+
+=head2 resultset_components
+
+List of additional resultset components to be loaded into your table
+classes.  A good example would be C<AlwaysRS>.  Component
+C<ResultSetManager> will be automatically added to the above
+C<components> list if this option is set.
+
+=head1 DEPRECATED CONSTRUCTOR OPTIONS
 
 =head2 inflect_map
 
-Deprecated.  Equivalent to L</inflect_plural>.
+Equivalent to L</inflect_plural>.
 
 =head2 inflect
 
-Deprecated.  Equivalent to L</inflect_plural>.
+Equivalent to L</inflect_plural>.
 
-=head2 connect_info
+=head2 connect_info, dsn, user, password, options
 
-DEPRECATED, just use C<__PACKAGE__->connection()> instead, like you would
+Just use C<__PACKAGE__-E<gt>connection()> instead, like you would
 with any other L<DBIx::Class::Schema> (see those docs for details).
 Similarly, if you wish to use a non-default storage_type, use
-C<__PACKAGE__->storage_type()>.
-
-=head2 dsn
-
-DEPRECATED, see above...
-
-=head2 user
-
-DEPRECATED, see above...
-
-=head2 password
-
-DEPRECATED, see above...
-
-=head2 options
-
-DEPRECATED, see above...
+C<__PACKAGE__-E<gt>storage_type()>.
 
 =head1 METHODS
+
+None of these methods are intended for direct invocation by regular
+users of L<DBIx::Class::Schema::Loader>.  Anything you can find here
+can also be found via standard L<DBIx::Class::Schema> methods somehow.
 
 =cut
 
@@ -199,7 +206,7 @@ sub _load_external {
         $table_class->require;
         if($@ && $@ !~ /^Can't locate /) {
             croak "Failed to load external class definition"
-                  . "for '$table_class': $@";
+                  . " for '$table_class': $@";
         }
         elsif(!$@) {
             warn qq/# Loaded external class definition for '$table_class'\n/
@@ -210,8 +217,7 @@ sub _load_external {
 
 =head2 load
 
-Does the actual schema-construction work, used internally by
-L<DBIx::Class::Schema::Loader> right after object construction.
+Does the actual schema-construction work.
 
 =cut
 
@@ -343,8 +349,6 @@ sub _load_classes {
 Returns a sorted list of loaded tables, using the original database table
 names.
 
-  my @tables = $schema->loader->tables;
-
 =cut
 
 sub tables {
@@ -422,29 +426,11 @@ name, in the case that the two are different (such as databases
 that like uppercase table names, or preserve your original mixed-case
 definitions, or what-have-you).
 
-  my $monikers = $schema->loader->monikers;
-  my $foo_tbl_moniker = $monikers->{foo_tbl};
-  # -or-
-  my $foo_tbl_moniker = $schema->loader->monikers->{foo_tbl};
-  # $foo_tbl_moniker would look like "FooTbl"
-
 =head2 classes
 
 Returns a hashref of table-to-classname mappings.  In some cases it will
 contain multiple entries per table for the original and normalized table
-names, as above in C<#monikers>.
-
-You probably shouldn't be using this for any normal or simple
-usage of your Schema.  The usual way to run queries on your tables is via
-C<$schema-E<gt>resultset('FooTbl')>, where C<FooTbl> is a moniker as
-returned by C<monikers> above.
-
-  my $classes = $schema->loader->classes;
-  my $foo_tbl_class = $classes->{foo_tbl};
-  # -or-
-  my $foo_tbl_class = $schema->loader->classes->{foo_tbl};
-  # $foo_tbl_class would look like "My::Schema::FooTbl",
-  #   assuming the schema class is "My::Schema"
+names, as above in L</monikers>.
 
 =head1 SEE ALSO
 

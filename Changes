@@ -1,8 +1,17 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.02999_06 Thu May 18 16:32:41 UTC 2006
+        - backwards compat with all earlier versions
+        - no longer requires schema class to have a connection
+        - correctly determine source class names in the rel code generator
+        - fixed mysql testing w/o InnoDB
+        - Writing guide updated
+        - docs updated
+        - various trivial updates / fixes
+
 0.02999_05 Sun Mar 26 06:46:09 UTC 2006
         - bugfixes to constraint/exclude code
-	- friendly warnings if we don't find any tables
+        - friendly warnings if we don't find any tables
         - inflect_map becomes inflect_plural and inflect_singular
         - Singularize relationship names where appropriate
         - Test updates

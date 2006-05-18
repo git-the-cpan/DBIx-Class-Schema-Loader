@@ -1,32 +1,36 @@
 ---
 name: DBIx-Class-Schema-Loader
-version: 0.02999_05
+version: 0.02999_06
 author:
   - 'Brandon Black, C<blblack@gmail.com>'
 abstract: Dynamic definition of a DBIx::Class::Schema
 license: perl
+resources:
+  license: http://dev.perl.org/licenses/
 requires:
   Class::Accessor::Fast: 0.22
   Class::C3: 0.11
   Class::Data::Accessor: 0.02
   DBIx::Class: 0.06
+  Lingua::EN::Inflect: 1.89
   Lingua::EN::Inflect::Number: 1.1
   Text::Balanced: 0
   UNIVERSAL::require: 0.1
+build_requires:
+  DBD::SQLite: 1.12
+  DBI: 1.5
+  Test::More: 0.32
 recommends:
   Class::Inspector: 0
   DBD::DB2: 0.78
-  DBD::Pg: 1.45
-  DBD::SQLite: 1.11
-  DBD::mysql: 3.0002
-build_requires:
-  DBD::SQLite: 1.11
+  DBD::Pg: 1.49
+  DBD::SQLite: 1.12
+  DBD::mysql: 3.0003
   DBI: 1.5
-  Test::More: 0.32
 provides:
   DBIx::Class::Schema::Loader:
     file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.02999_05
+    version: 0.02999_06
   DBIx::Class::Schema::Loader::Base:
     file: lib/DBIx/Class/Schema/Loader/Base.pm
   DBIx::Class::Schema::Loader::DBI:
@@ -37,10 +41,13 @@ provides:
     file: lib/DBIx/Class/Schema/Loader/DBI/Pg.pm
   DBIx::Class::Schema::Loader::DBI::SQLite:
     file: lib/DBIx/Class/Schema/Loader/DBI/SQLite.pm
+  DBIx::Class::Schema::Loader::DBI::Writing:
+    file: lib/DBIx/Class/Schema/Loader/DBI/Writing.pm
   DBIx::Class::Schema::Loader::DBI::mysql:
     file: lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
   DBIx::Class::Schema::Loader::RelBuilder:
     file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
-  DBIx::Class::Schema::Loader::Writing:
-    file: lib/DBIx/Class/Schema/Loader/Writing.pm
-generated_by: Module::Build version 0.2612
+generated_by: Module::Build version 0.28
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.2.html
+  version: 1.2

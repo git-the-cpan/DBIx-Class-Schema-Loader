@@ -62,6 +62,7 @@ sub new {
         bless $self, "DBIx::Class::Schema::Loader::DBI::${driver}";
     }
 
+    # Set up the default quoting character and name seperators
     $self->{_quoter} = $self->schema->storage->sql_maker->quote_char
                     || $dbh->get_info(29)
                     || q{"};
@@ -70,6 +71,8 @@ sub new {
                      || $dbh->get_info(41)
                      || q{.};
 
+    # For our usage as regex matches, concatenating multiple quoter
+    # values works fine (e.g. s/\Q<>\E// if quoter was [ '<', '>' ])
     if( ref $self->{_quoter} eq 'ARRAY') {
         $self->{_quoter} = join(q{}, @{$self->{_quoter}});
     }

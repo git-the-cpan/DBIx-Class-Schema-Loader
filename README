@@ -6,32 +6,10 @@ SYNOPSIS
       package My::Schema;
       use base qw/DBIx::Class::Schema::Loader/;
 
-      sub _monikerize {
-          my $name = shift;
-          $name = join '', map ucfirst, split /[\W_]+/, lc $name;
-          $name;
-      }
-
-      # __PACKAGE__->storage_type('::DBI'); # <- this is the default anyways
-      __PACKAGE__->connection(
-        "dbi:mysql:dbname",
-        "root",
-        "mypassword",
-        { AutoCommit => 1 },
-      );
-
-      __PACKAGE__->load_from_connection(
-        relationships           => 1,
-        constraint              => '^foo.*',
-        inflect_plural          => { child => 'children' },
-        inflect_singular        => { children => 'child' },
-        moniker_map             => \&_monikerize,
-        additional_classes      => [qw/DBIx::Class::Foo/],
-        additional_base_classes => [qw/My::Stuff/],
-        left_base_classes       => [qw/DBIx::Class::Bar/],
-        components              => [qw/ResultSetManager/],
-        resultset_components    => [qw/AlwaysRS/],
-        debug                   => 1,
+      __PACKAGE__->loader_options(
+          relationships           => 1,
+          constraint              => '^foo.*',
+          # debug                 => 1,
       );
 
       # in seperate application code ...
@@ -40,23 +18,7 @@ SYNOPSIS
 
       my $schema1 = My::Schema->connect( $dsn, $user, $password, $attrs);
       # -or-
-      my $schema1 = "My::Schema";
-      # ^^ defaults to dsn/user/pass from load_from_connection()
-
-      # Get a list of the original (database) names of the tables that
-      #  were loaded
-      my @tables = $schema1->loader->tables;
-
-      # Get a hashref of table_name => 'TableName' table-to-moniker
-      #   mappings.
-      my $monikers = $schema1->loader->monikers;
-
-      # Get a hashref of table_name => 'My::Schema::TableName'
-      #   table-to-classname mappings.
-      my $classes = $schema1->loader->classes;
-
-      # Use the schema as per normal for DBIx::Class::Schema
-      my $rs = $schema1->resultset($monikers->{foo_table})->search(...);
+      my $schema1 = "My::Schema"; $schema1->connection(as above);
 
 DESCRIPTION
     DBIx::Class::Schema::Loader automates the definition of a
@@ -89,22 +51,19 @@ DESCRIPTION
     down the road.
 
 METHODS
-  load_from_connection
-    Example in Synopsis above demonstrates the available arguments. For
-    detailed information on the arguments, see the
+  loader_options
+    Example in Synopsis above demonstrates a few common arguments. For
+    detailed information on all of the arguments, see the
     DBIx::Class::Schema::Loader::Base documentation.
 
-  loader
-    This is an accessor in the generated Schema class for accessing the
-    DBIx::Class::Schema::Loader::Base -based loader object that was used
-    during construction. See the DBIx::Class::Schema::Loader::Base docs for
-    more information on the available loader methods there.
+    This method is *required*, for backwards compatibility reasons. If you
+    do not wish to change any options, just call it with an empty argument
+    list during schema class initialization.
 
-KNOWN BUGS
-    Aside from relationship definitions being less than ideal in general,
-    this version is known not to handle the case of multiple relationships
-    between the same pair of tables. All of the relationship code will be
-    overhauled on the way to 0.03, at which time that bug will be addressed.
+  connection
+    See DBIx::Class::Schema::Loader. Our local override here is to hook in
+    the main functionality of the loader, which occurs at the time the
+    connection is specified for a given schema class/object.
 
 EXAMPLE
     Using the example in DBIx::Class::Manual::ExampleSchema as a basis
@@ -114,16 +73,63 @@ EXAMPLE
 
       use base qw/DBIx::Class::Schema::Loader/;
 
-      __PACKAGE__->connection('dbi:SQLite:example.db');
-      __PACKAGE__->load_from_connection(
+      __PACKAGE__->loader_options(
           relationships => 1,
           debug         => 1,
       );
+      __PACKAGE__->connection('dbi:SQLite:example.db');
 
       1;
 
     and remove the Main directory tree (optional). Every thing else should
     work the same
+
+DEPRECATED METHODS
+    You don't need to read anything in this section unless you're upgrading
+    code that was written against pre-0.03 versions of this module. This
+    version is intended to be backwards-compatible with pre-0.03 code, but
+    will issue warnings about your usage of deprecated features/methods.
+
+  load_from_connection
+    This deprecated method is now roughly an alias for "loader_options".
+
+    In the past it was a common idiom to invoke this method after defining a
+    connection on the schema class. That usage is now deprecated. The
+    correct way to do things from now forward is to always do
+    "loader_options" on the class before "connect" or "connection" is
+    invoked on the class or any derived object.
+
+    This method *will* dissappear in a future version.
+
+    For now, using this method will invoke the legacy behavior for backwards
+    compatibility, and merely emit a warning about upgrading your code.
+
+    It also reverts the default inflection scheme to use Lingua::EN::Inflect
+    just like pre-0.03 versions of this module did.
+
+    You can force these legacy inflections with the option
+    "legacy_default_inflections", even after switch over to the preferred
+    "loader_options" way of doing things.
+
+    See the source of this method for more details.
+
+  loader
+    This is an accessor in the generated Schema class for accessing the
+    DBIx::Class::Schema::Loader::Base -based loader object that was used
+    during construction. See the DBIx::Class::Schema::Loader::Base docs for
+    more information on the available loader methods there.
+
+    This accessor is deprecated. Do not use it. Anything you can get from
+    "loader", you can get via the normal DBIx::Class::Schema methods, and
+    your code will be more robust and forward-thinking for doing so.
+
+    If you're already using "loader" in your code, make an effort to get rid
+    of it. If you think you've found a situation where it is neccesary, let
+    me know and we'll see what we can do to remedy that situation.
+
+    In some future version, this accessor *will* disappear. It was
+    apparently quite a design/API mistake to ever have exposed it to
+    user-land in the first place, all things considered.
 
 AUTHOR
     Brandon Black, "blblack@gmail.com"

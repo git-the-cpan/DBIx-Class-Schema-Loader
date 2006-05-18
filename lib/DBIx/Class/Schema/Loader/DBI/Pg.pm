@@ -14,13 +14,7 @@ DBIx::Class::Schema::Loader::DBI::Pg - DBIx::Class::Schema::Loader Postgres Impl
   package My::Schema;
   use base qw/DBIx::Class::Schema::Loader/;
 
-  __PACKAGE__->connection(
-    dsn       => "dbi:Pg:dbname=dbname",
-    user      => "postgres",
-    password  => "",
-  );
-
-  __PACKAGE__->load_from_connection(
+  __PACKAGE__->loader_options(
     relationships => 1,
   );
 
@@ -28,14 +22,7 @@ DBIx::Class::Schema::Loader::DBI::Pg - DBIx::Class::Schema::Loader Postgres Impl
 
 =head1 DESCRIPTION
 
-See L<DBIx::Class::Schema::Loader>.
-
-=head1 METHODS
-
-=head2 load
-
-Overlays L<DBIx::Class::Schema::Loader::Base>'s C<load()> to default the postgres
-schema to C<public> rather than blank.
+See L<DBIx::Class::Schema::Loader::Base>.
 
 =cut
 
@@ -82,7 +69,8 @@ sub _table_uniq_info {
 
 =head1 SEE ALSO
 
-L<DBIx::Class::Schema::Loader>
+L<DBIx::Class::Schema::Loader>, L<DBIx::Class::Schema::Loader::Base>,
+L<DBIx::Class::Schema::Loader::DBI>
 
 =cut
 
