@@ -61,9 +61,14 @@ METHODS
     list during schema class initialization.
 
   connection
-    See DBIx::Class::Schema::Loader. Our local override here is to hook in
-    the main functionality of the loader, which occurs at the time the
-    connection is specified for a given schema class/object.
+    See DBIx::Class::Schema. Our local override here is to hook in the main
+    functionality of the loader, which occurs at the time the connection is
+    specified for a given schema class/object.
+
+  clone
+    See DBIx::Class::Schema. Our local override here is to make sure cloned
+    schemas can still be loaded at runtime by copying and altering a few
+    things here.
 
 EXAMPLE
     Using the example in DBIx::Class::Manual::ExampleSchema as a basis
@@ -130,6 +135,23 @@ DEPRECATED METHODS
     In some future version, this accessor *will* disappear. It was
     apparently quite a design/API mistake to ever have exposed it to
     user-land in the first place, all things considered.
+
+KNOWN ISSUES
+  Multiple Database Schemas
+    Currently the loader is limited to working within a single schema (using
+    the database vendors' definition of "schema"). If you have a
+    multi-schema database with inter-schema relationships (which is easy to
+    do in Postgres or DB2 for instance), you only get to automatically load
+    the tables of one schema, and any relationships to tables in other
+    schemas will be silently ignored.
+
+    At some point in the future, an intelligent way around this might be
+    devised, probably by allowing the "db_schema" option to be an arrayref
+    of schemas to load, or perhaps even offering schema constraint/exclusion
+    options just like the table ones.
+
+    In "normal" DBIx::Class::Schema usage, manually-defined source classes
+    and relationships have no problems crossing vendor schemas.
 
 AUTHOR
     Brandon Black, "blblack@gmail.com"

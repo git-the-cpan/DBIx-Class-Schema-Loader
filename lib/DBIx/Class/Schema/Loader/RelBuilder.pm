@@ -23,7 +23,7 @@ is module is not (yet) for external use.
 
 =head2 new
 
-Arguments: schema_class (scalar), fk_info (hashref) [, inflect_map ]
+Arguments: schema_class (scalar), fk_info (hashref), inflect_plural, inflect_singular
 
 C<$schema_class> should be a schema class name, where the source
 classes have already been set up and registered.  Column info, primary
@@ -47,9 +47,8 @@ The fk_info hashref's contents should take the form:
       # ...
   }
 
-And inflect_map is documented at L<DBIx::Class::Schema::Loader>, either a coderef
-or a hashref which can override the default L<Lingua::EN::Inflect::Number>
-pluralizations.  Used in generating relationship names.
+Options inflect_plural and inflect_singular are optional, and are better documented
+in L<DBIx::Class::Schema::Loader::Base>.
 
 =head2 generate_code
 
@@ -156,10 +155,12 @@ sub generate_code {
         
         my %counters;
         foreach my $rel (@$rels) {
+            next if !$rel->{remote_source};
             $counters{$rel->{remote_source}}++;
         }
 
         foreach my $rel (@$rels) {
+            next if !$rel->{remote_source};
             my $local_cols = $rel->{local_columns};
             my $remote_cols = $rel->{remote_columns};
             my $remote_moniker = $rel->{remote_source};

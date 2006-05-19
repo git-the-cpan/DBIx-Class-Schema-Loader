@@ -5,6 +5,7 @@ my %arguments = (
     license            => 'perl',
     module_name        => 'DBIx::Class::Schema::Loader',
     requires           => {
+        'Data::Dump'                    => 1.06,
         'UNIVERSAL::require'            => 0.10,
         'Lingua::EN::Inflect'           => 1.89,
         'Lingua::EN::Inflect::Number'   => 1.1,

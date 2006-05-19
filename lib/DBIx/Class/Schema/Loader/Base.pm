@@ -7,10 +7,12 @@ use Class::C3;
 use Carp;
 use UNIVERSAL::require;
 use DBIx::Class::Schema::Loader::RelBuilder;
+use Data::Dump qw/ dump /;
 require DBIx::Class;
 
 __PACKAGE__->mk_ro_accessors(qw/
                                 schema
+                                schema_class
 
                                 exclude
                                 constraint
@@ -24,6 +26,7 @@ __PACKAGE__->mk_ro_accessors(qw/
                                 inflect_singular
                                 inflect_plural
                                 debug
+                                dump_directory
 
                                 legacy_default_inflections
 
@@ -57,7 +60,18 @@ Try to automatically detect/setup has_a and has_many relationships.
 
 =head2 debug
 
-Enable debug messages.
+Dump information about the created schema classes to stderr.
+
+=head2 dump_directory
+
+If this option is set, it will be treated as a perl libdir, and within
+that directory this module will create a baseline manual
+L<DBIx::Class::Schema> module set in that directory, based on what it
+normally creates at runtime in memory, very similar to the C<debug> output.
+The directory must already exist, and it would be wise to examine the output
+before manually copying this over into your real libdirs.  As a precaution,
+this will *not* overwrite any existing files (it will prefer to C<die>
+in that case).
 
 =head2 constraint
 
@@ -124,6 +138,15 @@ classes.  A good example would be C<AlwaysRS>.  Component
 C<ResultSetManager> will be automatically added to the above
 C<components> list if this option is set.
 
+=head2 legacy_default_inflections
+
+Setting this option changes the default fallback for L</inflect_plural> to
+utilize L<Lingua::EN::Inflect/PL>, and L</inflect_singlular> to a no-op.
+Those choices produce substandard results, but might be neccesary to support
+your existing code if you started developing on a version prior to 0.03 and
+don't wish to go around updating all your relationship names to the new
+defaults.
+
 =head1 DEPRECATED CONSTRUCTOR OPTIONS
 
 =head2 inflect_map
@@ -136,10 +159,10 @@ Equivalent to L</inflect_plural>.
 
 =head2 connect_info, dsn, user, password, options
 
-Just use C<__PACKAGE__-E<gt>connection()> instead, like you would
-with any other L<DBIx::Class::Schema> (see those docs for details).
-Similarly, if you wish to use a non-default storage_type, use
-C<__PACKAGE__-E<gt>storage_type()>.
+You connect these schemas the same way you would any L<DBIx::Class::Schema>,
+which is by calling either C<connect> or C<connection> on a schema class
+or object.  These options are only supported via the deprecated
+C<load_from_connection> interface, which will be removed in the future.
 
 =head1 METHODS
 
@@ -196,6 +219,8 @@ sub new {
     }
     $self->{inflect_plural} ||= $self->{inflect_map} || $self->{inflect};
 
+    $self->{schema_class} = ref $self->{schema} || $self->{schema};
+
     $self;
 }
 
@@ -224,15 +249,27 @@ Does the actual schema-construction work.
 sub load {
     my $self = shift;
 
-    warn qq/\### START DBIx::Class::Schema::Loader dump ###\n/
-        if $self->debug;
-
     $self->_load_classes;
     $self->_load_relationships if $self->relationships;
     $self->_load_external;
 
-    warn qq/\### END DBIx::Class::Schema::Loader dump ###\n/
-        if $self->debug;
+    if($self->dump_directory) {
+        warn qq/\### XXX NOT IMPLEMENTED YET (dump directory) ###\n/;
+    }
+    elsif($self->debug) {
+        my $schema_class = $self->schema_class;
+        warn qq|\### DEBUG OUTPUT:\n\n|;
+        warn qq|package $schema_class;\n\nuse strict;\nuse warnings;\n\n|;
+        warn qq|use base 'DBIx::Class::Schema';\n\n|;
+        warn qq|__PACKAGE__->load_classes;\n|;
+        warn qq|\n1;\n\n|;
+        foreach my $source (sort keys %{$self->{_debug_storage}}) {
+            warn qq|package $source;\n\nuse strict;\nuse warnings;\n\n|;
+            warn qq|use base 'DBIx::Class';\n\n|;
+            warn qq|\__PACKAGE__->$_\n| for @{$self->{_debug_storage}->{$source}};
+            warn qq|\n1;\n\n|;
+        }
+    }
 
     1;
 }
@@ -251,11 +288,11 @@ sub _use {
 sub _inject {
     my $self = shift;
     my $target = shift;
-    my $schema = $self->schema;
+    my $schema_class = $self->schema_class;
 
     foreach (@_) {
         $_->require or croak ($_ . "->require: $@");
-        $schema->inject_base($target, $_);
+        $schema_class->inject_base($target, $_);
     }
 }
 
@@ -263,7 +300,7 @@ sub _inject {
 sub _load_classes {
     my $self = shift;
 
-    my $schema     = $self->schema;
+    my $schema_class     = $self->schema_class;
 
     my $constraint = $self->constraint;
     my $exclude = $self->exclude;
@@ -283,7 +320,7 @@ sub _load_classes {
 
     foreach my $table (@tables) {
         my $table_moniker = $self->_table2moniker($table);
-        my $table_class = $schema . q{::} . $table_moniker;
+        my $table_class = $schema_class . q{::} . $table_moniker;
 
         my $table_normalized = lc $table;
         $self->classes->{$table} = $table_class;
@@ -312,35 +349,29 @@ sub _load_classes {
         my $table_class = $self->classes->{$table};
         my $table_moniker = $self->monikers->{$table};
 
-        warn qq/$table_class->table('$table');\n/ if $self->debug;
         $table_class->table($table);
+        $self->_debug_store($table_class,'table',$table);
 
         my $cols = $self->_table_columns($table);
-        warn qq/$table_class->add_columns(/
-           . join(q{,}, map { qq{'$_'} } @$cols)
-           . qq/);\n/
-               if $self->debug;
         $table_class->add_columns(@$cols);
+        $self->_debug_store($table_class,'add_columns',@$cols);
 
         my $pks = $self->_table_pk_info($table) || [];
         if(@$pks) {
-            warn qq/$table_class->set_primary_key(/
-               . join(q{,}, map { "'$_'" } @$pks)
-               . qq/);\n/ if $self->debug;
             $table_class->set_primary_key(@$pks);
+            $self->_debug_store($table_class,'set_primary_key',@$pks);
         }
         else {
             carp("$table has no primary key");
         }
 
-        # XXX need uniqs debug dump, and really need to clean
-        #  up all of these with a Dumper-like thing
         my $uniqs = $self->_table_uniq_info($table) || [];
         foreach my $uniq (@$uniqs) {
             $table_class->add_unique_constraint( @$uniq );
+            $self->_debug_store($table_class,'add_unique_constraint',@$uniq);
         }
 
-        $schema->register_class($table_moniker, $table_class);
+        $schema_class->register_class($table_moniker, $table_class);
     }
 }
 
@@ -393,7 +424,7 @@ sub _load_relationships {
 
     # Let RelBuilder take over from here
     my $relbuilder = DBIx::Class::Schema::Loader::RelBuilder->new(
-        $self->schema, \%fk_info, $self->inflect_plural,
+        $self->schema_class, \%fk_info, $self->inflect_plural,
         $self->inflect_singular
     );
     $relbuilder->setup_rels($self->debug);
@@ -417,6 +448,20 @@ sub _table_fk_info { croak "ABSTRACT METHOD" }
 
 # Returns an array of lower case table names
 sub _tables_list { croak "ABSTRACT METHOD" }
+
+sub _debug_store {
+    my $self = shift;
+    return if !$self->debug && !$self->dump_directory;
+
+    my ($source, $method, @args) = @_;
+
+    my $args = @args > 1
+        ? dump(@args)
+        : '(' . dump(@args) . ')';
+
+    push(@{$self->{_debug_storage}->{$source}}, $method . $args);
+}
+
 
 =head2 monikers
 

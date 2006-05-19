@@ -11,10 +11,11 @@ use Class::C3;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.02999_06';
+our $VERSION = '0.02999_07';
 
 __PACKAGE__->mk_classaccessor('loader');
 __PACKAGE__->mk_classaccessor('_loader_args');
+__PACKAGE__->mk_classaccessor('_loaded');
 
 =head1 NAME
 
@@ -106,12 +107,15 @@ sub _invoke_loader {
     $self->loader($impl->new(%{$self->_loader_args}));
     $self->loader->load;
 
+    my $class = ref $self || $self;
+    $class->_loaded(1);
+
     $self;
 }
 
 =head2 connection
 
-See L<DBIx::Class::Schema::Loader>.  Our local override here is to
+See L<DBIx::Class::Schema>.  Our local override here is to
 hook in the main functionality of the loader, which occurs at the time
 the connection is specified for a given schema class/object.
 
@@ -119,11 +123,28 @@ the connection is specified for a given schema class/object.
 
 sub connection {
     my $self = shift;
+
     $self->next::method(@_);
 
-    $self->_invoke_loader if $self->_loader_args;
+    my $class = ref $self || $self;
+    $self->_invoke_loader if $self->_loader_args && !$class->_loaded;
 
     $self;
+}
+
+=head2 clone
+
+See L<DBIx::Class::Schema>.  Our local override here is to
+make sure cloned schemas can still be loaded at runtime by
+copying and altering a few things here.
+
+=cut
+
+sub clone {
+    my $self = shift;
+
+    my $clone = $self->next::method(@_);
+    return $clone->_loader_args->{schema} = $clone;
 }
 
 =head1 EXAMPLE
@@ -182,11 +203,25 @@ See the source of this method for more details.
 =cut
 
 sub load_from_connection {
-    my $self = shift;
+    my ($self, %args) = @_;
     warn "load_from_connection deprecated, please (re-)read the"
       . "DBIx::Class::Schema::Loader documentation";
-    $self->loader_options('legacy_default_inflections' => 1, @_);
-    $self->_invoke_loader if $self->storage->connect_info;
+
+    # Support the old connect_info / dsn / etc args...
+    $args{connect_info} = [
+        delete $args{dsn},
+        delete $args{user},
+        delete $args{password},
+        delete $args{options},
+    ] if $args{dsn};
+
+    $self->connection(@{delete $args{connect_info}})
+        if $args{connect_info};
+
+    $self->loader_options('legacy_default_inflections' => 1, %args);
+
+    my $class = ref $self || $self;
+    $self->_invoke_loader if $self->storage && !$class->_loaded;
 }
 
 =head2 loader
@@ -210,6 +245,25 @@ that situation.
 In some future version, this accessor *will* disappear.  It was
 apparently quite a design/API mistake to ever have exposed it to
 user-land in the first place, all things considered.
+
+=head1 KNOWN ISSUES
+
+=head2 Multiple Database Schemas
+
+Currently the loader is limited to working within a single schema
+(using the database vendors' definition of "schema").  If you
+have a multi-schema database with inter-schema relationships (which
+is easy to do in Postgres or DB2 for instance), you only get to
+automatically load the tables of one schema, and any relationships
+to tables in other schemas will be silently ignored.
+
+At some point in the future, an intelligent way around this might be
+devised, probably by allowing the C<db_schema> option to be an
+arrayref of schemas to load, or perhaps even offering schema
+constraint/exclusion options just like the table ones.
+
+In "normal" L<DBIx::Class::Schema> usage, manually-defined
+source classes and relationships have no problems crossing vendor schemas.
 
 =head1 AUTHOR
 

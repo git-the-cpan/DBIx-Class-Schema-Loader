@@ -17,8 +17,8 @@ See L<DBIx::Class::Schema::Loader::Base>
 
 =head1 DESCRIPTION
 
-This is the base class for L<DBIx::Class::Schema::Loader> DBI-based storage
-backends and implements the common functionality between them.
+This is the base class for L<DBIx::Class::Schema::Loader::Base> classes for
+DBI-based storage backends, and implements the common functionality between them.
 
 See L<DBIx::Class::Schema::Loader::Base> for the available options.
 
@@ -26,29 +26,13 @@ See L<DBIx::Class::Schema::Loader::Base> for the available options.
 
 =head2 new
 
-Overlays L<DBIx::Class::Schema::Loader::Base/new> to add support for
-deprecated connect_info and dsn/user/password/options args, and to
-rebless into a vendor class if neccesary.
+Overlays L<DBIx::Class::Schema::Loader::Base/new> to do some DBI-specific
+things.
 
 =cut
 
 sub new {
     my $self = shift->next::method(@_);
-
-    # Support deprecated connect_info and dsn args
-    if($self->{connect_info}) {
-        warn "Argument connect_info is deprecated";
-        $self->schema->connection(@{$self->{connect_info}});
-    }
-    elsif($self->{dsn}) {
-        warn "Arguments dsn, user, password, and options are deprecated";
-        $self->schema->connection(
-            $self->{dsn},
-            $self->{user},
-            $self->{password},
-            $self->{options},
-        );
-    }
 
     # rebless to vendor-specific class if it exists and loads
     my $dbh = $self->schema->storage->dbh;
@@ -103,6 +87,10 @@ sub _table_columns {
 
     my $dbh = $self->schema->storage->dbh;
 
+    if($self->{db_schema}) {
+        $table = $self->{db_schema} . $self->{_namesep} . $table;
+    }
+
     my $sth = $dbh->prepare("SELECT * FROM $table WHERE 1=0");
     $sth->execute;
     return \@{$sth->{NAME_lc}};
@@ -128,8 +116,8 @@ sub _table_fk_info {
     my ($self, $table) = @_;
 
     my $dbh = $self->schema->storage->dbh;
-    my $sth = $dbh->foreign_key_info( '',
-        $self->db_schema, '', '', '', $table );
+    my $sth = $dbh->foreign_key_info( '', '', '', '',
+        $self->db_schema, $table );
     return [] if !$sth;
 
     my %rels;
