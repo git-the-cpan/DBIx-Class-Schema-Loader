@@ -11,8 +11,9 @@ use Class::C3;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.02999_07';
+our $VERSION = '0.02999_08';
 
+__PACKAGE__->mk_classaccessor('dump_to_dir');
 __PACKAGE__->mk_classaccessor('loader');
 __PACKAGE__->mk_classaccessor('_loader_args');
 __PACKAGE__->mk_classaccessor('_loaded');
@@ -96,6 +97,8 @@ sub loader_options {
 sub _invoke_loader {
     my $self = shift;
 
+    $self->_loader_args->{dump_directory} = $self->dump_to_dir;
+
     # XXX this only works for relative storage_type, like ::DBI ...
     my $impl = "DBIx::Class::Schema::Loader" . $self->storage_type;
     $impl->require or
@@ -103,7 +106,7 @@ sub _invoke_loader {
             qq/"$UNIVERSAL::require::ERROR"/;
 
     # XXX in the future when we get rid of ->loader, the next two
-    # lines can be replaced by "$impl->new(%{$self->{_loader_args}})->load;"
+    # lines can be replaced by "$impl->new(%{$self->_loader_args})->load;"
     $self->loader($impl->new(%{$self->_loader_args}));
     $self->loader->load;
 
@@ -145,6 +148,62 @@ sub clone {
 
     my $clone = $self->next::method(@_);
     return $clone->_loader_args->{schema} = $clone;
+}
+
+=head2 dump_to_dir
+
+Argument: directory name.
+
+Calling this as a class method on either L<DBIx::Class::Schema::Loader>
+or any derived schema class will cause all affected schemas to dump
+manual versions of themselves to the named directory when they are
+loaded.  In order to be effective, this must be set before defining a
+connection on this schema class or any derived object (as the loading
+happens at connection time, and only once per class).
+
+See L<DBIx::Class::Schema::Loader::Base/dump_directory> for more
+details on the dumping mechanism.
+
+This can also be set at module import time via the import option
+C<dump_to_dir:/foo/bar> to L<DBIx::Class::Schema::Loader>, where
+C</foo/bar> is the target directory.
+
+Examples:
+
+    # My::Schema isa DBIx::Class::Schema::Loader, and has connection info
+    #   hardcoded in the class itself:
+    perl -MDBIx::Class::Schema::Loader=dump_to_dir:/foo/bar -MMy::Schema -e1
+
+    # Same, but no hard-coded connection, so we must provide one:
+    perl -MDBIx::Class::Schema::Loader=dump_to_dir:/foo/bar -MMy::Schema -e 'My::Schema->connection("dbi:Pg:dbname=foo", ...)'
+
+    # Or as a class method, as long as you get it done *before* defining a
+    #  connection on this schema class or any derived object:
+    use My::Schema;
+    My::Schema->dump_to_dir('/foo/bar');
+    My::Schema->connection(........);
+
+    # Or as a class method on the DBIx::Class::Schema::Loader itself, which affects all
+    #   derived schemas
+    use My::Schema;
+    use My::OtherSchema;
+    DBIx::Class::Schema::Loader->dump_to_dir('/foo/bar');
+    My::Schema->connection(.......);
+    My::OtherSchema->connection(.......);
+
+    # Another alternative to the above:
+    use DBIx::Class::Schema::Loader qw| dump_to_dir:/foo/bar |;
+    use My::Schema;
+    use My::OtherSchema;
+    My::Schema->connection(.......);
+    My::OtherSchema->connection(.......);
+
+=cut
+
+sub import {
+    my ($self, $opt) = @_;
+    return if !$opt;
+    $self->dump_to_dir($1) if $opt =~ m{^dump_to_dir:(.*)$};
 }
 
 =head1 EXAMPLE

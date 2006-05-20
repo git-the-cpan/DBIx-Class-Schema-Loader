@@ -60,18 +60,8 @@ Try to automatically detect/setup has_a and has_many relationships.
 
 =head2 debug
 
-Dump information about the created schema classes to stderr.
-
-=head2 dump_directory
-
-If this option is set, it will be treated as a perl libdir, and within
-that directory this module will create a baseline manual
-L<DBIx::Class::Schema> module set in that directory, based on what it
-normally creates at runtime in memory, very similar to the C<debug> output.
-The directory must already exist, and it would be wise to examine the output
-before manually copying this over into your real libdirs.  As a precaution,
-this will *not* overwrite any existing files (it will prefer to C<die>
-in that case).
+If set to true, each constructive L<DBIx::Class> statement the loader
+decides to execute will be C<warn>-ed before execution.
 
 =head2 constraint
 
@@ -146,6 +136,30 @@ Those choices produce substandard results, but might be neccesary to support
 your existing code if you started developing on a version prior to 0.03 and
 don't wish to go around updating all your relationship names to the new
 defaults.
+
+=head2 dump_directory
+
+This option is designed to be a tool to help you transition from this
+loader to a manually-defined schema when you decide it's time to do so.
+
+The value of this option is a perl libdir pathname.  Within
+that directory this module will create a baseline manual
+L<DBIx::Class::Schema> module set, based on what it creates at runtime
+in memory.
+
+The created schema class will have the same classname as the one on
+which you are setting this option (and the ResultSource classes will be
+based on this name as well).  Therefore it is wise to note that if you
+point the C<dump_directory> option of a schema class at the live libdir
+where that class is currently located, it will overwrite itself with a
+manual version of itself.  This might be a really good or bad thing
+depending on your situation and perspective.
+
+Normally you wouldn't hardcode this setting in your schema class, as it
+is meant for one-time manual usage.
+
+See L<DBIx::Class::Schema::Loader/dump_to_dir> for examples of the
+recommended way to access this functionality.
 
 =head1 DEPRECATED CONSTRUCTOR OPTIONS
 
@@ -252,26 +266,75 @@ sub load {
     $self->_load_classes;
     $self->_load_relationships if $self->relationships;
     $self->_load_external;
-
-    if($self->dump_directory) {
-        warn qq/\### XXX NOT IMPLEMENTED YET (dump directory) ###\n/;
-    }
-    elsif($self->debug) {
-        my $schema_class = $self->schema_class;
-        warn qq|\### DEBUG OUTPUT:\n\n|;
-        warn qq|package $schema_class;\n\nuse strict;\nuse warnings;\n\n|;
-        warn qq|use base 'DBIx::Class::Schema';\n\n|;
-        warn qq|__PACKAGE__->load_classes;\n|;
-        warn qq|\n1;\n\n|;
-        foreach my $source (sort keys %{$self->{_debug_storage}}) {
-            warn qq|package $source;\n\nuse strict;\nuse warnings;\n\n|;
-            warn qq|use base 'DBIx::Class';\n\n|;
-            warn qq|\__PACKAGE__->$_\n| for @{$self->{_debug_storage}->{$source}};
-            warn qq|\n1;\n\n|;
-        }
-    }
+    $self->_dump_to_dir if $self->dump_directory;
 
     1;
+}
+
+sub _get_dump_filename {
+    my ($self, $class) = (@_);
+
+    $class =~ s{::}{/}g;
+    return $self->dump_directory . q{/} . $class . q{.pm};
+}
+
+sub _ensure_dump_subdirs {
+    my ($self, $class) = (@_);
+
+    my @name_parts = split(/::/, $class);
+    pop @name_parts;
+    my $dir = $self->dump_directory;
+    foreach (@name_parts) {
+        $dir .= q{/} . $_;
+        if(! -d $dir) {
+            mkdir($dir) or die "mkdir('$dir') failed: $!";
+        }
+    }
+}
+
+sub _dump_to_dir {
+    my ($self) = @_;
+
+    my $target_dir = $self->dump_directory;
+
+    die "Must specify target directory for dumping!" if ! $target_dir;
+
+    warn "Dumping manual schema to $target_dir ...\n";
+
+    if(! -d $target_dir) {
+        mkdir($target_dir) or die "mkdir('$target_dir') failed: $!";
+    }
+
+    my $schema_class = $self->schema_class;
+    $self->_ensure_dump_subdirs($schema_class);
+
+    my $schema_fn = $self->_get_dump_filename($schema_class);
+    open(my $schema_fh, '>', $schema_fn)
+        or die "Cannot open $schema_fn for writing: $!";
+    print $schema_fh qq|package $schema_class;\n\n|;
+    print $schema_fh qq|use strict;\nuse warnings;\n\n|;
+    print $schema_fh qq|use base 'DBIx::Class::Schema';\n\n|;
+    print $schema_fh qq|__PACKAGE__->load_classes;\n|;
+    print $schema_fh qq|\n1;\n\n|;
+    close($schema_fh)
+        or die "Cannot close $schema_fn: $!";
+
+    foreach my $src_class (sort keys %{$self->{_dump_storage}}) {
+        $self->_ensure_dump_subdirs($src_class);
+        my $src_fn = $self->_get_dump_filename($src_class);
+        open(my $src_fh, '>', $src_fn)
+            or die "Cannot open $src_fn for writing: $!";
+        print $src_fh qq|package $src_class;\n\n|;
+        print $src_fh qq|use strict;\nuse warnings;\n\n|;
+        print $src_fh qq|use base 'DBIx::Class';\n\n|;
+        print $src_fh qq|\__PACKAGE__->$_\n|
+            for @{$self->{_dump_storage}->{$src_class}};
+        print $src_fh qq|\n1;\n\n|;
+        close($src_fh)
+            or die "Cannot close $src_fn: $!";
+    }
+
+    warn "Schema dump completed.\n";
 }
 
 sub _use {
@@ -337,7 +400,9 @@ sub _load_classes {
         }
         $self->_use   ($table_class, @{$self->additional_classes});
         $self->_inject($table_class, @{$self->additional_base_classes});
-        $table_class->load_components(@{$self->components}, qw/PK::Auto Core/);
+
+        $self->_dbic_stmt($table_class, 'load_components', @{$self->components}, qw/PK::Auto Core/);
+
         $table_class->load_resultset_components(@{$self->resultset_components})
             if @{$self->resultset_components};
         $self->_inject($table_class, @{$self->left_base_classes});
@@ -349,27 +414,17 @@ sub _load_classes {
         my $table_class = $self->classes->{$table};
         my $table_moniker = $self->monikers->{$table};
 
-        $table_class->table($table);
-        $self->_debug_store($table_class,'table',$table);
+        $self->_dbic_stmt($table_class,'table',$table);
 
         my $cols = $self->_table_columns($table);
-        $table_class->add_columns(@$cols);
-        $self->_debug_store($table_class,'add_columns',@$cols);
+        $self->_dbic_stmt($table_class,'add_columns',@$cols);
 
         my $pks = $self->_table_pk_info($table) || [];
-        if(@$pks) {
-            $table_class->set_primary_key(@$pks);
-            $self->_debug_store($table_class,'set_primary_key',@$pks);
-        }
-        else {
-            carp("$table has no primary key");
-        }
+        @$pks ? $self->_dbic_stmt($table_class,'set_primary_key',@$pks)
+              : carp("$table has no primary key");
 
         my $uniqs = $self->_table_uniq_info($table) || [];
-        foreach my $uniq (@$uniqs) {
-            $table_class->add_unique_constraint( @$uniq );
-            $self->_debug_store($table_class,'add_unique_constraint',@$uniq);
-        }
+        $self->_dbic_stmt($table_class,'add_unique_constraint',@$_) for (@$uniqs);
 
         $schema_class->register_class($table_moniker, $table_class);
     }
@@ -422,12 +477,18 @@ sub _load_relationships {
         $fk_info{$moniker} = $tbl_fk_info;
     }
 
-    # Let RelBuilder take over from here
     my $relbuilder = DBIx::Class::Schema::Loader::RelBuilder->new(
         $self->schema_class, \%fk_info, $self->inflect_plural,
         $self->inflect_singular
     );
-    $relbuilder->setup_rels($self->debug);
+
+    my $rel_stmts = $relbuilder->generate_code;
+    foreach my $src_class (sort keys %$rel_stmts) {
+        my $src_stmts = $rel_stmts->{$src_class};
+        foreach my $stmt (@$src_stmts) {
+            $self->_dbic_stmt($src_class,$stmt->{method},@{$stmt->{args}});
+        }
+    }
 }
 
 # Overload these in driver class:
@@ -449,19 +510,27 @@ sub _table_fk_info { croak "ABSTRACT METHOD" }
 # Returns an array of lower case table names
 sub _tables_list { croak "ABSTRACT METHOD" }
 
-sub _debug_store {
+# Execute a constructive DBIC class method, with debug/dump_to_dir hooks.
+sub _dbic_stmt {
     my $self = shift;
-    return if !$self->debug && !$self->dump_directory;
+    my $class = shift;
+    my $method = shift;
 
-    my ($source, $method, @args) = @_;
+    if(!$self->debug && !$self->dump_directory) {
+        $class->$method(@_);
+        return 1;
+    }
 
-    my $args = @args > 1
-        ? dump(@args)
-        : '(' . dump(@args) . ')';
+    my $args = dump(@_);
+    $args = '(' . $args . ')' if @_ < 2;
+    my $stmt = $method . $args . q{;};
+    
+    warn qq|$class\->$stmt\n| if $self->debug;
+    $class->$method(@_);
+    push(@{$self->{_dump_storage}->{$class}}, $stmt) if $self->dump_directory;
 
-    push(@{$self->{_debug_storage}->{$source}}, $method . $args);
+    1;
 }
-
 
 =head2 monikers
 

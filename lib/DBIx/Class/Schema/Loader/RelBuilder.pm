@@ -71,15 +71,6 @@ You might want to use this in building an on-disk source class file, by
 adding each string to the appropriate source class file,
 prefixed by C<__PACKAGE__-E<gt>>.
 
-=head2 setup_rels
-
-Arguments: debug (boolean)
-
-Basically, calls L<#generate_code>, and then evals the generated code in
-the appropriate class context, all in one fell swoop.  This is how Schema::Loader
-uses this class.  Will dump the strings to stderr along the way if C<$debug> is
-set.
-
 =cut
 
 sub new {
@@ -132,15 +123,6 @@ sub _inflect_singular {
     return $self->{legacy_default_inflections}
         ? $relname
         : Lingua::EN::Inflect::Number::to_S($relname);
-}
-
-# not a class method, just a helper for generate_code
-sub _stringify_hash {
-    my $href = shift;
-
-    return '{ ' .
-           join(q{, }, map("'$_' => '$href->{$_}'", keys %$href))
-           . ' }';
 }
 
 sub generate_code {
@@ -209,34 +191,27 @@ sub generate_code {
                 delete $rev_cond{$_};
             }
 
-            my $cond_printable = _stringify_hash(\%cond);
-            my $rev_cond_printable = _stringify_hash(\%rev_cond);
-
             push(@{$all_code->{$local_class}},
-                qq{belongs_to( '$remote_relname' => '$remote_moniker'}
-              . qq{, $cond_printable);});
- 
+                { method => 'belongs_to',
+                  args => [ $remote_relname,
+                            $remote_moniker,
+                            \%cond,
+                  ],
+                }
+            );
+
             push(@{$all_code->{$remote_class}},
-                qq{has_many( '$local_relname' => '$local_moniker'}
-              . qq{, $rev_cond_printable);});
-       }
+                { method => 'has_many',
+                  args => [ $local_relname,
+                            $local_moniker,
+                            \%rev_cond,
+                  ],
+                }
+            );
+        }
     }
 
     return $all_code;
-}
-
-sub setup_rels {
-    my ($self, $debug) = @_;
-
-    my $codes = $self->generate_code;
-    foreach my $src_class (sort keys %$codes) {
-        foreach my $code (@{$codes->{$src_class}}) {
-            my $to_eval = $src_class . '->' . $code;
-            warn "$to_eval\n" if $debug;
-            eval $to_eval;
-            die $@ if $@;
-        }
-    }
 }
 
 1;

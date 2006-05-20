@@ -1,5 +1,15 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.02999_08 Sat May 20 22:36:45 UTC 2006
+        - support for dumping to a directory for
+          conversion to manual DBIx::Class::Schema
+        - improved debugging output
+        - more documentation updates
+        - more backwards compatibility fixes
+        - runtime connection definitions (and cloning) work fine now.
+        - A couple of bugfixes related to db vendor "schemas", including
+          a fix for http://rt.cpan.org/Public/Bug/Display.html?id=19164
+
 0.02999_06 Thu May 18 16:32:41 UTC 2006
         - backwards compat with all earlier versions
         - no longer requires schema class to have a connection

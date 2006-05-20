@@ -70,6 +70,53 @@ METHODS
     schemas can still be loaded at runtime by copying and altering a few
     things here.
 
+  dump_to_dir
+    Argument: directory name.
+
+    Calling this as a class method on either DBIx::Class::Schema::Loader or
+    any derived schema class will cause all affected schemas to dump manual
+    versions of themselves to the named directory when they are loaded. In
+    order to be effective, this must be set before defining a connection on
+    this schema class or any derived object (as the loading happens at
+    connection time, and only once per class).
+
+    See "dump_directory" in DBIx::Class::Schema::Loader::Base for more
+    details on the dumping mechanism.
+
+    This can also be set at module import time via the import option
+    "dump_to_dir:/foo/bar" to DBIx::Class::Schema::Loader, where "/foo/bar"
+    is the target directory.
+
+    Examples:
+
+        # My::Schema isa DBIx::Class::Schema::Loader, and has connection info
+        #   hardcoded in the class itself:
+        perl -MDBIx::Class::Schema::Loader=dump_to_dir:/foo/bar -MMy::Schema -e1
+
+        # Same, but no hard-coded connection, so we must provide one:
+        perl -MDBIx::Class::Schema::Loader=dump_to_dir:/foo/bar -MMy::Schema -e 'My::Schema->connection("dbi:Pg:dbname=foo", ...)'
+
+        # Or as a class method, as long as you get it done *before* defining a
+        #  connection on this schema class or any derived object:
+        use My::Schema;
+        My::Schema->dump_to_dir('/foo/bar');
+        My::Schema->connection(........);
+
+        # Or as a class method on the DBIx::Class::Schema::Loader itself, which affects all
+        #   derived schemas
+        use My::Schema;
+        use My::OtherSchema;
+        DBIx::Class::Schema::Loader->dump_to_dir('/foo/bar');
+        My::Schema->connection(.......);
+        My::OtherSchema->connection(.......);
+
+        # Another alternative to the above:
+        use DBIx::Class::Schema::Loader qw| dump_to_dir:/foo/bar |;
+        use My::Schema;
+        use My::OtherSchema;
+        My::Schema->connection(.......);
+        My::OtherSchema->connection(.......);
+
 EXAMPLE
     Using the example in DBIx::Class::Manual::ExampleSchema as a basis
     replace the DB::Main with the following code:
