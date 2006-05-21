@@ -7,7 +7,7 @@ use Class::C3;
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::DBI::mysql - DBIx::Schema::Class::Loader mysql Implementation.
+DBIx::Class::Schema::Loader::DBI::mysql - DBIx::Class::Schema::Loader::DBI mysql Implementation.
 
 =head1 SYNOPSIS
 

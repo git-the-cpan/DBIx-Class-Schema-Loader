@@ -109,7 +109,10 @@ sub _table_pk_info {
 }
 
 # Override this for uniq info
-sub _table_uniq_info { croak "ABSTRACT METHOD" }
+sub _table_uniq_info {
+    warn "No UNIQUE information can be gathered for this vendor";
+    return [];
+}
 
 # Find relationships
 sub _table_fk_info {

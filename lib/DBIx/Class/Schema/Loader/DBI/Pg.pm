@@ -7,7 +7,7 @@ use Class::C3;
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::DBI::Pg - DBIx::Class::Schema::Loader Postgres Implementation.
+DBIx::Class::Schema::Loader::DBI::Pg - DBIx::Class::Schema::Loader::DBI Postgres Implementation.
 
 =head1 SYNOPSIS
 

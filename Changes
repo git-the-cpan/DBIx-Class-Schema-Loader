@@ -1,5 +1,15 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.02999_09 Sun May 21 23:26:58 UTC 2006
+        - More docs improvements
+        - default uniq_info just warns and returns nothing now,
+          instead of dying.  In theory, this allows unsupported
+          DBD drivers to potentially work with this module, if
+          the generic methods happen to work for that vendor.
+        - New tests for the various current and legacy/deprecated
+          methods of connecting a Schema::Loader class/object.
+        - Bugfix to the new runtime object connect/load code.
+
 0.02999_08 Sat May 20 22:36:45 UTC 2006
         - support for dumping to a directory for
           conversion to manual DBIx::Class::Schema

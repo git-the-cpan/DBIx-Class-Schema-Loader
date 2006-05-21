@@ -8,7 +8,7 @@ use Text::Balanced qw( extract_bracketed );
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::DBI::SQLite - DBIx::Class::Schema::Loader SQLite Implementation.
+DBIx::Class::Schema::Loader::DBI::SQLite - DBIx::Class::Schema::Loader::DBI SQLite Implementation.
 
 =head1 SYNOPSIS
 

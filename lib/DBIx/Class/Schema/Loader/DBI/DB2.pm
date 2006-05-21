@@ -7,7 +7,7 @@ use Class::C3;
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::DBI::DB2 - DBIx::Class::Schema::Loader DB2 Implementation.
+DBIx::Class::Schema::Loader::DBI::DB2 - DBIx::Class::Schema::Loader::DBI DB2 Implementation.
 
 =head1 SYNOPSIS
 

@@ -233,7 +233,8 @@ sub new {
     }
     $self->{inflect_plural} ||= $self->{inflect_map} || $self->{inflect};
 
-    $self->{schema_class} = ref $self->{schema} || $self->{schema};
+    $self->{schema_class} ||= ( ref $self->{schema} || $self->{schema} );
+    $self->{schema} ||= $self->{schema_class};
 
     $self;
 }
@@ -363,6 +364,7 @@ sub _inject {
 sub _load_classes {
     my $self = shift;
 
+    my $schema     = $self->schema;
     my $schema_class     = $self->schema_class;
 
     my $constraint = $self->constraint;
@@ -427,6 +429,7 @@ sub _load_classes {
         $self->_dbic_stmt($table_class,'add_unique_constraint',@$_) for (@$uniqs);
 
         $schema_class->register_class($table_moniker, $table_class);
+        $schema->register_class($table_moniker, $table_class) if $schema ne $schema_class;
     }
 }
 
