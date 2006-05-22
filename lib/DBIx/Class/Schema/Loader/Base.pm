@@ -8,6 +8,7 @@ use Carp;
 use UNIVERSAL::require;
 use DBIx::Class::Schema::Loader::RelBuilder;
 use Data::Dump qw/ dump /;
+use POSIX qw//;
 require DBIx::Class;
 
 __PACKAGE__->mk_ro_accessors(qw/
@@ -248,9 +249,33 @@ sub _load_external {
             croak "Failed to load external class definition"
                   . " for '$table_class': $@";
         }
-        elsif(!$@) {
-            warn qq/# Loaded external class definition for '$table_class'\n/
-                if $self->debug;
+        next if $@; # "Can't locate" error
+
+        # If we make it to here, we loaded an external definition
+        warn qq/# Loaded external class definition for '$table_class'\n/
+            if $self->debug;
+
+        if($self->dump_directory) {
+            my $class_path = $table_class;
+            $class_path =~ s{::}{/}g;
+            my $filename = $INC{$class_path};
+            croak 'Failed to locate actual external module file for '
+                  . "'$table_class'"
+                      if !$filename;
+            open(my $fh, '<', $filename)
+                or croak "Failed to open $filename for reading: $!";
+            $self->_raw_stmt($table_class,
+                q|# These lines loaded from user-supplied external file: |
+            );
+            while(<$fh>) {
+                chomp;
+                $self->_raw_stmt($table_class, $_);
+            }
+            $self->_raw_stmt($table_class,
+                q|# End of lines loaded from user-supplied external file |
+            );
+            close($fh)
+                or croak "Failed to close $filename: $!";
         }
     }
 }
@@ -306,13 +331,17 @@ sub _dump_to_dir {
         mkdir($target_dir) or die "mkdir('$target_dir') failed: $!";
     }
 
+    my $verstr = $DBIx::Class::Schema::Loader::VERSION;
+    my $datestr = POSIX::strftime('%Y-%m-%d %H:%M:%S', localtime);
+    my $tagline = qq|# Created by DBIx::Class::Schema::Loader v$verstr @ $datestr|;
+
     my $schema_class = $self->schema_class;
     $self->_ensure_dump_subdirs($schema_class);
 
     my $schema_fn = $self->_get_dump_filename($schema_class);
     open(my $schema_fh, '>', $schema_fn)
         or die "Cannot open $schema_fn for writing: $!";
-    print $schema_fh qq|package $schema_class;\n\n|;
+    print $schema_fh qq|package $schema_class;\n\n$tagline\n\n|;
     print $schema_fh qq|use strict;\nuse warnings;\n\n|;
     print $schema_fh qq|use base 'DBIx::Class::Schema';\n\n|;
     print $schema_fh qq|__PACKAGE__->load_classes;\n|;
@@ -325,10 +354,10 @@ sub _dump_to_dir {
         my $src_fn = $self->_get_dump_filename($src_class);
         open(my $src_fh, '>', $src_fn)
             or die "Cannot open $src_fn for writing: $!";
-        print $src_fh qq|package $src_class;\n\n|;
+        print $src_fh qq|package $src_class;\n\n$tagline\n\n|;
         print $src_fh qq|use strict;\nuse warnings;\n\n|;
         print $src_fh qq|use base 'DBIx::Class';\n\n|;
-        print $src_fh qq|\__PACKAGE__->$_\n|
+        print $src_fh qq|$_\n|
             for @{$self->{_dump_storage}->{$src_class}};
         print $src_fh qq|\n1;\n\n|;
         close($src_fh)
@@ -344,6 +373,8 @@ sub _use {
 
     foreach (@_) {
         $_->require or croak ($_ . "->require: $@");
+        $self->_raw_stmt($target, "use $_;");
+        warn "$target: use $_" if $self->debug;
         eval "package $target; use $_;";
         croak "use $_: $@" if $@;
     }
@@ -354,6 +385,9 @@ sub _inject {
     my $target = shift;
     my $schema_class = $self->schema_class;
 
+    my $blist = join(q{ }, @_);
+    $self->_raw_stmt($target, "use base qw/ $blist /;") if @_;
+    warn "$target: use base qw/ $blist /" if $self->debug;
     foreach (@_) {
         $_->require or croak ($_ . "->require: $@");
         $schema_class->inject_base($target, $_);
@@ -405,7 +439,7 @@ sub _load_classes {
 
         $self->_dbic_stmt($table_class, 'load_components', @{$self->components}, qw/PK::Auto Core/);
 
-        $table_class->load_resultset_components(@{$self->resultset_components})
+        $self->_dbic_stmt($table_class, 'load_resultset_components', @{$self->resultset_components})
             if @{$self->resultset_components};
         $self->_inject($table_class, @{$self->left_base_classes});
     }
@@ -521,18 +555,22 @@ sub _dbic_stmt {
 
     if(!$self->debug && !$self->dump_directory) {
         $class->$method(@_);
-        return 1;
+        return;
     }
 
     my $args = dump(@_);
     $args = '(' . $args . ')' if @_ < 2;
     my $stmt = $method . $args . q{;};
-    
+
     warn qq|$class\->$stmt\n| if $self->debug;
     $class->$method(@_);
-    push(@{$self->{_dump_storage}->{$class}}, $stmt) if $self->dump_directory;
+    $self->_raw_stmt($class, '__PACKAGE__->' . $stmt);
+}
 
-    1;
+# Store a raw source line for a class (for dumping purposes)
+sub _raw_stmt {
+    my ($self, $class, $stmt) = @_;
+    push(@{$self->{_dump_storage}->{$class}}, $stmt) if $self->dump_directory;
 }
 
 =head2 monikers

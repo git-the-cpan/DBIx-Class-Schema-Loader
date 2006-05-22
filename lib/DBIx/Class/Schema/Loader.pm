@@ -7,11 +7,12 @@ use base qw/Class::Data::Accessor/;
 use Carp;
 use UNIVERSAL::require;
 use Class::C3;
+use Data::Dump qw/ dump /;
 
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.02999_09';
+our $VERSION = '0.02999_10';
 
 __PACKAGE__->mk_classaccessor('dump_to_dir');
 __PACKAGE__->mk_classaccessor('loader');
@@ -39,9 +40,7 @@ DBIx::Class::Schema::Loader - Dynamic definition of a DBIx::Class::Schema
   my $schema1 = My::Schema->connect( $dsn, $user, $password, $attrs);
   # -or-
   my $schema1 = "My::Schema"; $schema1->connection(as above);
-
-=head1 DESCRIPTION
-
+=head1 DESCRIPTION 
 DBIx::Class::Schema::Loader automates the definition of a
 L<DBIx::Class::Schema> by scanning database table definitions and
 setting up the columns and primary keys.
@@ -81,7 +80,15 @@ argument list during schema class initialization.
 =cut
 
 sub loader_options {
-    my ( $self, %args ) = @_;
+    my $self = shift;
+    
+    my %args;
+    if(ref $_[0] eq 'HASH') {
+        %args = %{$_[0]};
+    }
+    else {
+        %args = @_;
+    }
 
     my $class = ref $self || $self;
     $args{schema} = $self;
@@ -96,7 +103,7 @@ sub _invoke_loader {
     my $self = shift;
     my $class = ref $self || $self;
 
-    $self->_loader_args->{dump_directory} = $self->dump_to_dir;
+    $self->_loader_args->{dump_directory} ||= $self->dump_to_dir;
 
     # XXX this only works for relative storage_type, like ::DBI ...
     my $impl = "DBIx::Class::Schema::Loader" . $self->storage_type;
@@ -200,9 +207,65 @@ Examples:
 =cut
 
 sub import {
-    my ($self, $opt) = @_;
-    return if !$opt;
-    $self->dump_to_dir($1) if $opt =~ m{^dump_to_dir:(.*)$};
+    my $self = shift;
+    return if !@_;
+    foreach my $opt (@_) {
+        if($opt =~ m{^dump_to_dir:(.*)$}) {
+            $self->dump_to_dir($1)
+        }
+        elsif($opt eq 'make_schema_at') {
+            no strict 'refs';
+            my $cpkg = (caller)[0];
+            *{"${cpkg}::make_schema_at"} = \&make_schema_at;
+        }
+    }
+}
+
+=head2 make_schema_at
+
+This simple function allows one to create a Loader-based schema
+in-memory on the fly without any on-disk class files of any
+kind.  When used with the C<dump_directory> option, you can
+use this to generate a rought draft manual schema from a dsn
+without the intermediate step of creating a physical Loader-based
+schema class.
+
+This function can be exported/imported by the normal means, as
+illustrated in these Examples:
+
+    # Simple example...
+    use DBIx::Class::Schema::Loader qw/ make_schema_at /;
+    make_schema_at(
+        'New::Schema::Name',
+        { relationships => 1, debug => 1 },
+        [ 'dbi:Pg:dbname="foo"','postgres' ],
+    );
+
+    # Complex: dump loaded schema to disk, all from the commandline:
+    perl -MDBIx::Class::Schema::Loader=make_schema_at,dump_to_dir:./lib -e 'make_schema_at("New::Schema::Name", { relationships => 1 }, [ 'dbi:Pg:dbname="foo"','postgres' ])'
+
+    # Same, but inside a script, and using a different way to specify the
+    # dump directory:
+    use DBIx::Class::Schema::Loader qw/ make_schema_at /;
+    make_schema_at(
+        'New::Schema::Name',
+        { relationships => 1, debug => 1, dump_directory => './lib' },
+        [ 'dbi:Pg:dbname="foo"','postgres' ],
+    );
+
+=cut
+
+sub make_schema_at {
+    my ($target, $opts, $connect_info) = @_;
+
+    my $opts_dumped = dump($opts);
+    my $cinfo_dumped = dump(@$connect_info);
+    eval qq|
+        package $target;
+        use base qw/DBIx::Class::Schema::Loader/;
+        __PACKAGE__->loader_options($opts_dumped);
+        __PACKAGE__->connection($cinfo_dumped);
+    |;
 }
 
 =head1 EXAMPLE

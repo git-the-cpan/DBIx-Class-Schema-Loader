@@ -19,11 +19,10 @@ SYNOPSIS
       my $schema1 = My::Schema->connect( $dsn, $user, $password, $attrs);
       # -or-
       my $schema1 = "My::Schema"; $schema1->connection(as above);
-
-DESCRIPTION
+    =head1 DESCRIPTION 
     DBIx::Class::Schema::Loader automates the definition of a
-    DBIx::Class::Schema by scanning database table definitions and setting
-    up the columns and primary keys.
+    L<DBIx::Class::Schema> by scanning database table definitions and
+    setting up the columns and primary keys.
 
     DBIx::Class::Schema::Loader currently supports DBI for MySQL, Postgres,
     SQLite and DB2.
@@ -111,6 +110,36 @@ METHODS
         use My::OtherSchema;
         My::Schema->connection(.......);
         My::OtherSchema->connection(.......);
+
+  make_schema_at
+    This simple function allows one to create a Loader-based schema
+    in-memory on the fly without any on-disk class files of any kind. When
+    used with the "dump_directory" option, you can use this to generate a
+    rought draft manual schema from a dsn without the intermediate step of
+    creating a physical Loader-based schema class.
+
+    This function can be exported/imported by the normal means, as
+    illustrated in these Examples:
+
+        # Simple example...
+        use DBIx::Class::Schema::Loader qw/ make_schema_at /;
+        make_schema_at(
+            'New::Schema::Name',
+            { relationships => 1, debug => 1 },
+            [ 'dbi:Pg:dbname="foo"','postgres' ],
+        );
+
+        # Complex: dump loaded schema to disk, all from the commandline:
+        perl -MDBIx::Class::Schema::Loader=make_schema_at,dump_to_dir:./lib -e 'make_schema_at("New::Schema::Name", { relationships => 1 }, [ 'dbi:Pg:dbname="foo"','postgres' ])'
+
+        # Same, but inside a script, and using a different way to specify the
+        # dump directory:
+        use DBIx::Class::Schema::Loader qw/ make_schema_at /;
+        make_schema_at(
+            'New::Schema::Name',
+            { relationships => 1, debug => 1, dump_directory => './lib' },
+            [ 'dbi:Pg:dbname="foo"','postgres' ],
+        );
 
 EXAMPLE
     Using the example in DBIx::Class::Manual::ExampleSchema as a basis

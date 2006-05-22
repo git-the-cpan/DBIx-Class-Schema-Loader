@@ -1,5 +1,10 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.02999_10 Mon May 22 18:58:20 UTC 2006
+        - a few more small bugfixes
+        - more dump/debug improvements
+        - new exportable function "make_schema_at"
+
 0.02999_09 Sun May 21 23:26:58 UTC 2006
         - More docs improvements
         - default uniq_info just warns and returns nothing now,
