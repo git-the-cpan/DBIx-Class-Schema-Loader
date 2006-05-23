@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class-Schema-Loader
-version: 0.02999_10
+version: 0.03000
 author:
   - 'Brandon Black, C<blblack@gmail.com>'
 abstract: Dynamic definition of a DBIx::Class::Schema
@@ -15,6 +15,7 @@ requires:
   Data::Dump: 1.06
   Lingua::EN::Inflect: 1.89
   Lingua::EN::Inflect::Number: 1.1
+  Scalar::Util: 0
   Text::Balanced: 0
   UNIVERSAL::require: 0.1
 build_requires:
@@ -31,7 +32,7 @@ recommends:
 provides:
   DBIx::Class::Schema::Loader:
     file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.02999_10
+    version: 0.03000
   DBIx::Class::Schema::Loader::Base:
     file: lib/DBIx/Class/Schema/Loader/Base.pm
   DBIx::Class::Schema::Loader::DBI:

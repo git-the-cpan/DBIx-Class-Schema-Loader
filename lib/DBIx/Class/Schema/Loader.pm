@@ -8,11 +8,12 @@ use Carp;
 use UNIVERSAL::require;
 use Class::C3;
 use Data::Dump qw/ dump /;
+use Scalar::Util qw/ weaken /;
 
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.02999_10';
+our $VERSION = '0.03000';
 
 __PACKAGE__->mk_classaccessor('dump_to_dir');
 __PACKAGE__->mk_classaccessor('loader');
@@ -40,7 +41,9 @@ DBIx::Class::Schema::Loader - Dynamic definition of a DBIx::Class::Schema
   my $schema1 = My::Schema->connect( $dsn, $user, $password, $attrs);
   # -or-
   my $schema1 = "My::Schema"; $schema1->connection(as above);
+
 =head1 DESCRIPTION 
+
 DBIx::Class::Schema::Loader automates the definition of a
 L<DBIx::Class::Schema> by scanning database table definitions and
 setting up the columns and primary keys.
@@ -93,6 +96,8 @@ sub loader_options {
     my $class = ref $self || $self;
     $args{schema} = $self;
     $args{schema_class} = $class;
+    weaken($args{schema}) if ref $self;
+
     $self->_loader_args(\%args);
     $self->_invoke_loader if $self->storage && !$class->loader;
 
@@ -122,9 +127,7 @@ sub _invoke_loader {
 
 =head2 connection
 
-See L<DBIx::Class::Schema>.  Our local override here is to
-hook in the main functionality of the loader, which occurs at the time
-the connection is specified for a given schema class/object.
+See L<DBIx::Class::Schema>.
 
 =cut
 
@@ -139,9 +142,7 @@ sub connection {
 
 =head2 clone
 
-See L<DBIx::Class::Schema>.  Our local override here is to
-make sure cloned schemas can still be loaded at runtime by
-copying and altering a few things here.
+See L<DBIx::Class::Schema>.
 
 =cut
 
@@ -152,6 +153,7 @@ sub clone {
 
     $clone->_loader_args($self->_loader_args);
     $clone->_loader_args->{schema} = $clone;
+    weaken($clone->_loader_args->{schema});
 
     $clone;
 }
@@ -165,7 +167,8 @@ or any derived schema class will cause all affected schemas to dump
 manual versions of themselves to the named directory when they are
 loaded.  In order to be effective, this must be set before defining a
 connection on this schema class or any derived object (as the loading
-happens at connection time, and only once per class).
+happens as soon as both a connection and loader_options are set, and
+only once per class).
 
 See L<DBIx::Class::Schema::Loader::Base/dump_directory> for more
 details on the dumping mechanism.
@@ -298,12 +301,6 @@ will issue warnings about your usage of deprecated features/methods.
 =head2 load_from_connection
 
 This deprecated method is now roughly an alias for L</loader_options>.
-
-In the past it was a common idiom to invoke this method
-after defining a connection on the schema class.  That usage is now
-deprecated.  The correct way to do things from now forward is to
-always do C<loader_options> on the class before C<connect> or
-C<connection> is invoked on the class or any derived object.
 
 This method *will* dissappear in a future version.
 
