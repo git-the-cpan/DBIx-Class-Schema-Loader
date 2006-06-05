@@ -34,14 +34,14 @@ sub _table_uniq_info {
 
     my $dbh = $self->schema->storage->dbh;
 
-    my $sth = $dbh->prepare(<<'SQL') or die;
-SELECT kcu.COLNAME, kcu.CONSTNAME, kcu.COLSEQ
-FROM SYSCAT.TABCONST as tc
-JOIN SYSCAT.KEYCOLUSE as kcu ON tc.CONSTNAME = kcu.CONSTNAME
-WHERE tc.TABSCHEMA = ? and tc.TABNAME = ? and tc.TYPE = 'U'
-SQL
+    my $sth = $self->{_cache}->{db2_uniq} ||= $dbh->prepare(
+        q{SELECT kcu.COLNAME, kcu.CONSTNAME, kcu.COLSEQ
+        FROM SYSCAT.TABCONST as tc
+        JOIN SYSCAT.KEYCOLUSE as kcu ON tc.CONSTNAME = kcu.CONSTNAME
+        WHERE tc.TABSCHEMA = ? and tc.TABNAME = ? and tc.TYPE = 'U'}
+    ) or die $DBI::errstr;
 
-    $sth->execute($self->db_schema, $table) or die;
+    $sth->execute($self->db_schema, $table) or die $DBI::errstr;
 
     my %keydata;
     while(my $row = $sth->fetchrow_arrayref) {
@@ -53,6 +53,7 @@ SQL
             @{$keydata{$keyname}};
         push(@uniqs, [ $keyname => \@ordered_cols ]);
     }
+
     $sth->finish;
     
     return \@uniqs;
