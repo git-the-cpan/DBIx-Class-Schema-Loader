@@ -13,7 +13,7 @@ use Scalar::Util qw/ weaken /;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.03001';
+our $VERSION = '0.03002';
 
 __PACKAGE__->mk_classaccessor('dump_to_dir');
 __PACKAGE__->mk_classaccessor('loader');
@@ -120,7 +120,6 @@ sub _invoke_loader {
     # lines can be replaced by "$impl->new(%{$self->_loader_args})->load;"
     $class->loader($impl->new(%{$self->_loader_args}));
     $class->loader->load;
-
 
     $self;
 }
@@ -270,6 +269,7 @@ sub make_schema_at {
         __PACKAGE__->loader_options($opts_dumped);
         __PACKAGE__->connection($cinfo_dumped);
     |;
+    croak "make_schema_at failed: $@" if $@;
 }
 
 =head1 EXAMPLE
