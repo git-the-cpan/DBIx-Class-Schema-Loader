@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class-Schema-Loader
-version: 0.03003
+version: 0.03004
 author:
   - 'Brandon Black, C<blblack@gmail.com>'
 abstract: Dynamic definition of a DBIx::Class::Schema
@@ -8,6 +8,7 @@ license: perl
 resources:
   license: http://dev.perl.org/licenses/
 requires:
+  Carp::Clan: 0
   Class::Accessor::Fast: 0.22
   Class::C3: 0.11
   Class::Data::Accessor: 0.02
@@ -32,7 +33,7 @@ recommends:
 provides:
   DBIx::Class::Schema::Loader:
     file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.03003
+    version: 0.03004
   DBIx::Class::Schema::Loader::Base:
     file: lib/DBIx/Class/Schema/Loader/Base.pm
   DBIx::Class::Schema::Loader::DBI:
@@ -49,7 +50,7 @@ provides:
     file: lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
   DBIx::Class::Schema::Loader::RelBuilder:
     file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
-generated_by: Module::Build version 0.28
+generated_by: Module::Build version 0.2801
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html
   version: 1.2

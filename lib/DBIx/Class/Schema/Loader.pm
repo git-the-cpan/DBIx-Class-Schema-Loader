@@ -4,16 +4,15 @@ use strict;
 use warnings;
 use base qw/DBIx::Class::Schema/;
 use base qw/Class::Data::Accessor/;
-use Carp;
+use Carp::Clan qw/^DBIx::Class/;
 use UNIVERSAL::require;
 use Class::C3;
-use Data::Dump qw/ dump /;
 use Scalar::Util qw/ weaken /;
 
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.03003';
+our $VERSION = '0.03004';
 
 __PACKAGE__->mk_classaccessor('dump_to_dir');
 __PACKAGE__->mk_classaccessor('loader');
@@ -46,10 +45,14 @@ DBIx::Class::Schema::Loader - Dynamic definition of a DBIx::Class::Schema
 
 DBIx::Class::Schema::Loader automates the definition of a
 L<DBIx::Class::Schema> by scanning database table definitions and
-setting up the columns and primary keys.
+setting up the columns, primary keys, and relationships.
 
-DBIx::Class::Schema::Loader currently supports DBI for MySQL,
-PostgreSQL, SQLite and DB2.
+DBIx::Class::Schema::Loader currently supports only the DBI storage type.
+It has explicit support for L<DBD::Pg>, L<DBD::mysql>, L<DBD::DB2>, and
+L<DBD::SQLite>.  Other DBI drivers may function to a greater or lesser
+degree with this loader, depending on how much of the DBI spec they
+implement, and how standard their implementation is.  Patches to make
+other DBDs work correctly welcome.
 
 See L<DBIx::Class::Schema::Loader::DBI::Writing> for notes on writing
 your own vendor-specific subclass for an unsupported DBD driver.
@@ -76,22 +79,24 @@ detailed information on all of the arguments, most of which are
 only useful in fairly complex scenarios, see the
 L<DBIx::Class::Schema::Loader::Base> documentation.
 
-This method is *required*, for backwards compatibility reasons.  If
-you do not wish to change any options, just call it with an empty
-argument list during schema class initialization.
+This method is *required* at this time, for backwards compatibility
+reasons.  If you do not wish to change any options, just call it
+with an empty argument list during schema class initialization.
+
+Setting these options explicitly via this method B<after> calling
+C<connection> is deprecated and will stop working in version 0.04000.
+For now the code merely warns about this condition.
+
+The preferred way of doing things is to either call C<loader_options>
+before any connection is made, or embed the C<loader_options> in
+the connection information itself as shown below.
 
 =cut
 
 sub loader_options {
     my $self = shift;
     
-    my %args;
-    if(ref $_[0] eq 'HASH') {
-        %args = %{$_[0]};
-    }
-    else {
-        %args = @_;
-    }
+    my %args = (ref $_[0] eq 'HASH') ? %{$_[0]} : @_;
 
     my $class = ref $self || $self;
     $args{schema} = $self;
@@ -99,7 +104,11 @@ sub loader_options {
     weaken($args{schema}) if ref $self;
 
     $self->_loader_args(\%args);
-    $self->_invoke_loader if $self->storage && !$class->loader;
+    if($self->storage && !$class->loader) {
+        warn "Do not set loader_options after specifying the connection info,"
+           . " this will be unsupported in 0.04000";
+        $self->_invoke_loader;
+    }
 
     $self;
 }
@@ -126,15 +135,37 @@ sub _invoke_loader {
 
 =head2 connection
 
-See L<DBIx::Class::Schema>.
+See L<DBIx::Class::Schema> for basic usage.
+
+If the final argument is a hashref, and it contains a key C<loader_options>,
+that key will be deleted, and its value will be used for the loader options,
+just as if set via the L</loader_options> method above.
+
+The actual auto-loading operation (the heart of this module) will be invoked
+as soon as the connection information is defined.
 
 =cut
 
 sub connection {
-    my $self = shift->next::method(@_);
+    my $self = shift;
+
+    if($_[-1] && ref $_[-1] eq 'HASH') {
+        if(my $loader_opts = delete $_[-1]->{loader_options}) {
+            $self->loader_options($loader_opts);
+            pop @_ if !keys %{$_[-1]};
+        }
+    }
+
+    $self = $self->next::method(@_);
 
     my $class = ref $self || $self;
-    $self->_invoke_loader if $self->_loader_args && !$class->loader;
+    if($self->_loader_args && !$class->loader) {
+        $self->_invoke_loader
+    }
+    else {
+        warn "loader_options should be set before connecting the "
+           . "schema, see the DBIx::Class::Schema::Loader docs";
+    }
 
     return $self;
 }
@@ -150,9 +181,10 @@ sub clone {
 
     my $clone = $self->next::method(@_);
 
-    $clone->_loader_args($self->_loader_args);
-    $clone->_loader_args->{schema} = $clone;
-    weaken($clone->_loader_args->{schema});
+    if($clone->_loader_args) {
+        $clone->_loader_args->{schema} = $clone;
+        weaken($clone->_loader_args->{schema});
+    }
 
     $clone;
 }
@@ -232,6 +264,8 @@ use this to generate a rough draft manual schema from a dsn
 without the intermediate step of creating a physical Loader-based
 schema class.
 
+The return value is the input class name.
+
 This function can be exported/imported by the normal means, as
 illustrated in these Examples:
 
@@ -261,15 +295,13 @@ illustrated in these Examples:
 sub make_schema_at {
     my ($target, $opts, $connect_info) = @_;
 
-    my $opts_dumped = dump($opts);
-    my $cinfo_dumped = dump(@$connect_info);
-    eval qq|
-        package $target;
-        use base qw/DBIx::Class::Schema::Loader/;
-        __PACKAGE__->loader_options($opts_dumped);
-        __PACKAGE__->connection($cinfo_dumped);
-    |;
-    croak "make_schema_at failed: $@" if $@;
+    {
+        no strict 'refs';
+        @{$target . '::ISA'} = qw/DBIx::Class::Schema::Loader/;
+    }
+
+    $target->loader_options($opts);
+    $target->connection(@$connect_info);
 }
 
 =head1 EXAMPLE
@@ -299,11 +331,12 @@ code that was written against pre-0.03 versions of this module.  This
 version is intended to be backwards-compatible with pre-0.03 code, but
 will issue warnings about your usage of deprecated features/methods.
 
+B<All of these deprecated methods will dissappear in version 0.04000>,
+and converting code that uses these methods should be trivial.
+
 =head2 load_from_connection
 
 This deprecated method is now roughly an alias for L</loader_options>.
-
-This method *will* disappear in a future version.
 
 For now, using this method will invoke the legacy behavior for
 backwards compatibility, and merely emit a warning about upgrading
@@ -314,8 +347,9 @@ use L<Lingua::EN::Inflect> just like pre-0.03 versions of this
 module did.
 
 You can force these legacy inflections with the
-option C<legacy_default_inflections>, even after switch over
-to the preferred L</loader_options> way of doing things.
+option L<DBIx::Class::Schema::Loader::Base/legacy_default_inflections>,
+even after switch over to the preferred L</loader_options> way of doing
+things.  That option will not go away until at least 0.05.
 
 See the source of this method for more details.
 
@@ -333,8 +367,9 @@ sub load_from_connection {
         warn 'You should regenerate your Model files, which may eliminate'
            . ' the following deprecation warning:';
     }
-    warn 'load_from_connection deprecated, please [re-]read the'
-       . ' [new] DBIx::Class::Schema::Loader documentation';
+    warn 'load_from_connection deprecated, and will dissappear in 0.04000, '
+       . 'please [re-]read the [new] DBIx::Class::Schema::Loader '
+       . 'documentation';
 
     # Support the old connect_info / dsn / etc args...
     $args{connect_info} = [
@@ -385,8 +420,7 @@ to tables in other schemas will be silently ignored.
 
 At some point in the future, an intelligent way around this might be
 devised, probably by allowing the C<db_schema> option to be an
-arrayref of schemas to load, or perhaps even offering schema
-constraint/exclusion options just like the table ones.
+arrayref of schemas to load.
 
 In "normal" L<DBIx::Class::Schema> usage, manually-defined
 source classes and relationships have no problems crossing vendor schemas.
@@ -401,9 +435,8 @@ Based upon the work of IKEBE Tomohiro
 
 =head1 THANK YOU
 
-Adam Anderson, Andy Grundman, Autrijus Tang, Dan Kubb, David Naughton,
-Randal Schwartz, Simon Flack, Matt S Trout, everyone on #dbix-class, and
-all the others who've helped.
+Matt S Trout, all of the #dbix-class folks, and everyone who's ever sent
+in a bug report or suggestion.
 
 =head1 LICENSE
 

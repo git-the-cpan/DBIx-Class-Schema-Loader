@@ -21,13 +21,9 @@ t/10sqlite_common.t
 t/11mysql_common.t
 t/12pg_common.t
 t/13db2_common.t
-t/20invoke_deprecated_one.t
-t/21invoke_deprecated_two.t
-t/22invoke_deprecated_three.t
-t/23invoke_hardcode.t
-t/24invoke_normal.t
-t/25invoke_inverse.t
-t/26invoke_classmeth.t
+t/20invocations.t
+t/21misc_fatal.t
+t/22dump.t
 t/lib/DBIx/Class/TestComponent.pm
 t/lib/DBIx/Class/TestRSComponent.pm
 t/lib/dbixcsl_common_tests.pm

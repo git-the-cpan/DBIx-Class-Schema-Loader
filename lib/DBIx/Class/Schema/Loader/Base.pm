@@ -4,7 +4,7 @@ use strict;
 use warnings;
 use base qw/Class::Accessor::Fast/;
 use Class::C3;
-use Carp;
+use Carp::Clan qw/^DBIx::Class/;
 use UNIVERSAL::require;
 use DBIx::Class::Schema::Loader::RelBuilder;
 use Data::Dump qw/ dump /;
@@ -28,6 +28,7 @@ __PACKAGE__->mk_ro_accessors(qw/
                                 inflect_plural
                                 debug
                                 dump_directory
+                                dump_overwrite
 
                                 legacy_default_inflections
 
@@ -63,6 +64,12 @@ Try to automatically detect/setup has_a and has_many relationships.
 
 If set to true, each constructive L<DBIx::Class> statement the loader
 decides to execute will be C<warn>-ed before execution.
+
+=head2 db_schema
+
+Set the name of the schema to load (schema in the sense that your database
+vendor means it).  Does not currently support loading more than one schema
+name.
 
 =head2 constraint
 
@@ -138,6 +145,10 @@ your existing code if you started developing on a version prior to 0.03 and
 don't wish to go around updating all your relationship names to the new
 defaults.
 
+This option will continue to be supported until at least version 0.05xxx,
+but may dissappear sometime thereafter.  It is recommended that you update
+your code to use the newer-style inflections when you have the time.
+
 =head2 dump_directory
 
 This option is designed to be a tool to help you transition from this
@@ -162,7 +173,15 @@ is meant for one-time manual usage.
 See L<DBIx::Class::Schema::Loader/dump_to_dir> for examples of the
 recommended way to access this functionality.
 
+=head2 dump_overwrite
+
+If set to a true value, the dumping code will overwrite existing files.
+The default is false, which means the dumping code will die if it encounters
+an existing file.
+
 =head1 DEPRECATED CONSTRUCTOR OPTIONS
+
+B<These will be removed in version 0.04000 !!!>
 
 =head2 inflect_map
 
@@ -177,7 +196,7 @@ Equivalent to L</inflect_plural>.
 You connect these schemas the same way you would any L<DBIx::Class::Schema>,
 which is by calling either C<connect> or C<connection> on a schema class
 or object.  These options are only supported via the deprecated
-C<load_from_connection> interface, which will be removed in the future.
+C<load_from_connection> interface, which is also being removed in 0.04000.
 
 =head1 METHODS
 
@@ -230,7 +249,8 @@ sub new {
     # Support deprecated arguments
     for(qw/inflect_map inflect/) {
         warn "Argument $_ is deprecated in favor of 'inflect_plural'"
-            if $self->{$_};
+           . ", and will be removed in 0.04000"
+                if $self->{$_};
     }
     $self->{inflect_plural} ||= $self->{inflect_map} || $self->{inflect};
 
@@ -317,7 +337,7 @@ sub _ensure_dump_subdirs {
     foreach (@name_parts) {
         $dir .= q{/} . $_;
         if(! -d $dir) {
-            mkdir($dir) or die "mkdir('$dir') failed: $!";
+            mkdir($dir) or croak "mkdir('$dir') failed: $!";
         }
     }
 }
@@ -326,14 +346,15 @@ sub _dump_to_dir {
     my ($self) = @_;
 
     my $target_dir = $self->dump_directory;
+
     my $schema_class = $self->schema_class;
 
-    die "Must specify target directory for dumping!" if ! $target_dir;
+    croak "Must specify target directory for dumping!" if ! $target_dir;
 
     warn "Dumping manual schema for $schema_class to directory $target_dir ...\n";
 
     if(! -d $target_dir) {
-        mkdir($target_dir) or die "mkdir('$target_dir') failed: $!";
+        mkdir($target_dir) or croak "mkdir('$target_dir') failed: $!";
     }
 
     my $verstr = $DBIx::Class::Schema::Loader::VERSION;
@@ -343,21 +364,25 @@ sub _dump_to_dir {
     $self->_ensure_dump_subdirs($schema_class);
 
     my $schema_fn = $self->_get_dump_filename($schema_class);
+    croak "$schema_fn exists, will not overwrite"
+        if -f $schema_fn && !$self->dump_overwrite;
     open(my $schema_fh, '>', $schema_fn)
-        or die "Cannot open $schema_fn for writing: $!";
+        or croak "Cannot open $schema_fn for writing: $!";
     print $schema_fh qq|package $schema_class;\n\n$tagline\n\n|;
     print $schema_fh qq|use strict;\nuse warnings;\n\n|;
     print $schema_fh qq|use base 'DBIx::Class::Schema';\n\n|;
     print $schema_fh qq|__PACKAGE__->load_classes;\n|;
     print $schema_fh qq|\n1;\n\n|;
     close($schema_fh)
-        or die "Cannot close $schema_fn: $!";
+        or croak "Cannot close $schema_fn: $!";
 
     foreach my $src_class (sort keys %{$self->{_dump_storage}}) {
         $self->_ensure_dump_subdirs($src_class);
         my $src_fn = $self->_get_dump_filename($src_class);
+        croak "$src_fn exists, will not overwrite"
+            if -f $src_fn && !$self->dump_overwrite;
         open(my $src_fh, '>', $src_fn)
-            or die "Cannot open $src_fn for writing: $!";
+            or croak "Cannot open $src_fn for writing: $!";
         print $src_fh qq|package $src_class;\n\n$tagline\n\n|;
         print $src_fh qq|use strict;\nuse warnings;\n\n|;
         print $src_fh qq|use base 'DBIx::Class';\n\n|;
@@ -365,7 +390,7 @@ sub _dump_to_dir {
             for @{$self->{_dump_storage}->{$src_class}};
         print $src_fh qq|\n1;\n\n|;
         close($src_fh)
-            or die "Cannot close $src_fn: $!";
+            or croak "Cannot close $src_fn: $!";
     }
 
     warn "Schema dump completed.\n";
@@ -374,14 +399,16 @@ sub _dump_to_dir {
 sub _use {
     my $self = shift;
     my $target = shift;
+    my $evalstr;
 
     foreach (@_) {
-        $_->require or croak ($_ . "->require: $@");
+        warn "$target: use $_;" if $self->debug;
         $self->_raw_stmt($target, "use $_;");
-        warn "$target: use $_" if $self->debug;
-        eval "package $target; use $_;";
-        croak "use $_: $@" if $@;
+        $_->require or croak ($_ . "->require: $@");
+        $evalstr .= "package $target; use $_;";
     }
+    eval $evalstr if $evalstr;
+    croak $@ if $@;
 }
 
 sub _inject {
@@ -390,8 +417,8 @@ sub _inject {
     my $schema_class = $self->schema_class;
 
     my $blist = join(q{ }, @_);
+    warn "$target: use base qw/ $blist /;" if $self->debug && @_;
     $self->_raw_stmt($target, "use base qw/ $blist /;") if @_;
-    warn "$target: use base qw/ $blist /" if $self->debug;
     foreach (@_) {
         $_->require or croak ($_ . "->require: $@");
         $schema_class->inject_base($target, $_);
@@ -402,12 +429,11 @@ sub _inject {
 sub _load_classes {
     my $self = shift;
 
-    my $schema     = $self->schema;
-    my $schema_class     = $self->schema_class;
-
-    my $constraint = $self->constraint;
-    my $exclude = $self->exclude;
-    my @tables = sort $self->_tables_list;
+    my $schema       = $self->schema;
+    my $schema_class = $self->schema_class;
+    my $constraint   = $self->constraint;
+    my $exclude      = $self->exclude;
+    my @tables       = sort $self->_tables_list;
 
     warn "No tables found in database, nothing to load" if !@tables;
 
@@ -435,9 +461,8 @@ sub _load_classes {
         local *Class::C3::reinitialize = sub { };
         use warnings;
 
-        { no strict 'refs';
-          @{"${table_class}::ISA"} = qw/DBIx::Class/;
-        }
+        { no strict 'refs'; @{"${table_class}::ISA"} = qw/DBIx::Class/ }
+
         $self->_use   ($table_class, @{$self->additional_classes});
         $self->_inject($table_class, @{$self->additional_base_classes});
 
@@ -457,7 +482,18 @@ sub _load_classes {
         $self->_dbic_stmt($table_class,'table',$table);
 
         my $cols = $self->_table_columns($table);
-        $self->_dbic_stmt($table_class,'add_columns',@$cols);
+        my $col_info;
+        eval { $col_info = $schema->storage->columns_info_for($table) };
+        if($@) {
+            $self->_dbic_stmt($table_class,'add_columns',@$cols);
+        }
+        else {
+            my %cols_hash;
+            foreach my $col (@$cols) {
+                $cols_hash{$col} = \%{($col_info->{$col})};
+            }
+            $self->_dbic_stmt($table_class,'add_columns',%cols_hash);
+        }
 
         my $pks = $self->_table_pk_info($table) || [];
         @$pks ? $self->_dbic_stmt($table_class,'set_primary_key',@$pks)

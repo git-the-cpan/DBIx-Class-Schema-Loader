@@ -230,7 +230,7 @@ sub run_tests {
     ok($new_obj1) or diag "Cannot find newly inserted PK::Auto record";
     is($new_obj1->id, $saved_id);
 
-    my ($obj2) = $rsobj2->find( dat => 'bbb' );
+    my ($obj2) = $rsobj2->search({ dat => 'bbb' })->first;
     is( $obj2->id, 2 );
 
     SKIP: {
@@ -316,7 +316,7 @@ sub run_tests {
         isa_ok( $rs_rel4->first, $class4);
 
         # find on multi-col pk
-        my $obj5 = $rsobj5->find( id1 => 1, id2 => 1 );
+        my $obj5 = $rsobj5->find({id1 => 1, id2 => 1});
         is( $obj5->id2, 1 );
 
         # mulit-col fk def
