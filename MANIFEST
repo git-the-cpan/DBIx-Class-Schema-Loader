@@ -1,6 +1,5 @@
 Build.PL
 Changes
-improved-dump_overwrite.patch
 lib/DBIx/Class/Schema/Loader.pm
 lib/DBIx/Class/Schema/Loader/Base.pm
 lib/DBIx/Class/Schema/Loader/DBI.pm
