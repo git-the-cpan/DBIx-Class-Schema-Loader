@@ -32,7 +32,6 @@ rmtree($dump_path, 1, 1);
 eval { DBICTest::Schema::1->connect($make_dbictest_db::dsn) };
 ok(!$@, 'no death with dump_directory set') or diag "Dump failed: $@";
 
-
 DBICTest::Schema::1->loader(undef);
 
 SKIP: {
