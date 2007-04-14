@@ -43,7 +43,7 @@ sub _monikerize {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 76;
+    plan tests => 80;
 
     $self->create();
 
@@ -100,8 +100,13 @@ sub run_tests {
     }
 
     my $conn = $schema_class->clone;
-    my $monikers = $schema_class->loader->monikers;
-    my $classes = $schema_class->loader->classes;
+    my $monikers = {};
+    my $classes = {};
+    foreach my $source_name ($schema_class->sources) {
+        my $table_name = $schema_class->source($source_name)->from;
+        $monikers->{$table_name} = $source_name;
+        $classes->{$table_name} = $schema_class . q{::} . $source_name;
+    }
 
     my $moniker1 = $monikers->{loader_test1};
     my $class1   = $classes->{loader_test1};
@@ -440,6 +445,36 @@ sub run_tests {
             isa_ok( $obj15->loader_test14, $class14 );
         }
     }
+
+    # rescan test
+    SKIP: {
+        skip $self->{skip_rels}, 4 if $self->{skip_rels};
+
+        my @statements_rescan = (
+            qq{
+                CREATE TABLE loader_test25 (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    loader_test2 INTEGER NOT NULL,
+                    FOREIGN KEY (loader_test2) REFERENCES loader_test2 (id)
+                ) $self->{innodb}
+            },
+            q{ INSERT INTO loader_test25 (id,loader_test2) VALUES(123, 1) },
+            q{ INSERT INTO loader_test25 (id,loader_test2) VALUES(321, 2) },
+        );
+
+        my $dbh = $self->dbconnect(1);
+        $dbh->do($_) for @statements_rescan;
+        $dbh->disconnect;
+
+        my @new = $conn->rescan;
+        is(scalar(@new), 1);
+        is($new[0], 'LoaderTest25');
+
+        my $rsobj25   = $conn->resultset('LoaderTest25');
+        isa_ok($rsobj25, 'DBIx::Class::ResultSet');
+        my $obj25 = $rsobj25->find(123);
+        isa_ok( $obj25->loader_test2, $class2);
+    }
 }
 
 sub dbconnect {
@@ -739,7 +774,7 @@ sub create {
         },
 
         q{ INSERT INTO loader_test15 (id,loader_test14) VALUES (1,123) },
-   );
+    );
 
     $self->drop_tables;
 
@@ -812,6 +847,8 @@ sub drop_tables {
         loader_test14
     /;
 
+    my @tables_rescan = qw/ loader_test25 /;
+
     my $drop_fk_mysql =
         q{ALTER TABLE loader_test10 DROP FOREIGN KEY loader_test11_fk;};
 
@@ -837,6 +874,7 @@ sub drop_tables {
         unless($self->{no_implicit_rels}) {
             $dbh->do("DROP TABLE $_") for (@tables_implicit_rels);
         }
+        $dbh->do("DROP TABLE $_") for (@tables_rescan);
     }
     $dbh->do("DROP TABLE $_") for (@tables);
     $dbh->disconnect;
