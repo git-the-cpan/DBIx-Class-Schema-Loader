@@ -1,6 +1,6 @@
 ---
 name: DBIx-Class-Schema-Loader
-version: 0.03999_01
+version: 0.03012
 author:
   - 'Brandon Black, C<blblack@gmail.com>'
 abstract: Dynamic definition of a DBIx::Class::Schema
@@ -9,61 +9,49 @@ resources:
   license: http://dev.perl.org/licenses/
 requires:
   Carp::Clan: 0
-  Class::Accessor::Fast: 0.3
-  Class::C3: 0.14
-  Class::Data::Accessor: 0.03
-  DBIx::Class: 0.07005
+  Class::Accessor: 0.22
+  Class::C3: 0.11
+  Class::Data::Accessor: 0.02
+  DBIx::Class: 0.06003
   Data::Dump: 1.06
-  Digest::MD5: 2.36
   File::Spec: 0
+  Lingua::EN::Inflect: 1.89
   Lingua::EN::Inflect::Number: 1.1
   Scalar::Util: 0
   Text::Balanced: 0
-  UNIVERSAL::require: 0.11
+  UNIVERSAL::require: 0.1
 build_requires:
-  DBD::SQLite: 1.13
-  DBI: 1.53
+  DBD::SQLite: 1.12
+  DBI: 1.5
   File::Path: 0
   Test::More: 0.32
 recommends:
   Class::Inspector: 0
-  DBD::DB2: 1
-  DBD::Oracle: 0.19
+  DBD::DB2: 0.78
   DBD::Pg: 1.49
-  DBD::SQLite: 1.13
-  DBD::mysql: 4.004
-  DBI: 1.53
+  DBD::SQLite: 1.12
+  DBD::mysql: 3.0003
+  DBI: 1.5
 provides:
   DBIx::Class::Schema::Loader:
     file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.03999_01
+    version: 0.03012
   DBIx::Class::Schema::Loader::Base:
     file: lib/DBIx/Class/Schema/Loader/Base.pm
-    version: 0.03999_01
   DBIx::Class::Schema::Loader::DBI:
     file: lib/DBIx/Class/Schema/Loader/DBI.pm
-    version: 0.03999_01
   DBIx::Class::Schema::Loader::DBI::DB2:
     file: lib/DBIx/Class/Schema/Loader/DBI/DB2.pm
-    version: 0.03999_01
-  DBIx::Class::Schema::Loader::DBI::Oracle:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Oracle.pm
-    version: 0.03999_01
   DBIx::Class::Schema::Loader::DBI::Pg:
     file: lib/DBIx/Class/Schema/Loader/DBI/Pg.pm
-    version: 0.03999_01
   DBIx::Class::Schema::Loader::DBI::SQLite:
     file: lib/DBIx/Class/Schema/Loader/DBI/SQLite.pm
-    version: 0.03999_01
   DBIx::Class::Schema::Loader::DBI::Writing:
     file: lib/DBIx/Class/Schema/Loader/DBI/Writing.pm
-    version: 0.03999_01
   DBIx::Class::Schema::Loader::DBI::mysql:
     file: lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
-    version: 0.03999_01
   DBIx::Class::Schema::Loader::RelBuilder:
     file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
-    version: 0.03999_01
 generated_by: Module::Build version 0.2807
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html

@@ -6,8 +6,6 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.03999_01';
-
 =head1 NAME
 
 DBIx::Class::Schema::Loader::DBI::Pg - DBIx::Class::Schema::Loader::DBI
@@ -18,7 +16,9 @@ PostgreSQL Implementation.
   package My::Schema;
   use base qw/DBIx::Class::Schema::Loader/;
 
-  __PACKAGE__->loader_options( debug => 1 );
+  __PACKAGE__->loader_options(
+    relationships => 1,
+  );
 
   1;
 
@@ -37,10 +37,6 @@ sub _setup {
 
 sub _table_uniq_info {
     my ($self, $table) = @_;
-
-    # Use the default support if available
-    return $self->next::method($table)
-        if $DBD::Pg::VERSION >= 1.50;
 
     my @uniqs;
     my $dbh = $self->schema->storage->dbh;
