@@ -1,5 +1,10 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.04004 Thu Nov 15, 2007
+        - Fix Win32 test skip counts for good (RT #30568, Kenichi Ishigaki)
+        - Default Oracle db_schema to db username (patch
+          from Johannes Plunien)
+
 0.04003 Wed Oct 4, 2007
         - Prevent users from running Kwalitee test automatically
         - Fix extra whitespace being added to output on
