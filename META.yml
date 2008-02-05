@@ -1,13 +1,14 @@
 --- 
 abstract: Dynamic definition of a DBIx::Class::Schema
-author: Brandon Black, C<blblack@gmail.com>
+author: 
+  - Brandon Black, C<blblack@gmail.com>
 build_requires: 
   DBD::SQLite: 1.12
   DBI: 1.56
   File::Path: 0
   Test::More: 0.47
 distribution_type: module
-generated_by: Module::Install version 0.67
+generated_by: Module::Install version 0.68
 license: perl
 meta-spec: 
   url: http://module-build.sourceforge.net/META-spec-v1.3.html
@@ -20,31 +21,31 @@ no_index:
 provides: 
   DBIx::Class::Schema::Loader: 
     file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.04004
+    version: 0.04999_01
   DBIx::Class::Schema::Loader::Base: 
     file: lib/DBIx/Class/Schema/Loader/Base.pm
-    version: 0.04004
+    version: 0.04999_01
   DBIx::Class::Schema::Loader::DBI: 
     file: lib/DBIx/Class/Schema/Loader/DBI.pm
-    version: 0.04004
+    version: 0.04999_01
   DBIx::Class::Schema::Loader::DBI::DB2: 
     file: lib/DBIx/Class/Schema/Loader/DBI/DB2.pm
-    version: 0.04004
+    version: 0.04999_01
   DBIx::Class::Schema::Loader::DBI::Pg: 
     file: lib/DBIx/Class/Schema/Loader/DBI/Pg.pm
-    version: 0.04004
+    version: 0.04999_01
   DBIx::Class::Schema::Loader::DBI::SQLite: 
     file: lib/DBIx/Class/Schema/Loader/DBI/SQLite.pm
-    version: 0.04004
+    version: 0.04999_01
   DBIx::Class::Schema::Loader::DBI::Writing: 
     file: lib/DBIx/Class/Schema/Loader/DBI/Writing.pm
-    version: 0.04004
+    version: 0.04999_01
   DBIx::Class::Schema::Loader::DBI::mysql: 
     file: lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
-    version: 0.04004
+    version: 0.04999_01
   DBIx::Class::Schema::Loader::RelBuilder: 
     file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
-    version: 0.04004
+    version: 0.04999_01
 requires: 
   Carp::Clan: 0
   Class::Accessor::Fast: 0.30
@@ -59,4 +60,4 @@ requires:
   Scalar::Util: 0
   Text::Balanced: 0
   UNIVERSAL::require: 0.11
-version: 0.04004
+version: 0.04999_01

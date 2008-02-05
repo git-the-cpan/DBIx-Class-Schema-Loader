@@ -1,7 +1,7 @@
 package DBIx::Class::Schema::Loader::DBI::Writing;
 use strict;
 
-our $VERSION = '0.04004';
+our $VERSION = '0.04999_01';
 
 # Empty. POD only.
 
@@ -51,8 +51,9 @@ this information from DBI.
 The base DBI Loader contains generic methods that *should* work for
 everything else in theory, although in practice some DBDs need to
 override one or more of the other methods.  The other methods one might
-likely want to override are: C<_table_pk_info>, C<_table_fk_info>, and
-C<_tables_list>.  See the included DBD drivers for examples of these.
+likely want to override are: C<_table_pk_info>, C<_table_fk_info>,
+C<_tables_list> and C<_extra_column_info>.  See the included DBD drivers
+for examples of these.
 
 =cut
 

@@ -25,6 +25,9 @@ sub new {
     
     $self->{verbose} = $ENV{TEST_VERBOSE} || 0;
 
+    # Optional extra tables and tests
+    $self->{extra} ||= {};
+
     return bless $self => $class;
 }
 
@@ -43,7 +46,7 @@ sub _monikerize {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 88;
+    plan tests => 136 + ($self->{extra}->{count} || 0);
 
     $self->create();
 
@@ -53,7 +56,7 @@ sub run_tests {
 
     my @connect_info = ( $self->{dsn}, $self->{user}, $self->{password} );
     my %loader_opts = (
-        constraint              => qr/^(?:\S+\.)?loader_test[0-9]+$/i,
+        constraint              => qr/^(?:\S+\.)?(?:$self->{vendor}_)?loader_test[0-9]+$/i,
         relationships           => 1,
         additional_classes      => 'TestAdditional',
         additional_base_classes => 'TestAdditionalBase',
@@ -223,6 +226,14 @@ sub run_tests {
         #}
     }
 
+    SKIP: {
+        skip "This vendor doesn't detect auto-increment columns", 1
+            if $self->{no_auto_increment};
+
+        is( $class1->column_info('id')->{is_auto_increment}, 1,
+            'Setting is_auto_incrment works'
+        );
+    }
 
     my $obj    = $rsobj1->find(1);
     is( $obj->id,  1 );
@@ -244,7 +255,7 @@ sub run_tests {
     is( $obj2->id, 2 );
 
     SKIP: {
-        skip $self->{skip_rels}, 42 if $self->{skip_rels};
+        skip $self->{skip_rels}, 69 if $self->{skip_rels};
 
         my $moniker3 = $monikers->{loader_test3};
         my $class3   = $classes->{loader_test3};
@@ -310,6 +321,34 @@ sub run_tests {
         my $class26   = $classes->{loader_test26};
         my $rsobj26   = $conn->resultset($moniker26);
 
+        my $moniker27 = $monikers->{loader_test27};
+        my $class27   = $classes->{loader_test27};
+        my $rsobj27   = $conn->resultset($moniker27);
+
+        my $moniker28 = $monikers->{loader_test28};
+        my $class28   = $classes->{loader_test28};
+        my $rsobj28   = $conn->resultset($moniker28);
+
+        my $moniker29 = $monikers->{loader_test29};
+        my $class29   = $classes->{loader_test29};
+        my $rsobj29   = $conn->resultset($moniker29);
+
+        my $moniker31 = $monikers->{loader_test31};
+        my $class31   = $classes->{loader_test31};
+        my $rsobj31   = $conn->resultset($moniker31);
+
+        my $moniker32 = $monikers->{loader_test32};
+        my $class32   = $classes->{loader_test32};
+        my $rsobj32   = $conn->resultset($moniker32);
+
+        my $moniker33 = $monikers->{loader_test33};
+        my $class33   = $classes->{loader_test33};
+        my $rsobj33   = $conn->resultset($moniker33);
+
+        my $moniker34 = $monikers->{loader_test34};
+        my $class34   = $classes->{loader_test34};
+        my $rsobj34   = $conn->resultset($moniker34);
+
         isa_ok( $rsobj3, "DBIx::Class::ResultSet" );
         isa_ok( $rsobj4, "DBIx::Class::ResultSet" );
         isa_ok( $rsobj5, "DBIx::Class::ResultSet" );
@@ -326,10 +365,19 @@ sub run_tests {
         isa_ok( $rsobj22, "DBIx::Class::ResultSet" );
         isa_ok( $rsobj25, "DBIx::Class::ResultSet" );
         isa_ok( $rsobj26, "DBIx::Class::ResultSet" );
+        isa_ok( $rsobj27, "DBIx::Class::ResultSet" );
+        isa_ok( $rsobj28, "DBIx::Class::ResultSet" );
+        isa_ok( $rsobj29, "DBIx::Class::ResultSet" );
+        isa_ok( $rsobj31, "DBIx::Class::ResultSet" );
+        isa_ok( $rsobj32, "DBIx::Class::ResultSet" );
+        isa_ok( $rsobj33, "DBIx::Class::ResultSet" );
+        isa_ok( $rsobj34, "DBIx::Class::ResultSet" );
 
         # basic rel test
         my $obj4 = $rsobj4->find(123);
         isa_ok( $obj4->fkid_singular, $class3);
+
+        ok($class4->column_info('fkid')->{is_foreign_key});
 
         my $obj3 = $rsobj3->find(1);
         my $rs_rel4 = $obj3->search_related('loader_test4zes');
@@ -344,9 +392,15 @@ sub run_tests {
         isa_ok( $obj6->loader_test2, $class2);
         isa_ok( $obj6->loader_test5, $class5);
 
+        ok($class6->column_info('loader_test2')->{is_foreign_key});
+        ok($class6->column_info('id')->{is_foreign_key});
+        ok($class6->column_info('id2')->{is_foreign_key});
+
         # fk that references a non-pk key (UNIQUE)
         my $obj8 = $rsobj8->find(1);
         isa_ok( $obj8->loader_test7, $class7);
+
+        ok($class8->column_info('loader_test7')->{is_foreign_key});
 
         # test double-fk 17 ->-> 16
         my $obj17 = $rsobj17->find(33);
@@ -355,9 +409,13 @@ sub run_tests {
         isa_ok($rs_rel16_one, $class16);
         is($rs_rel16_one->dat, 'y16');
 
+        ok($class17->column_info('loader16_one')->{is_foreign_key});
+
         my $rs_rel16_two = $obj17->loader16_two;
         isa_ok($rs_rel16_two, $class16);
         is($rs_rel16_two->dat, 'z16');
+
+        ok($class17->column_info('loader16_two')->{is_foreign_key});
 
         my $obj16 = $rsobj16->find(2);
         my $rs_rel17 = $obj16->search_related('loader_test17_loader16_ones');
@@ -365,8 +423,12 @@ sub run_tests {
         is($rs_rel17->first->id, 3);
         
         # XXX test m:m 18 <- 20 -> 19
+        ok($class20->column_info('parent')->{is_foreign_key});
+        ok($class20->column_info('child')->{is_foreign_key});
         
         # XXX test double-fk m:m 21 <- 22 -> 21
+        ok($class22->column_info('parent')->{is_foreign_key});
+        ok($class22->column_info('child')->{is_foreign_key});
 
         # test double multi-col fk 26 -> 25
         my $obj26 = $rsobj26->find(33);
@@ -374,6 +436,10 @@ sub run_tests {
         my $rs_rel25_one = $obj26->loader_test25_id_rel1;
         isa_ok($rs_rel25_one, $class25);
         is($rs_rel25_one->dat, 'x25');
+
+        ok($class26->column_info('id')->{is_foreign_key});
+        ok($class26->column_info('rel1')->{is_foreign_key});
+        ok($class26->column_info('rel2')->{is_foreign_key});
 
         my $rs_rel25_two = $obj26->loader_test25_id_rel2;
         isa_ok($rs_rel25_two, $class25);
@@ -384,10 +450,64 @@ sub run_tests {
         isa_ok($rs_rel26->first, $class26);
         is($rs_rel26->first->id, 3);
 
+        # test one-to-one rels
+        my $obj27 = $rsobj27->find(1);
+        my $obj28 = $obj27->loader_test28;
+        isa_ok($obj28, $class28);
+        is($obj28->get_column('id'), 1);
+
+        ok($class28->column_info('id')->{is_foreign_key});
+
+        my $obj29 = $obj27->loader_test29;
+        isa_ok($obj29, $class29);
+        is($obj29->id, 1);
+
+        ok($class29->column_info('fk')->{is_foreign_key});
+
+        $obj27 = $rsobj27->find(2);
+        is($obj27->loader_test28, undef);
+        is($obj27->loader_test29, undef);
+
+        # test outer join for nullable referring columns:
+        SKIP: {
+          skip "unreliable column info from db driver",11 unless 
+            ($class32->column_info('rel2')->{is_nullable});
+
+          ok($class32->column_info('rel1')->{is_foreign_key});
+          ok($class32->column_info('rel2')->{is_foreign_key});
+          
+          my $obj32 = $rsobj32->find(1,{prefetch=>[qw/rel1 rel2/]});
+          my $obj34 = $rsobj34->find(
+            1,{prefetch=>[qw/loader_test33_id_rel1 loader_test33_id_rel2/]}
+          );
+          my $skip_outerjoin;
+          isa_ok($obj32,$class32) or $skip_outerjoin = 1;
+          isa_ok($obj34,$class34) or $skip_outerjoin = 1;
+
+          ok($class34->column_info('id')->{is_foreign_key});
+          ok($class34->column_info('rel1')->{is_foreign_key});
+          ok($class34->column_info('rel2')->{is_foreign_key});
+
+          SKIP: {
+            skip "Pre-requisite test failed", 4 if $skip_outerjoin;
+            my $rs_rel31_one = $obj32->rel1;
+            my $rs_rel31_two = $obj32->rel2;
+            isa_ok($rs_rel31_one,$class31);
+            is($rs_rel31_two,undef);
+
+            my $rs_rel33_one = $obj34->loader_test33_id_rel1;
+            my $rs_rel33_two = $obj34->loader_test33_id_rel2;
+
+            isa_ok($rs_rel33_one,$class33);
+            is($rs_rel33_two,undef);
+
+          }
+        }
+
         # from Chisel's tests...
         SKIP: {
             if($self->{vendor} =~ /sqlite/i) {
-                skip 'SQLite cannot do the advanced tests', 8;
+                skip 'SQLite cannot do the advanced tests', 10;
             }
 
             my $moniker10 = $monikers->{loader_test10};
@@ -400,6 +520,9 @@ sub run_tests {
 
             isa_ok( $rsobj10, "DBIx::Class::ResultSet" ); 
             isa_ok( $rsobj11, "DBIx::Class::ResultSet" );
+
+            ok($class10->column_info('loader_test11')->{is_foreign_key});
+            ok($class11->column_info('loader_test10')->{is_foreign_key});
 
             my $obj10 = $rsobj10->create({ subject => 'xyzzy' });
 
@@ -433,7 +556,7 @@ sub run_tests {
         }
 
         SKIP: {
-            skip 'This vendor cannot do inline relationship definitions', 5
+            skip 'This vendor cannot do inline relationship definitions', 8
                 if $self->{no_inline_rels};
 
             my $moniker12 = $monikers->{loader_test12};
@@ -447,6 +570,10 @@ sub run_tests {
             isa_ok( $rsobj12, "DBIx::Class::ResultSet" ); 
             isa_ok( $rsobj13, "DBIx::Class::ResultSet" );
 
+            ok($class13->column_info('id')->{is_foreign_key});
+            ok($class13->column_info('loader_test12')->{is_foreign_key});
+            ok($class13->column_info('dat')->{is_foreign_key});
+
             my $obj13 = $rsobj13->find(1);
             isa_ok( $obj13->id, $class12 );
             isa_ok( $obj13->loader_test12, $class12);
@@ -454,7 +581,7 @@ sub run_tests {
         }
 
         SKIP: {
-            skip 'This vendor cannot do out-of-line implicit rel defs', 3
+            skip 'This vendor cannot do out-of-line implicit rel defs', 4
                 if $self->{no_implicit_rels};
             my $moniker14 = $monikers->{loader_test14};
             my $class14   = $classes->{loader_test14};
@@ -467,6 +594,8 @@ sub run_tests {
             isa_ok( $rsobj14, "DBIx::Class::ResultSet" ); 
             isa_ok( $rsobj15, "DBIx::Class::ResultSet" );
 
+            ok($class15->column_info('loader_test14')->{is_foreign_key});
+
             my $obj15 = $rsobj15->find(1);
             isa_ok( $obj15->loader_test14, $class14 );
         }
@@ -474,7 +603,7 @@ sub run_tests {
 
     # rescan test
     SKIP: {
-        skip $self->{skip_rels}, 4 if $self->{skip_rels};
+        skip $self->{skip_rels}, 5 if $self->{skip_rels};
 
         my @statements_rescan = (
             qq{
@@ -500,7 +629,11 @@ sub run_tests {
         isa_ok($rsobj30, 'DBIx::Class::ResultSet');
         my $obj30 = $rsobj30->find(123);
         isa_ok( $obj30->loader_test2, $class2);
+
+        ok($rsobj30->result_source->column_info('loader_test2')->{is_foreign_key});
     }
+
+    $self->{extra}->{run}->($conn, $monikers, $classes) if $self->{extra}->{run};
 }
 
 sub dbconnect {
@@ -526,6 +659,7 @@ sub create {
 
     $self->{_created} = 1;
 
+    my $make_auto_inc = $self->{auto_inc_cb} || sub {};
     my @statements = (
         qq{
             CREATE TABLE loader_test1 (
@@ -533,6 +667,7 @@ sub create {
                 dat VARCHAR(32) NOT NULL UNIQUE
             ) $self->{innodb}
         },
+        $make_auto_inc->(qw/loader_test1 id/),
 
         q{ INSERT INTO loader_test1 (dat) VALUES('foo') },
         q{ INSERT INTO loader_test1 (dat) VALUES('bar') }, 
@@ -546,6 +681,7 @@ sub create {
                 UNIQUE (dat2, dat)
             ) $self->{innodb}
         },
+        $make_auto_inc->(qw/loader_test2 id/),
 
         q{ INSERT INTO loader_test2 (dat, dat2) VALUES('aaa', 'zzz') }, 
         q{ INSERT INTO loader_test2 (dat, dat2) VALUES('bbb', 'yyy') }, 
@@ -758,6 +894,72 @@ sub create {
 
         q{ INSERT INTO loader_test26 (id,rel1,rel2) VALUES (33,5,7) },
         q{ INSERT INTO loader_test26 (id,rel1,rel2) VALUES (3,42,42) },
+
+        qq{
+            CREATE TABLE loader_test27 (
+                id INTEGER NOT NULL PRIMARY KEY
+            ) $self->{innodb}
+        },
+
+        q{ INSERT INTO loader_test27 (id) VALUES (1) },
+        q{ INSERT INTO loader_test27 (id) VALUES (2) },
+
+        qq{
+            CREATE TABLE loader_test28 (
+                id INTEGER NOT NULL PRIMARY KEY,
+                FOREIGN KEY (id) REFERENCES loader_test27 (id)
+            ) $self->{innodb}
+        },
+
+        q{ INSERT INTO loader_test28 (id) VALUES (1) },
+
+        qq{
+            CREATE TABLE loader_test29 (
+                id INTEGER NOT NULL PRIMARY KEY,
+                fk INTEGER UNIQUE,
+                FOREIGN KEY (fk) REFERENCES loader_test27 (id)
+            ) $self->{innodb}
+        },
+
+        q{ INSERT INTO loader_test29 (id,fk) VALUES (1,1) },
+
+        qq{
+          CREATE TABLE loader_test31 (
+            id INTEGER NOT NULL PRIMARY KEY
+          ) $self->{innodb}
+        },
+        q{ INSERT INTO loader_test31 (id) VALUES (1) },
+
+        qq{
+          CREATE TABLE loader_test32 (
+            id INTEGER NOT NULL PRIMARY KEY,
+            rel1 INTEGER NOT NULL,
+            rel2 INTEGER NULL,
+            FOREIGN KEY (rel1) REFERENCES loader_test31(id),
+            FOREIGN KEY (rel2) REFERENCES loader_test31(id)
+          ) $self->{innodb}
+        },
+        q{ INSERT INTO loader_test32 (id,rel1) VALUES (1,1) },
+
+        qq{
+          CREATE TABLE loader_test33 (
+            id1 INTEGER NOT NULL,
+            id2 INTEGER NOT NULL,
+            PRIMARY KEY (id1,id2)
+          ) $self->{innodb}
+        },
+        q{ INSERT INTO loader_test33 (id1,id2) VALUES (1,2) },
+
+        qq{
+          CREATE TABLE loader_test34 (
+            id INTEGER NOT NULL PRIMARY KEY,
+            rel1 INTEGER NOT NULL,
+            rel2 INTEGER NULL,
+            FOREIGN KEY (id,rel1) REFERENCES loader_test33(id1,id2),
+            FOREIGN KEY (id,rel2) REFERENCES loader_test33(id1,id2)
+          ) $self->{innodb}
+        },
+        q{ INSERT INTO loader_test34 (id,rel1) VALUES (1,2) },
     );
 
     my @statements_advanced = (
@@ -768,6 +970,7 @@ sub create {
                 loader_test11 INTEGER
             ) $self->{innodb}
         },
+        $make_auto_inc->(qw/loader_test10 id10/),
 
         qq{
             CREATE TABLE loader_test11 (
@@ -777,6 +980,7 @@ sub create {
                 FOREIGN KEY (loader_test10) REFERENCES loader_test10 (id10)
             ) $self->{innodb}
         },
+        $make_auto_inc->(qw/loader_test11 id11/),
 
         (q{ ALTER TABLE loader_test10 ADD CONSTRAINT } .
          q{ loader_test11_fk FOREIGN KEY (loader_test11) } .
@@ -854,6 +1058,8 @@ sub create {
             $dbh->do($_) for (@statements_implicit_rels);
         }
     }
+
+    $dbh->do($_) for @{ $self->{extra}->{create} || [] };
     $dbh->disconnect();
 }
 
@@ -866,6 +1072,11 @@ sub drop_tables {
         LOADER_TEST23
         LoAdEr_test24
     /;
+    
+    my @tables_auto_inc = (
+        [ qw/loader_test1 id/ ],
+        [ qw/loader_test2 id/ ],
+    );
 
     my @tables_reltests = qw/
         loader_test4
@@ -884,12 +1095,24 @@ sub drop_tables {
         loader_test21
         loader_test26
         loader_test25
+        loader_test28
+        loader_test29
+        loader_test27
+        loader_test32
+        loader_test31
+        loader_test34
+        loader_test33
     /;
 
     my @tables_advanced = qw/
         loader_test11
         loader_test10
     /;
+    
+    my @tables_advanced_auto_inc = (
+        [ qw/loader_test10 id10/ ],
+        [ qw/loader_test11 id11/ ],
+    );
 
     my @tables_inline_rels = qw/
         loader_test13
@@ -904,12 +1127,16 @@ sub drop_tables {
     my @tables_rescan = qw/ loader_test30 /;
 
     my $drop_fk_mysql =
-        q{ALTER TABLE loader_test10 DROP FOREIGN KEY loader_test11_fk;};
+        q{ALTER TABLE loader_test10 DROP FOREIGN KEY loader_test11_fk};
 
     my $drop_fk =
-        q{ALTER TABLE loader_test10 DROP CONSTRAINT loader_test11_fk;};
+        q{ALTER TABLE loader_test10 DROP CONSTRAINT loader_test11_fk};
 
     my $dbh = $self->dbconnect(0);
+
+    $dbh->do("DROP TABLE $_") for @{ $self->{extra}->{drop} || [] };
+
+    my $drop_auto_inc = $self->{auto_inc_drop_cb} || sub {};
 
     unless($self->{skip_rels}) {
         $dbh->do("DROP TABLE $_") for (@tables_reltests);
@@ -921,6 +1148,7 @@ sub drop_tables {
                 $dbh->do($drop_fk);
             }
             $dbh->do("DROP TABLE $_") for (@tables_advanced);
+            $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_advanced_auto_inc;
         }
         unless($self->{no_inline_rels}) {
             $dbh->do("DROP TABLE $_") for (@tables_inline_rels);
@@ -931,6 +1159,7 @@ sub drop_tables {
         $dbh->do("DROP TABLE $_") for (@tables_rescan);
     }
     $dbh->do("DROP TABLE $_") for (@tables);
+    $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_auto_inc;
     $dbh->disconnect;
 }
 
