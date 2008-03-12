@@ -7,7 +7,7 @@ use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
 use UNIVERSAL::require;
 
-our $VERSION = '0.04999_02';
+our $VERSION = '0.04999_03';
 
 =head1 NAME
 
@@ -169,8 +169,8 @@ sub _table_fk_info {
     my ($self, $table) = @_;
 
     my $dbh = $self->schema->storage->dbh;
-    my $sth = $dbh->foreign_key_info( '', '', '', '',
-        $self->db_schema, $table );
+    my $sth = $dbh->foreign_key_info( '', $self->db_schema, '',
+                                      '', $self->db_schema, $table );
     return [] if !$sth;
 
     my %rels;
@@ -212,7 +212,6 @@ sub _columns_info_for {
         my %result;
         eval {
             my $sth = $dbh->column_info( undef, $self->db_schema, $table, '%' );
-            $sth->execute();
             while ( my $info = $sth->fetchrow_hashref() ){
                 my %column_info;
                 $column_info{data_type}   = $info->{TYPE_NAME};
