@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04999_04';
+our $VERSION = '0.04005';
 
 =head1 NAME
 
@@ -93,17 +93,6 @@ sub _table_uniq_info {
     }
 
     return \@uniqs;
-}
-
-sub _extra_column_info {
-    my ($self, $info) = @_;
-    my %extra_info;
-
-    if ($info->{COLUMN_DEF} && $info->{COLUMN_DEF} =~ /\bnextval\(/i) {
-        $extra_info{is_auto_increment} = 1;
-    }
-
-    return \%extra_info;
 }
 
 =head1 SEE ALSO

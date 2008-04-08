@@ -14,7 +14,7 @@ use Cwd qw//;
 use Digest::MD5 qw//;
 require DBIx::Class;
 
-our $VERSION = '0.04999_04';
+our $VERSION = '0.04005';
 
 __PACKAGE__->mk_ro_accessors(qw/
                                 schema
@@ -652,12 +652,6 @@ sub _setup_src_meta {
     }
     else {
         my %col_info_lc = map { lc($_), $col_info->{$_} } keys %$col_info;
-        my $fks = $self->_table_fk_info($table);
-        for my $fkdef (@$fks) {
-            for my $col (@{ $fkdef->{local_columns} }) {
-                $col_info_lc{$col}->{is_foreign_key} = 1;
-            }
-        }
         $self->_dbic_stmt(
             $table_class,
             'add_columns',
@@ -715,10 +709,9 @@ sub _load_relationships {
         $fkdef->{remote_source} =
             $self->monikers->{delete $fkdef->{remote_table}};
     }
-    my $tbl_uniq_info = $self->_table_uniq_info($table);
 
     my $local_moniker = $self->monikers->{$table};
-    my $rel_stmts = $self->{relbuilder}->generate_code($local_moniker, $tbl_fk_info, $tbl_uniq_info);
+    my $rel_stmts = $self->{relbuilder}->generate_code($local_moniker, $tbl_fk_info);
 
     foreach my $src_class (sort keys %$rel_stmts) {
         my $src_stmts = $rel_stmts->{$src_class};

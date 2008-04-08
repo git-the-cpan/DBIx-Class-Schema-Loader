@@ -7,7 +7,7 @@ use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
 use UNIVERSAL::require;
 
-our $VERSION = '0.04999_04';
+our $VERSION = '0.04005';
 
 =head1 NAME
 
@@ -221,9 +221,7 @@ sub _columns_info_for {
                 my $col_name = $info->{COLUMN_NAME};
                 $col_name =~ s/^\"(.*)\"$/$1/;
 
-                my $extra_info = $self->_extra_column_info($info) || {};
-
-                $result{$col_name} = { %column_info, %$extra_info };
+                $result{$col_name} = \%column_info;
             }
             $sth->finish;
         };
@@ -248,9 +246,7 @@ sub _columns_info_for {
             $column_info{size}    = $2;
         }
 
-        my $extra_info = $self->_extra_column_info($table, $columns[$i], $sth, $i) || {};
-
-        $result{$columns[$i]} = { %column_info, %$extra_info };
+        $result{$columns[$i]} = \%column_info;
     }
     $sth->finish;
 
@@ -267,10 +263,6 @@ sub _columns_info_for {
 
     return \%result;
 }
-
-# Override this in vendor class to return any additional column
-# attributes
-sub _extra_column_info {}
 
 =head1 SEE ALSO
 

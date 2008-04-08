@@ -1,30 +1,12 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
-0.04999_04 Wed Mar 12, 2008
-        - Add is_auto_increment detecton for DB2
-
-0.04999_03 Wed Mar 12, 2008
+0.04005 Sat Apr 05, 2008
         - Fix DB2 support
-
-0.04999_02 Tue Feb 12, 2008
-        - Add is_auto_increment detection for Oracle
-        - Unnhide the Oracle module now that the CPAN perms are sorted
-          out. Thanks to Tsunoda Kazuya for the quick response.
-
-0.04999_01 Tue Feb 5, 2008
-        - Mark foreign key columns with is_foreign_key => 1
-        - Add support for vendor-specific extra column attributes.
-        - Add support for extra => { unsigned => 1 } for MySQL.
-        - Add support for enum value lists for MySQL
-        - Set join_type => 'LEFT OUTER' for nullable foreign keys
-          (patch from Bernhard Weißhuhn)
-        - Set is_auto_increment for auto-increment columns (RT #31473)
-          (Only SQLite, MySQL and PostgreSQL are currently supported)
-        - Generate one-to-one accessors for unique foreign keys (ilmari)
         - Add support for load_namespaces-style class layout
         - Fix test skip count for main skip_rels block
         - Fix auto-inc column creation for the Oracle tests
-        - Fix column ordering in unique constraints for Oracle
+
+0.04004 Thu Nov 15, 2007
         - Fix Win32 test skip counts for good (RT #30568, Kenichi Ishigaki)
         - Default Oracle db_schema to db username (patch
           from Johannes Plunien)
