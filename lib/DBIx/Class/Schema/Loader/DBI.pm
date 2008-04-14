@@ -7,7 +7,7 @@ use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
 use UNIVERSAL::require;
 
-our $VERSION = '0.04005';
+our $VERSION = '0.04999_05';
 
 =head1 NAME
 
@@ -45,7 +45,7 @@ sub new {
         croak "Failed to require $subclass: $@";
     }
     elsif(!$@) {
-        bless $self, "DBIx::Class::Schema::Loader::DBI::${driver}";
+        bless $self, $subclass unless $self->isa($subclass);
     }
 
     # Set up the default quoting character and name seperators
@@ -221,7 +221,9 @@ sub _columns_info_for {
                 my $col_name = $info->{COLUMN_NAME};
                 $col_name =~ s/^\"(.*)\"$/$1/;
 
-                $result{$col_name} = \%column_info;
+                my $extra_info = $self->_extra_column_info($info) || {};
+
+                $result{$col_name} = { %column_info, %$extra_info };
             }
             $sth->finish;
         };
@@ -246,7 +248,9 @@ sub _columns_info_for {
             $column_info{size}    = $2;
         }
 
-        $result{$columns[$i]} = \%column_info;
+        my $extra_info = $self->_extra_column_info($table, $columns[$i], $sth, $i) || {};
+
+        $result{$columns[$i]} = { %column_info, %$extra_info };
     }
     $sth->finish;
 
@@ -263,6 +267,10 @@ sub _columns_info_for {
 
     return \%result;
 }
+
+# Override this in vendor class to return any additional column
+# attributes
+sub _extra_column_info {}
 
 =head1 SEE ALSO
 

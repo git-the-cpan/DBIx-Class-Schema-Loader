@@ -5,7 +5,7 @@ use warnings;
 use Carp::Clan qw/^DBIx::Class/;
 use Lingua::EN::Inflect::Number ();
 
-our $VERSION = '0.04005';
+our $VERSION = '0.04999_05';
 
 =head1 NAME
 
@@ -121,8 +121,19 @@ sub _inflect_singular {
     return Lingua::EN::Inflect::Number::to_S($relname);
 }
 
+sub _array_eq {
+    my ($a, $b) = @_;
+
+    return unless @$a == @$b;
+
+    for (my $i = 0; $i < @$a; $i++) {
+        return unless $a->[$i] eq $b->[$i];
+    }
+    return 1;
+}
+
 sub generate_code {
-    my ($self, $local_moniker, $rels) = @_;
+    my ($self, $local_moniker, $rels, $uniqs) = @_;
 
     my $all_code = {};
 
@@ -187,17 +198,32 @@ sub generate_code {
             delete $rev_cond{$_};
         }
 
+        my $remote_method = 'has_many';
+
+        # If the local columns have a UNIQUE constraint, this is a one-to-one rel
+        my $local_source = $self->{schema}->source($local_moniker);
+        if (_array_eq([ $local_source->primary_columns ], $local_cols) ||
+            grep { _array_eq($_->[1], $local_cols) } @$uniqs) {
+            $remote_method = 'might_have';
+            $local_relname = $self->_inflect_singular($local_relname);
+        }
+
+        # If the referring column is nullable, make 'belongs_to' an outer join:
+        my $nullable = grep { $local_source->column_info($_)->{is_nullable} }
+          @$local_cols;
+
         push(@{$all_code->{$local_class}},
             { method => 'belongs_to',
               args => [ $remote_relname,
                         $remote_class,
                         \%cond,
+                        $nullable ? { join_type => 'LEFT OUTER' } : ()
               ],
             }
         );
 
         push(@{$all_code->{$remote_class}},
-            { method => 'has_many',
+            { method => $remote_method,
               args => [ $local_relname,
                         $local_class,
                         \%rev_cond,

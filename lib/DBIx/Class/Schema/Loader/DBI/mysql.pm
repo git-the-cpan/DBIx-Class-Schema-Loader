@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04005';
+our $VERSION = '0.04999_05';
 
 =head1 NAME
 
@@ -119,6 +119,23 @@ sub _table_uniq_info {
     }
 
     return \@uniqs;
+}
+
+sub _extra_column_info {
+    my ($self, $info) = @_;
+    my %extra_info;
+
+    if ($info->{mysql_is_auto_increment}) {
+        $extra_info{is_auto_increment} = 1
+    }
+    if ($info->{mysql_type_name} =~ /\bunsigned\b/i) {
+        $extra_info{extra}{unsigned} = 1;
+    }
+    if ($info->{mysql_values}) {
+        $extra_info{extra}{list} = $info->{mysql_values};
+    }
+
+    return \%extra_info;
 }
 
 =head1 SEE ALSO

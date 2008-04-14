@@ -3,7 +3,6 @@ inc/Module/AutoInstall.pm
 inc/Module/Install.pm
 inc/Module/Install/AutoInstall.pm
 inc/Module/Install/Base.pm
-inc/Module/Install/Build.pm
 inc/Module/Install/Can.pm
 inc/Module/Install/Fetch.pm
 inc/Module/Install/Include.pm
@@ -38,6 +37,7 @@ t/20invocations.t
 t/21misc_fatal.t
 t/22dump.t
 t/23dumpmore.t
+t/24loader_subclass.t
 t/lib/DBIx/Class/TestComponent.pm
 t/lib/DBIx/Class/TestRSComponent.pm
 t/lib/dbixcsl_common_tests.pm
@@ -46,3 +46,4 @@ t/lib/make_dbictest_db.pm
 t/lib/TestAdditional.pm
 t/lib/TestAdditionalBase.pm
 t/lib/TestLeftBase.pm
+t/lib/TestLoaderSubclass.pm

@@ -14,7 +14,7 @@ use Cwd qw//;
 use Digest::MD5 qw//;
 require DBIx::Class;
 
-our $VERSION = '0.04005';
+our $VERSION = '0.04999_05';
 
 __PACKAGE__->mk_ro_accessors(qw/
                                 schema
@@ -62,7 +62,7 @@ classes, and implements the common functionality between them.
 =head1 CONSTRUCTOR OPTIONS
 
 These constructor options are the base options for
-L<DBIx::Class::Schema::Loader/loader_opts>.  Available constructor options are:
+L<DBIx::Class::Schema::Loader/loader_options>.  Available constructor options are:
 
 =head2 skip_relationships
 
@@ -284,7 +284,7 @@ sub _load_external {
     my $real_dump_path = $self->dump_directory
         ? Cwd::abs_path(
               File::Spec->catfile($self->dump_directory, $class_path)
-          )
+          ) || ''
         : '';
     my $real_inc_path = Cwd::abs_path($inc_path);
     return if $real_inc_path eq $real_dump_path;
@@ -298,6 +298,10 @@ sub _load_external {
     warn qq/# Loaded external class definition for '$class'\n/
         if $self->debug;
 
+    # Make sure ResultSetManager picks up any :ResultSet methods from
+    # the external definition
+    $class->table($class->table);
+
     # The rest is only relevant when dumping
     return if !$self->dump_directory;
 
@@ -307,12 +311,12 @@ sub _load_external {
     open(my $fh, '<', $real_inc_path)
         or croak "Failed to open '$real_inc_path' for reading: $!";
     $self->_ext_stmt($class,
-        qq|# These lines were loaded from '$real_inc_path' found in \@INC.|
-        .q|# They are now part of the custom portion of this file|
-        .q|# for you to hand-edit.  If you do not either delete|
-        .q|# this section or remove that file from @INC, this section|
-        .q|# will be repeated redundantly when you re-create this|
-        .q|# file again via Loader!|
+         qq|# These lines were loaded from '$real_inc_path' found in \@INC.\n|
+        .qq|# They are now part of the custom portion of this file\n|
+        .qq|# for you to hand-edit.  If you do not either delete\n|
+        .qq|# this section or remove that file from \@INC, this section\n|
+        .qq|# will be repeated redundantly when you re-create this\n|
+        .qq|# file again via Loader!\n|
     );
     while(<$fh>) {
         chomp;
@@ -583,9 +587,9 @@ sub _inject {
     my $target = shift;
     my $schema_class = $self->schema_class;
 
-    my $blist = join(q{ }, @_);
-    warn "$target: use base qw/ $blist /;" if $self->debug && @_;
-    $self->_raw_stmt($target, "use base qw/ $blist /;") if @_;
+    my $blist = join(q{ }, map "+$_", @_);
+    warn "$target: __PACKAGE__->load_components( qw/ $blist / );" if $self->debug && @_;
+    $self->_raw_stmt($target, "__PACKAGE__->load_components( qw/ $blist / );") if @_;
     foreach (@_) {
         $_->require or croak ($_ . "->require: $@");
         $schema_class->inject_base($target, $_);
@@ -652,6 +656,12 @@ sub _setup_src_meta {
     }
     else {
         my %col_info_lc = map { lc($_), $col_info->{$_} } keys %$col_info;
+        my $fks = $self->_table_fk_info($table);
+        for my $fkdef (@$fks) {
+            for my $col (@{ $fkdef->{local_columns} }) {
+                $col_info_lc{$col}->{is_foreign_key} = 1;
+            }
+        }
         $self->_dbic_stmt(
             $table_class,
             'add_columns',
@@ -709,9 +719,10 @@ sub _load_relationships {
         $fkdef->{remote_source} =
             $self->monikers->{delete $fkdef->{remote_table}};
     }
+    my $tbl_uniq_info = $self->_table_uniq_info($table);
 
     my $local_moniker = $self->monikers->{$table};
-    my $rel_stmts = $self->{relbuilder}->generate_code($local_moniker, $tbl_fk_info);
+    my $rel_stmts = $self->{relbuilder}->generate_code($local_moniker, $tbl_fk_info, $tbl_uniq_info);
 
     foreach my $src_class (sort keys %$rel_stmts) {
         my $src_stmts = $rel_stmts->{$src_class};
