@@ -5,7 +5,7 @@ use warnings;
 use Carp::Clan qw/^DBIx::Class/;
 use Lingua::EN::Inflect::Number ();
 
-our $VERSION = '0.04999_05';
+our $VERSION = '0.04999_06';
 
 =head1 NAME
 
@@ -170,10 +170,11 @@ sub generate_code {
         my $remote_relname;
 
         # for single-column case, set the remote relname to the column
-        # name, to make filter accessors work
+        # name, to make filter accessors work, but strip trailing _id
         if(scalar keys %cond == 1) {
-            my ($col) = keys %cond;
-            $remote_relname = $self->_inflect_singular($cond{$col});
+            my ($col) = values %cond;
+            $col =~ s/_id$//;
+            $remote_relname = $self->_inflect_singular($col);
         }
         else {
             $remote_relname = $self->_inflect_singular(lc $remote_table);

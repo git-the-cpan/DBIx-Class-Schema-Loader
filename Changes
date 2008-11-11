@@ -1,6 +1,16 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
-Not yet released
+0.04999_06 Tue Nov 11, 2008
+        - Singularise table monikers by default
+        - Strip trailing _id from single-column belongs_to relationships
+        - Add "dbicdump" script for easy commandline dumping
+        - Throw out the in-memory class generation, just dump to a temporary
+          directory if the user didn't specify one
+        - Fix Oracle constraint and auto-increment detection for non-owned schemas
+          (RT #35732)
+	- Handle ResultSetManager deprecation warning in common tests
+
+0.04999_05 Mon Apr 14, 2008
         - Fix limiting table list to the specified schema for DB2
         - Default db_schema to the username for DB2
         - Allow specifying a custom loader_class, overriding the

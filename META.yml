@@ -3,59 +3,29 @@ abstract: 'Dynamic definition of a DBIx::Class::Schema'
 author:
   - 'Brandon Black, C<blblack@gmail.com>'
 build_requires:
-  Class::Unload: 0
   DBD::SQLite: 1.12
   DBI: 1.56
   File::Path: 0
+  IPC::Open3: 0
   Test::More: 0.47
 distribution_type: module
-generated_by: 'Module::Install version 0.71'
+generated_by: 'Module::Install version 0.76'
 license: perl
 meta-spec:
-  url: http://module-build.sourceforge.net/META-spec-v1.3.html
-  version: 1.3
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
 name: DBIx-Class-Schema-Loader
 no_index:
   directory:
     - inc
     - t
-provides:
-  DBIx::Class::Schema::Loader:
-    file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.04999_05
-  DBIx::Class::Schema::Loader::Base:
-    file: lib/DBIx/Class/Schema/Loader/Base.pm
-    version: 0.04999_05
-  DBIx::Class::Schema::Loader::DBI:
-    file: lib/DBIx/Class/Schema/Loader/DBI.pm
-    version: 0.04999_05
-  DBIx::Class::Schema::Loader::DBI::DB2:
-    file: lib/DBIx/Class/Schema/Loader/DBI/DB2.pm
-    version: 0.04999_05
-  DBIx::Class::Schema::Loader::DBI::Oracle:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Oracle.pm
-    version: 0.04999_05
-  DBIx::Class::Schema::Loader::DBI::Pg:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Pg.pm
-    version: 0.04999_05
-  DBIx::Class::Schema::Loader::DBI::SQLite:
-    file: lib/DBIx/Class/Schema/Loader/DBI/SQLite.pm
-    version: 0.04999_05
-  DBIx::Class::Schema::Loader::DBI::Writing:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Writing.pm
-    version: 0.04999_05
-  DBIx::Class::Schema::Loader::DBI::mysql:
-    file: lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
-    version: 0.04999_05
-  DBIx::Class::Schema::Loader::RelBuilder:
-    file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
-    version: 0.04999_05
 requires:
   Carp::Clan: 0
   Class::Accessor::Fast: 0.30
   Class::C3: 0.18
   Class::Data::Accessor: 0.03
   Class::Inspector: 0
+  Class::Unload: 0
   DBIx::Class: 0.07006
   Data::Dump: 1.06
   Digest::MD5: 2.36
@@ -64,4 +34,6 @@ requires:
   Scalar::Util: 0
   Text::Balanced: 0
   UNIVERSAL::require: 0.11
-version: 0.04999_05
+resources:
+  license: http://dev.perl.org/licenses/
+version: 0.04999_06

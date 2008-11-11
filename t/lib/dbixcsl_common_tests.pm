@@ -51,7 +51,7 @@ sub _monikerize {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 3 + 2 * (131 + ($self->{extra}->{count} || 0));
+    plan tests => 3 + 2 * (132 + ($self->{extra}->{count} || 0));
 
     $self->create();
 
@@ -81,7 +81,7 @@ sub setup_schema {
     my $debug = ($self->{verbose} > 1) ? 1 : 0;
 
     my %loader_opts = (
-        constraint              => qr/^(?:\S+\.)?(?:$self->{vendor}_)?loader_test[0-9]+$/i,
+        constraint              => qr/^(?:\S+\.)?(?:$self->{vendor}_)?loader_test[0-9]+s?$/i,
         relationships           => 1,
         additional_classes      => 'TestAdditional',
         additional_base_classes => 'TestAdditionalBase',
@@ -109,17 +109,22 @@ sub setup_schema {
         };
 
         ok(!$@, "Loader initialization") or diag $@;
+
+       my $warn_count = 2;
+       $warn_count++ if grep /ResultSetManager/, @loader_warnings;
+
         if($self->{skip_rels}) {
             SKIP: {
-                is(scalar(@loader_warnings), 2, "No loader warnings")
+                is(scalar(@loader_warnings), $warn_count, "No loader warnings")
                     or diag @loader_warnings;
                 skip "No missing PK warnings without rels", 1;
             }
         }
         else {
-            is(scalar(@loader_warnings), 3, "Expected loader warning")
+	    $warn_count++;
+            is(scalar(@loader_warnings), $warn_count, "Expected loader warning")
                 or diag @loader_warnings;
-            like($loader_warnings[0], qr/loader_test9 has no primary key/i,
+            is(grep(/loader_test9 has no primary key/, @loader_warnings), 1,
                  "Missing PK warning");
         }
     }
@@ -140,8 +145,8 @@ sub test_schema {
         $classes->{$table_name} = $schema_class . q{::} . $source_name;
     }
 
-    my $moniker1 = $monikers->{loader_test1};
-    my $class1   = $classes->{loader_test1};
+    my $moniker1 = $monikers->{loader_test1s};
+    my $class1   = $classes->{loader_test1s};
     my $rsobj1   = $conn->resultset($moniker1);
 
     my $moniker2 = $monikers->{loader_test2};
@@ -174,6 +179,8 @@ sub test_schema {
         }
     }
     ok($uniq1_test, "Unique constraint");
+
+    is($moniker1, 'LoaderTest1', 'moniker singularisation');
 
     my %uniq2 = $class2->unique_constraints;
     my $uniq2_test = 0;
@@ -399,7 +406,7 @@ sub test_schema {
         isa_ok( $obj6->loader_test2, $class2);
         isa_ok( $obj6->loader_test5, $class5);
 
-        ok($class6->column_info('loader_test2')->{is_foreign_key}, 'Foreign key detected');
+        ok($class6->column_info('loader_test2_id')->{is_foreign_key}, 'Foreign key detected');
         ok($class6->column_info('id')->{is_foreign_key}, 'Foreign key detected');
         ok($class6->column_info('id2')->{is_foreign_key}, 'Foreign key detected');
 
@@ -668,16 +675,16 @@ sub create {
     my $make_auto_inc = $self->{auto_inc_cb} || sub {};
     my @statements = (
         qq{
-            CREATE TABLE loader_test1 (
+            CREATE TABLE loader_test1s (
                 id $self->{auto_inc_pk},
                 dat VARCHAR(32) NOT NULL UNIQUE
             ) $self->{innodb}
         },
-        $make_auto_inc->(qw/loader_test1 id/),
+        $make_auto_inc->(qw/loader_test1s id/),
 
-        q{ INSERT INTO loader_test1 (dat) VALUES('foo') },
-        q{ INSERT INTO loader_test1 (dat) VALUES('bar') }, 
-        q{ INSERT INTO loader_test1 (dat) VALUES('baz') }, 
+        q{ INSERT INTO loader_test1s (dat) VALUES('foo') },
+        q{ INSERT INTO loader_test1s (dat) VALUES('bar') }, 
+        q{ INSERT INTO loader_test1s (dat) VALUES('baz') }, 
 
         qq{ 
             CREATE TABLE loader_test2 (
@@ -751,14 +758,14 @@ sub create {
             CREATE TABLE loader_test6 (
                 id INTEGER NOT NULL PRIMARY KEY,
                 Id2 INTEGER,
-                loader_test2 INTEGER,
+                loader_test2_id INTEGER,
                 dat VARCHAR(8),
-                FOREIGN KEY (loader_test2)  REFERENCES loader_test2 (id),
+                FOREIGN KEY (loader_test2_id)  REFERENCES loader_test2 (id),
                 FOREIGN KEY(id,Id2) REFERENCES loader_test5 (id1,iD2)
             ) $self->{innodb}
         },
 
-        (q{ INSERT INTO loader_test6 (id, id2,loader_test2,dat) } .
+        (q{ INSERT INTO loader_test6 (id, id2,loader_test2_id,dat) } .
          q{ VALUES (1, 1,1,'aaa') }),
 
         qq{
@@ -1073,14 +1080,14 @@ sub drop_tables {
     my $self = shift;
 
     my @tables = qw/
-        loader_test1
+        loader_test1s
         loader_test2
         LOADER_TEST23
         LoAdEr_test24
     /;
     
     my @tables_auto_inc = (
-        [ qw/loader_test1 id/ ],
+        [ qw/loader_test1s id/ ],
         [ qw/loader_test2 id/ ],
     );
 
