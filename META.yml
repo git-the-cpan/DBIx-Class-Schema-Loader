@@ -8,8 +8,10 @@ build_requires:
   File::Path: 0
   IPC::Open3: 0
   Test::More: 0.47
+configure_requires:
+  ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.76'
+generated_by: 'Module::Install version 0.81'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -36,4 +38,4 @@ requires:
   UNIVERSAL::require: 0.11
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.04999_06
+version: 0.04999_07

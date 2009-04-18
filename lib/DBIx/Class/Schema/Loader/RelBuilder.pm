@@ -5,7 +5,7 @@ use warnings;
 use Carp::Clan qw/^DBIx::Class/;
 use Lingua::EN::Inflect::Number ();
 
-our $VERSION = '0.04999_06';
+our $VERSION = '0.04999_07';
 
 =head1 NAME
 
@@ -218,7 +218,7 @@ sub generate_code {
               args => [ $remote_relname,
                         $remote_class,
                         \%cond,
-                        $nullable ? { join_type => 'LEFT OUTER' } : ()
+                        $nullable ? { join_type => 'LEFT' } : ()
               ],
             }
         );

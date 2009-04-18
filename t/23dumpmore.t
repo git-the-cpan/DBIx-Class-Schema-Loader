@@ -8,7 +8,7 @@ require DBIx::Class::Schema::Loader;
 
 $^O eq 'MSWin32'
     ? plan(skip_all => "ActiveState perl produces additional warnings, and this test uses unix paths")
-    : plan(tests => 140);
+    : plan(tests => 145);
 
 my $DUMP_PATH = './t/_dump';
 
@@ -38,13 +38,17 @@ sub dump_directly {
 sub dump_dbicdump {
     my %tdata = @_;
 
-    my @cmd = qw(./script/dbicdump);
+    # use $^X so we execute ./script/dbicdump with the same perl binary that the tests were executed with
+    my @cmd = ($^X, qw(./script/dbicdump));
 
     while (my ($opt, $val) = each(%{ $tdata{options} })) {
         push @cmd, '-o', "$opt=$val";
     }
 
     push @cmd, $tdata{classname}, $make_dbictest_db::dsn;
+
+    # make sure our current @INC gets used by dbicdump
+    local $ENV{PERL5LIB} = join ":", @INC, $ENV{PERL5LIB};
 
     my ($in, $out, $err);
     my $pid = open3($in, $out, $err, @cmd);
@@ -276,6 +280,8 @@ do_dump_test(
                  result_namespace => '+DBICTest::DumpMore::1::Res',
                  resultset_namespace => 'RSet',
                  default_resultset_class => 'RSetBase',
+                 result_base_class => 'My::ResultBaseClass',
+                 schema_base_class => 'My::SchemaBaseClass',
              },
     error => '',
     warnings => [
@@ -289,14 +295,17 @@ do_dump_test(
             qr/result_namespace => '\+DBICTest::DumpMore::1::Res'/,
             qr/resultset_namespace => 'RSet'/,
             qr/default_resultset_class => 'RSetBase'/,
+            qr/use base 'My::SchemaBaseClass'/,
         ],
         'Res/Foo' => [
             qr/package DBICTest::DumpMore::1::Res::Foo;/,
+            qr/use base 'My::ResultBaseClass'/,
             qr/->set_primary_key/,
             qr/1;\n$/,
         ],
         'Res/Bar' => [
             qr/package DBICTest::DumpMore::1::Res::Bar;/,
+            qr/use base 'My::ResultBaseClass'/,
             qr/->set_primary_key/,
             qr/1;\n$/,
         ],

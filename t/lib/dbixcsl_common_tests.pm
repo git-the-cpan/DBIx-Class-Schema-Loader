@@ -51,7 +51,7 @@ sub _monikerize {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 3 + 2 * (132 + ($self->{extra}->{count} || 0));
+    plan tests => 3 + 134 + ($self->{extra}->{count} || 0);
 
     $self->create();
 
@@ -60,16 +60,7 @@ sub run_tests {
     # First, with in-memory classes
     my $schema_class = $self->setup_schema(@connect_info);
     $self->test_schema($schema_class);
-
-    # Then, with dumped classes
     $self->drop_tables;
-    $self->create;
-    $self->{dump} = 1;
-
-    unshift @INC, $DUMP_DIR;
-    $self->reload_schema($schema_class);
-    $schema_class->connection(@connect_info);
-    $self->test_schema($schema_class);
 }
 
 sub setup_schema {
@@ -148,10 +139,12 @@ sub test_schema {
     my $moniker1 = $monikers->{loader_test1s};
     my $class1   = $classes->{loader_test1s};
     my $rsobj1   = $conn->resultset($moniker1);
+    check_no_duplicate_unique_constraints($class1);
 
     my $moniker2 = $monikers->{loader_test2};
     my $class2   = $classes->{loader_test2};
     my $rsobj2   = $conn->resultset($moniker2);
+    check_no_duplicate_unique_constraints($class2);
 
     my $moniker23 = $monikers->{LOADER_TEST23};
     my $class23   = $classes->{LOADER_TEST23};
@@ -647,6 +640,19 @@ sub test_schema {
     }
 
     $self->{extra}->{run}->($conn, $monikers, $classes) if $self->{extra}->{run};
+}
+
+sub check_no_duplicate_unique_constraints {
+    my ($class) = @_;
+
+    # unique_constraints() automatically includes the PK, if any
+    my %uc_cols;
+    ++$uc_cols{ join ", ", @$_ }
+        for values %{ { $class->unique_constraints } };
+    my $dup_uc = grep { $_ > 1 } values %uc_cols;
+
+    is($dup_uc, 0, "duplicate unique constraints ($class)")
+        or diag "uc_cols: @{[ %uc_cols ]}";
 }
 
 sub dbconnect {
@@ -1174,18 +1180,6 @@ sub drop_tables {
     $dbh->do("DROP TABLE $_") for (@tables);
     $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_auto_inc;
     $dbh->disconnect;
-}
-
-sub reload_schema {
-    my ($self, $schema) = @_;
-    
-    for my $source ($schema->sources) {
-        Class::Unload->unload( $schema->class( $source ) );
-        Class::Unload->unload( ref $schema->resultset( $source ) );
-    }
-
-    Class::Unload->unload( $schema );
-    eval "require $schema" or die $@;
 }
 
 sub DESTROY {

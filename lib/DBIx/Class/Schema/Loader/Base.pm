@@ -5,7 +5,6 @@ use warnings;
 use base qw/Class::Accessor::Fast/;
 use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
-use UNIVERSAL::require;
 use DBIx::Class::Schema::Loader::RelBuilder;
 use Data::Dump qw/ dump /;
 use POSIX qw//;
@@ -17,7 +16,7 @@ use File::Temp qw//;
 use Class::Unload;
 require DBIx::Class;
 
-our $VERSION = '0.04999_06';
+our $VERSION = '0.04999_07';
 
 __PACKAGE__->mk_ro_accessors(qw/
                                 schema
@@ -42,6 +41,8 @@ __PACKAGE__->mk_ro_accessors(qw/
                                 result_namespace
                                 resultset_namespace
                                 default_resultset_class
+                                schema_base_class
+                                result_base_class
 
                                 db_schema
                                 _tables
@@ -122,6 +123,14 @@ L<Lingua::EN::Inflect::Number/to_PL>.
 
 As L</inflect_plural> above, but for singularizing relationship names.
 Default behavior is to utilize L<Lingua::EN::Inflect::Number/to_S>.
+
+=head2 schema_base_class
+
+Base class for your schema classes. Defaults to 'DBIx::Class::Schema'.
+
+=head2 result_base_class
+
+Base class for your table classes (aka result classes). Defaults to 'DBIx::Class'.
 
 =head2 additional_base_classes
 
@@ -262,7 +271,7 @@ sub new {
                                                    );
 
     $self->{relbuilder} = DBIx::Class::Schema::Loader::RelBuilder->new(
-        $self->schema_class, $self->inflect_plural, $self->inflect_singular
+        $self->schema, $self->inflect_plural, $self->inflect_singular
     ) if !$self->{skip_relationships};
 
     $self;
@@ -351,6 +360,7 @@ sub rescan {
     my ($self, $schema) = @_;
 
     $self->{schema} = $schema;
+    $self->{relbuilder}{schema} = $schema;
 
     my @created;
     my @current = $self->_tables_list;
@@ -408,7 +418,13 @@ sub _reload_classes {
     my ($self, @tables) = @_;
 
     $self->_dump_to_dir(map { $self->classes->{$_} } @tables);
+
+    unshift @INC, $self->dump_directory;
     
+    my @to_register;
+    my %have_source = map { $_ => $self->schema->source($_) }
+        $self->schema->sources;
+
     for my $table (@tables) {
         my $moniker = $self->monikers->{$table};
         my $class = $self->classes->{$table};
@@ -418,17 +434,25 @@ sub _reload_classes {
             local *Class::C3::reinitialize = sub {};
             use warnings;
 
-            if ( Class::Unload->unload( $class ) ) {
-                my $resultset_class = ref $self->schema->resultset($moniker);
-                Class::Unload->unload( $resultset_class )
-                      if $resultset_class ne 'DBIx::Class::ResultSet';
+            Class::Unload->unload($class);
+            my ($source, $resultset_class);
+            if (
+                ($source = $have_source{$moniker})
+                && ($resultset_class = $source->resultset_class)
+                && ($resultset_class ne 'DBIx::Class::ResultSet')
+            ) {
+                my $has_file = Class::Inspector->loaded_filename($resultset_class);
+                Class::Unload->unload($resultset_class);
+                $self->schema->ensure_class_loaded($resultset_class) if $has_file;
             }
-            $class->require or die "Can't load $class: $@";
+            $self->schema->ensure_class_loaded($class);
         }
+        push @to_register, [$moniker, $class];
+    }
 
-        $self->schema_class->register_class($moniker, $class);
-        $self->schema->register_class($moniker, $class)
-            if $self->schema ne $self->schema_class;
+    Class::C3->reinitialize;
+    for (@to_register) {
+        $self->schema->register_class(@$_);
     }
 }
 
@@ -459,19 +483,18 @@ sub _ensure_dump_subdirs {
 sub _dump_to_dir {
     my ($self, @classes) = @_;
 
-    my $target_dir = $self->dump_directory;
-
     my $schema_class = $self->schema_class;
+    my $schema_base_class = $self->schema_base_class || 'DBIx::Class::Schema';
 
+    my $target_dir = $self->dump_directory;
     warn "Dumping manual schema for $schema_class to directory $target_dir ...\n"
         unless $self->{dynamic} or $self->{quiet};
 
     my $schema_text =
           qq|package $schema_class;\n\n|
         . qq|use strict;\nuse warnings;\n\n|
-        . qq|use base 'DBIx::Class::Schema';\n\n|;
+        . qq|use base '$schema_base_class';\n\n|;
 
-    
     if ($self->use_namespaces) {
         $schema_text .= qq|__PACKAGE__->load_namespaces|;
         my $namespace_options;
@@ -487,23 +510,23 @@ sub _dump_to_dir {
     }
     else {
         $schema_text .= qq|__PACKAGE__->load_classes;\n|;
-
     }
 
     $self->_write_classfile($schema_class, $schema_text);
+
+    my $result_base_class = $self->result_base_class || 'DBIx::Class';
 
     foreach my $src_class (@classes) {
         my $src_text = 
               qq|package $src_class;\n\n|
             . qq|use strict;\nuse warnings;\n\n|
-            . qq|use base 'DBIx::Class';\n\n|;
+            . qq|use base '$result_base_class';\n\n|;
 
         $self->_write_classfile($src_class, $src_text);
     }
 
     warn "Schema dump completed.\n" unless $self->{dynamic} or $self->{quiet};
 
-    unshift @INC, $target_dir;
 }
 
 sub _write_classfile {
@@ -519,7 +542,6 @@ sub _write_classfile {
     }    
 
     my $custom_content = $self->_get_custom_content($class, $filename);
-
     $custom_content ||= qq|\n\n# You can replace this text with custom|
         . qq| content, and it will be preserved on regeneration|
         . qq|\n1;\n|;
@@ -542,10 +564,11 @@ sub _write_classfile {
     print $fh qq|$_\n|
         for @{$self->{_ext_storage}->{$class} || []};
 
+    # Write out any custom content the user has added
     print $fh $custom_content;
 
     close($fh)
-        or croak "Cannot close '$filename': $!";
+        or croak "Error closing '$filename': $!";
 }
 
 sub _get_custom_content {
@@ -672,12 +695,20 @@ sub _setup_src_meta {
         );
     }
 
+    my %uniq_tag; # used to eliminate duplicate uniqs
+
     my $pks = $self->_table_pk_info($table) || [];
     @$pks ? $self->_dbic_stmt($table_class,'set_primary_key',@$pks)
           : carp("$table has no primary key");
+    $uniq_tag{ join("\0", @$pks) }++ if @$pks; # pk is a uniq
 
     my $uniqs = $self->_table_uniq_info($table) || [];
-    $self->_dbic_stmt($table_class,'add_unique_constraint',@$_) for (@$uniqs);
+    for (@$uniqs) {
+        my ($name, $cols) = @$_;
+        next if $uniq_tag{ join("\0", @$cols) }++; # skip duplicates
+        $self->_dbic_stmt($table_class,'add_unique_constraint', $name, $cols);
+    }
+
 }
 
 =head2 tables
