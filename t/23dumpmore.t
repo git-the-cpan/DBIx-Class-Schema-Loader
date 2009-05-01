@@ -2,24 +2,23 @@ use strict;
 use Test::More;
 use lib qw(t/lib);
 use File::Path;
-use IPC::Open3;
 use make_dbictest_db;
 require DBIx::Class::Schema::Loader;
 
 $^O eq 'MSWin32'
     ? plan(skip_all => "ActiveState perl produces additional warnings, and this test uses unix paths")
-    : plan(tests => 145);
+    : plan(tests => 85);
 
 my $DUMP_PATH = './t/_dump';
 
-sub dump_directly {
+sub do_dump_test {
     my %tdata = @_;
 
     my $schema_class = $tdata{classname};
 
     no strict 'refs';
     @{$schema_class . '::ISA'} = ('DBIx::Class::Schema::Loader');
-    $schema_class->loader_options(%{$tdata{options}});
+    $schema_class->loader_options(dump_directory => $DUMP_PATH, %{$tdata{options}});
 
     my @warns;
     eval {
@@ -32,53 +31,10 @@ sub dump_directly {
 
     is($err, $tdata{error});
 
-    return @warns;
-}
-
-sub dump_dbicdump {
-    my %tdata = @_;
-
-    # use $^X so we execute ./script/dbicdump with the same perl binary that the tests were executed with
-    my @cmd = ($^X, qw(./script/dbicdump));
-
-    while (my ($opt, $val) = each(%{ $tdata{options} })) {
-        push @cmd, '-o', "$opt=$val";
-    }
-
-    push @cmd, $tdata{classname}, $make_dbictest_db::dsn;
-
-    # make sure our current @INC gets used by dbicdump
-    local $ENV{PERL5LIB} = join ":", @INC, $ENV{PERL5LIB};
-
-    my ($in, $out, $err);
-    my $pid = open3($in, $out, $err, @cmd);
-
-    my @warns = <$out>;
-    waitpid($pid, 0);
-
-    return @warns;
-}
-
-sub do_dump_test {
-    my %tdata = @_;
-    
-    $tdata{options}{dump_directory} = $DUMP_PATH;
-
-    for my $dumper (\&dump_directly, \&dump_dbicdump) {
-        test_dumps(\%tdata, $dumper->(%tdata));
-    }
-}
-
-sub test_dumps {
-    my ($tdata, @warns) = @_;
-
-    my %tdata = %{$tdata};
-
-    my $schema_class = $tdata{classname};
     my $check_warns = $tdata{warnings};
-    is(@warns, @$check_warns, "$schema_class warning count");
+    is(@warns, @$check_warns);
     for(my $i = 0; $i <= $#$check_warns; $i++) {
-        like($warns[$i], $check_warns->[$i], "$schema_class warning $i");
+        like($warns[$i], $check_warns->[$i]);
     }
 
     my $file_regexes = $tdata{regexes};
@@ -103,8 +59,7 @@ sub dump_file_like {
     open(my $dumpfh, '<', $path) or die "Failed to open '$path': $!";
     my $contents = do { local $/; <$dumpfh>; };
     close($dumpfh);
-    my $num = 1;
-    like($contents, $_, "like $path " . $num++) for @_;
+    like($contents, $_) for @_;
 }
 
 sub dump_file_not_like {
@@ -112,8 +67,7 @@ sub dump_file_not_like {
     open(my $dumpfh, '<', $path) or die "Failed to open '$path': $!";
     my $contents = do { local $/; <$dumpfh>; };
     close($dumpfh);
-    my $num = 1;
-    unlike($contents, $_, "unlike $path ". $num++) for @_;
+    unlike($contents, $_) for @_;
 }
 
 sub append_to_class {

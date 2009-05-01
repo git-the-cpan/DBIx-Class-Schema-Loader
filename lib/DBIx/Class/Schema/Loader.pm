@@ -11,10 +11,10 @@ use Scalar::Util qw/ weaken /;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.04999_07';
+our $VERSION = '0.04006';
 
 __PACKAGE__->mk_classaccessor('_loader_args' => {});
-__PACKAGE__->mk_classaccessors(qw/dump_to_dir _loader_invoked _loader loader_class/);
+__PACKAGE__->mk_classaccessors(qw/dump_to_dir _loader_invoked _loader/);
 
 =head1 NAME
 
@@ -69,29 +69,7 @@ the road.
 
 =head1 METHODS
 
-=head2 loader_class
-
-=over 4
-
-=item Argument: $loader_class
-
-=back
-
-Set the loader class to be instantiated when L</connection> is called.
-If the classname starts with "::", "DBIx::Class::Schema::Loader" is
-prepended. Defaults to L<DBIx::Class::Schema/storage_type> (which must
-start with "::" when using L<DBIx::Class::Schema::Loader>).
-
-This is mostly useful for subclassing existing loaders or in conjunction
-with L</dump_to_dir>.
-
 =head2 loader_options
-
-=over 4
-
-=item Argument: \%loader_options
-
-=back
 
 Example in Synopsis above demonstrates a few common arguments.  For
 detailed information on all of the arguments, most of which are
@@ -128,9 +106,7 @@ sub _invoke_loader {
     $args->{dump_directory} ||= $self->dump_to_dir;
 
     # XXX this only works for relative storage_type, like ::DBI ...
-    my $impl = $self->loader_class
-      || "DBIx::Class::Schema::Loader" . $self->storage_type;
-    $impl = "DBIx::Class::Schema::Loader${impl}" if $impl =~ /^::/;
+    my $impl = "DBIx::Class::Schema::Loader" . $self->storage_type;
     $impl->require or
       croak qq/Could not load storage_type loader "$impl": / .
             qq/"$UNIVERSAL::require::ERROR"/;
@@ -144,20 +120,11 @@ sub _invoke_loader {
 
 =head2 connection
 
-=over 4
+See L<DBIx::Class::Schema> for basic usage.
 
-=item Arguments: @args
-
-=item Return Value: $new_schema
-
-=back
-
-See L<DBIx::Class::Schema/connection> for basic usage.
-
-If the final argument is a hashref, and it contains the keys C<loader_options>
-or C<loader_class>, those keys will be deleted, and their values value will be
-used for the loader options or class, respectively, just as if set via the
-L</loader_options> or L</loader_class> methods above.
+If the final argument is a hashref, and it contains a key C<loader_options>,
+that key will be deleted, and its value will be used for the loader options,
+just as if set via the L</loader_options> method above.
 
 The actual auto-loading operation (the heart of this module) will be invoked
 as soon as the connection information is defined.
@@ -168,12 +135,10 @@ sub connection {
     my $self = shift;
 
     if($_[-1] && ref $_[-1] eq 'HASH') {
-        for my $option (qw/ loader_class loader_options result_base_class schema_base_class/) {
-            if(my $value = delete $_[-1]->{$option}) {
-                $self->$option($value);
-            }
+        if(my $loader_opts = delete $_[-1]->{loader_options}) {
+            $self->loader_options($loader_opts);
+            pop @_ if !keys %{$_[-1]};
         }
-        pop @_ if !keys %{$_[-1]};
     }
 
     $self = $self->next::method(@_);
@@ -188,7 +153,7 @@ sub connection {
 
 =head2 clone
 
-See L<DBIx::Class::Schema/clone>.
+See L<DBIx::Class::Schema>.
 
 =cut
 
@@ -207,11 +172,7 @@ sub clone {
 
 =head2 dump_to_dir
 
-=over 4
-
-=item Argument: $directory
-
-=back
+Argument: directory name.
 
 Calling this as a class method on either L<DBIx::Class::Schema::Loader>
 or any derived schema class will cause all affected schemas to dump
@@ -277,14 +238,6 @@ sub import {
 
 =head2 make_schema_at
 
-=over 4
-
-=item Arguments: $schema_name, \%loader_options, \@connect_info
-
-=item Return Value: $schema_name
-
-=back
-
 This simple function allows one to create a Loader-based schema
 in-memory on the fly without any on-disk class files of any
 kind.  When used with the C<dump_directory> option, you can
@@ -333,12 +286,6 @@ sub make_schema_at {
 }
 
 =head2 rescan
-
-=over 4
-
-=item Return Value: @new_monikers
-
-=back
 
 Re-scans the database for newly added tables since the initial
 load, and adds them to the schema at runtime, including relationships,

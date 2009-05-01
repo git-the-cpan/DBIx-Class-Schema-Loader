@@ -8,7 +8,6 @@ inc/Module/Install/Fetch.pm
 inc/Module/Install/Include.pm
 inc/Module/Install/Makefile.pm
 inc/Module/Install/Metadata.pm
-inc/Module/Install/Scripts.pm
 inc/Module/Install/Win32.pm
 inc/Module/Install/WriteAll.pm
 lib/DBIx/Class/Schema/Loader.pm
@@ -25,7 +24,6 @@ Makefile.PL
 MANIFEST			This list of files
 META.yml
 README
-script/dbicdump
 t/01use.t
 t/02pod.t
 t/03podcoverage.t
@@ -39,15 +37,11 @@ t/20invocations.t
 t/21misc_fatal.t
 t/22dump.t
 t/23dumpmore.t
-t/24loader_subclass.t
 t/lib/DBIx/Class/TestComponent.pm
 t/lib/DBIx/Class/TestRSComponent.pm
 t/lib/dbixcsl_common_tests.pm
 t/lib/DBIXCSL_Test/Schema/LoaderTest1.pm
 t/lib/make_dbictest_db.pm
-t/lib/My/ResultBaseClass.pm
-t/lib/My/SchemaBaseClass.pm
 t/lib/TestAdditional.pm
 t/lib/TestAdditionalBase.pm
 t/lib/TestLeftBase.pm
-t/lib/TestLoaderSubclass.pm

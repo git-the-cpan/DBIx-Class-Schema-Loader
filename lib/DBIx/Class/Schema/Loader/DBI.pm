@@ -7,7 +7,7 @@ use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
 use UNIVERSAL::require;
 
-our $VERSION = '0.04999_07';
+our $VERSION = '0.04006';
 
 =head1 NAME
 
@@ -40,12 +40,16 @@ sub new {
     my $dbh = $self->schema->storage->dbh;
     my $driver = $dbh->{Driver}->{Name};
     my $subclass = 'DBIx::Class::Schema::Loader::DBI::' . $driver;
+    
+    # must use $UNIVERSAL::require::ERROR, $@ is not safe. See RT #44444 --kane
     $subclass->require;
-    if($@ && $@ !~ /^Can't locate /) {
+    if($UNIVERSAL::require::ERROR && 
+       $UNIVERSAL::require::ERROR !~ /^Can't locate /
+    ) {
         croak "Failed to require $subclass: $@";
     }
     elsif(!$@) {
-        bless $self, $subclass unless $self->isa($subclass);
+        bless $self, "DBIx::Class::Schema::Loader::DBI::${driver}";
     }
 
     # Set up the default quoting character and name seperators
@@ -221,9 +225,7 @@ sub _columns_info_for {
                 my $col_name = $info->{COLUMN_NAME};
                 $col_name =~ s/^\"(.*)\"$/$1/;
 
-                my $extra_info = $self->_extra_column_info($info) || {};
-
-                $result{$col_name} = { %column_info, %$extra_info };
+                $result{$col_name} = \%column_info;
             }
             $sth->finish;
         };
@@ -248,9 +250,7 @@ sub _columns_info_for {
             $column_info{size}    = $2;
         }
 
-        my $extra_info = $self->_extra_column_info($table, $columns[$i], $sth, $i) || {};
-
-        $result{$columns[$i]} = { %column_info, %$extra_info };
+        $result{$columns[$i]} = \%column_info;
     }
     $sth->finish;
 
@@ -267,10 +267,6 @@ sub _columns_info_for {
 
     return \%result;
 }
-
-# Override this in vendor class to return any additional column
-# attributes
-sub _extra_column_info {}
 
 =head1 SEE ALSO
 
