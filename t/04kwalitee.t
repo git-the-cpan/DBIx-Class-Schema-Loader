@@ -1,8 +1,8 @@
 use Test::More;
 
-eval { require Test::Kwalitee; die "Not maintainer" unless -f 'MANIFEST.SKIP' };
-if($@) {
-    $@ =~ s/ \(\@INC contains.*//; # reduce the noise
-    plan( skip_all => $@ );
-}
+plan skip_all => "Not maintainer" unless -f 'MANIFEST.SKIP';
+
+eval { require Test::Kwalitee; };
+plan skip_all => 'Test::Kwalitee not installed' if $@;
+
 Test::Kwalitee->import(); 

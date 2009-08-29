@@ -7,11 +7,13 @@ build_requires:
   DBI: 1.56
   ExtUtils::MakeMaker: 6.42
   File::Path: 0
+  IPC::Open3: 0
+  Test::Exception: 0
   Test::More: 0.47
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.85'
+generated_by: 'Module::Install version 0.91'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -21,20 +23,70 @@ no_index:
   directory:
     - inc
     - t
+provides:
+  DBIx::Class::Schema::Loader:
+    file: lib/DBIx/Class/Schema/Loader.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::Base:
+    file: lib/DBIx/Class/Schema/Loader/Base.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI:
+    file: lib/DBIx/Class/Schema/Loader/DBI.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::DB2:
+    file: lib/DBIx/Class/Schema/Loader/DBI/DB2.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::MSSQL:
+    file: lib/DBIx/Class/Schema/Loader/DBI/MSSQL.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::ODBC:
+    file: lib/DBIx/Class/Schema/Loader/DBI/ODBC.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::ODBC::Microsoft_SQL_Server:
+    file: lib/DBIx/Class/Schema/Loader/DBI/ODBC/Microsoft_SQL_Server.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::Oracle:
+    file: lib/DBIx/Class/Schema/Loader/DBI/Oracle.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::Pg:
+    file: lib/DBIx/Class/Schema/Loader/DBI/Pg.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::SQLite:
+    file: lib/DBIx/Class/Schema/Loader/DBI/SQLite.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::Sybase:
+    file: lib/DBIx/Class/Schema/Loader/DBI/Sybase.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::Sybase::Common:
+    file: lib/DBIx/Class/Schema/Loader/DBI/Sybase/Common.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::Sybase::Microsoft_SQL_Server:
+    file: lib/DBIx/Class/Schema/Loader/DBI/Sybase/Microsoft_SQL_Server.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::Writing:
+    file: lib/DBIx/Class/Schema/Loader/DBI/Writing.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::DBI::mysql:
+    file: lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
+    version: 0.04999_08
+  DBIx::Class::Schema::Loader::RelBuilder:
+    file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
+    version: 0.04999_08
 requires:
   Carp::Clan: 0
   Class::Accessor::Fast: 0.30
   Class::C3: 0.18
+  Class::C3::Componentised: 1.0005
   Class::Data::Accessor: 0.03
   Class::Inspector: 0
-  DBIx::Class: 0.07006
+  Class::Unload: 0
+  DBIx::Class: 0.08109
   Data::Dump: 1.06
   Digest::MD5: 2.36
   File::Spec: 0
   Lingua::EN::Inflect::Number: 1.1
   Scalar::Util: 0
   Text::Balanced: 0
-  UNIVERSAL::require: 0.11
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.04006
+version: 0.04999_08

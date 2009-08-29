@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04006';
+our $VERSION = '0.04999_08';
 
 =head1 NAME
 
@@ -119,6 +119,29 @@ sub _table_uniq_info {
     }
 
     return \@uniqs;
+}
+
+sub _extra_column_info {
+    no warnings 'uninitialized';
+    my ($self, $info) = @_;
+    my %extra_info;
+
+    if ($info->{mysql_is_auto_increment}) {
+        $extra_info{is_auto_increment} = 1
+    }
+    if ($info->{mysql_type_name} =~ /\bunsigned\b/i) {
+        $extra_info{extra}{unsigned} = 1;
+    }
+    if ($info->{mysql_values}) {
+        $extra_info{extra}{list} = $info->{mysql_values};
+    }
+# XXX we need to distinguish between DEFAULT CURRENT_TIMESTAMP and DEFAULT 'foo'
+# somehow, but DBI column_info doesn't preserve quotes.
+    if ($info->{COLUMN_DEF} =~ /^CURRENT_TIMESTAMP\z/i) {
+        $extra_info{default_value} = \'CURRENT_TIMESTAMP';
+    }
+
+    return \%extra_info;
 }
 
 =head1 SEE ALSO

@@ -2,19 +2,21 @@ package DBIx::Class::Schema::Loader::Base;
 
 use strict;
 use warnings;
-use base qw/Class::Accessor::Fast/;
+use base qw/Class::Accessor::Fast Class::C3::Componentised/;
 use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
-use UNIVERSAL::require;
 use DBIx::Class::Schema::Loader::RelBuilder;
 use Data::Dump qw/ dump /;
 use POSIX qw//;
 use File::Spec qw//;
 use Cwd qw//;
 use Digest::MD5 qw//;
+use Lingua::EN::Inflect::Number qw//;
+use File::Temp qw//;
+use Class::Unload;
 require DBIx::Class;
 
-our $VERSION = '0.04006';
+our $VERSION = '0.04999_08';
 
 __PACKAGE__->mk_ro_accessors(qw/
                                 schema
@@ -64,7 +66,7 @@ classes, and implements the common functionality between them.
 =head1 CONSTRUCTOR OPTIONS
 
 These constructor options are the base options for
-L<DBIx::Class::Schema::Loader/loader_opts>.  Available constructor options are:
+L<DBIx::Class::Schema::Loader/loader_options>.  Available constructor options are:
 
 =head2 skip_relationships
 
@@ -262,6 +264,12 @@ sub new {
         . " DBIx::Class::Schema::Loader::Base documentation"
             if $self->{dump_overwrite};
 
+    $self->{dynamic} = ! $self->{dump_directory};
+    $self->{dump_directory} ||= File::Temp::tempdir( 'dbicXXXX',
+                                                     TMPDIR  => 1,
+                                                     CLEANUP => 1,
+                                                   );
+
     $self->{relbuilder} = DBIx::Class::Schema::Loader::RelBuilder->new(
         $self->schema, $self->inflect_plural, $self->inflect_singular
     ) if !$self->{skip_relationships};
@@ -273,8 +281,10 @@ sub _find_file_in_inc {
     my ($self, $file) = @_;
 
     foreach my $prefix (@INC) {
-        my $fullpath = $prefix . '/' . $file;
-        return $fullpath if -f $fullpath;
+        my $fullpath = File::Spec->catfile($prefix, $file);
+        return $fullpath if -f $fullpath
+            and Cwd::abs_path($fullpath) ne
+                Cwd::abs_path(File::Spec->catfile($self->dump_directory, $file)) || '';
     }
 
     return;
@@ -287,29 +297,13 @@ sub _load_external {
     $class_path =~ s{::}{/}g;
     $class_path .= '.pm';
 
-    my $inc_path = $self->_find_file_in_inc($class_path);
+    my $real_inc_path = $self->_find_file_in_inc($class_path);
 
-    return if !$inc_path;
-
-    my $real_dump_path = $self->dump_directory
-        ? Cwd::abs_path(
-              File::Spec->catfile($self->dump_directory, $class_path)
-          )
-        : '';
-    my $real_inc_path = Cwd::abs_path($inc_path);
-    return if $real_inc_path eq $real_dump_path;
-
-    # must use $UNIVERSAL::require::ERROR, $@ is not safe. See RT #44444 --kane
-    $class->require or 
-        croak "Failed to load external class definition"
-            . " for '$class': $UNIVERSAL::require::ERROR";
+    return if !$real_inc_path;
 
     # If we make it to here, we loaded an external definition
     warn qq/# Loaded external class definition for '$class'\n/
         if $self->debug;
-
-    # The rest is only relevant when dumping
-    return if !$self->dump_directory;
 
     croak 'Failed to locate actual external module file for '
           . "'$class'"
@@ -317,12 +311,12 @@ sub _load_external {
     open(my $fh, '<', $real_inc_path)
         or croak "Failed to open '$real_inc_path' for reading: $!";
     $self->_ext_stmt($class,
-        qq|# These lines were loaded from '$real_inc_path' found in \@INC.|
-        .q|# They are now part of the custom portion of this file|
-        .q|# for you to hand-edit.  If you do not either delete|
-        .q|# this section or remove that file from @INC, this section|
-        .q|# will be repeated redundantly when you re-create this|
-        .q|# file again via Loader!|
+         qq|# These lines were loaded from '$real_inc_path' found in \@INC.\n|
+        .qq|# They are now part of the custom portion of this file\n|
+        .qq|# for you to hand-edit.  If you do not either delete\n|
+        .qq|# this section or remove that file from \@INC, this section\n|
+        .qq|# will be repeated redundantly when you re-create this\n|
+        .qq|# file again via Loader!\n|
     );
     while(<$fh>) {
         chomp;
@@ -366,6 +360,7 @@ sub rescan {
     my ($self, $schema) = @_;
 
     $self->{schema} = $schema;
+    $self->{relbuilder}{schema} = $schema;
 
     my @created;
     my @current = $self->_tables_list;
@@ -397,32 +392,68 @@ sub _load_tables {
         $self->{_tables}->{$_} = 1;
     }
 
-    # Set up classes/monikers
-    {
-        no warnings 'redefine';
-        local *Class::C3::reinitialize = sub { };
-        use warnings;
-
-        $self->_make_src_class($_) for @tables;
-    }
-
-    Class::C3::reinitialize;
-
+    $self->_make_src_class($_) for @tables;
     $self->_setup_src_meta($_) for @tables;
 
     if(!$self->skip_relationships) {
+        # The relationship loader needs a working schema
+        $self->{quiet} = 1;
+        $self->_reload_classes(@tables);
         $self->_load_relationships($_) for @tables;
+        $self->{quiet} = 0;
     }
 
     $self->_load_external($_)
         for map { $self->classes->{$_} } @tables;
 
-    $self->_dump_to_dir if $self->dump_directory;
+    $self->_reload_classes(@tables);
 
     # Drop temporary cache
     delete $self->{_cache};
 
     return \@tables;
+}
+
+sub _reload_classes {
+    my ($self, @tables) = @_;
+
+    $self->_dump_to_dir(map { $self->classes->{$_} } @tables);
+
+    unshift @INC, $self->dump_directory;
+    
+    my @to_register;
+    my %have_source = map { $_ => $self->schema->source($_) }
+        $self->schema->sources;
+
+    for my $table (@tables) {
+        my $moniker = $self->monikers->{$table};
+        my $class = $self->classes->{$table};
+        
+        {
+            no warnings 'redefine';
+            local *Class::C3::reinitialize = sub {};
+            use warnings;
+
+            Class::Unload->unload($class);
+            my ($source, $resultset_class);
+            if (
+                ($source = $have_source{$moniker})
+                && ($resultset_class = $source->resultset_class)
+                && ($resultset_class ne 'DBIx::Class::ResultSet')
+            ) {
+                my $has_file = Class::Inspector->loaded_filename($resultset_class);
+                Class::Unload->unload($resultset_class);
+                $self->ensure_class_loaded($resultset_class) if $has_file;
+            }
+            $self->ensure_class_loaded($class);
+        }
+        push @to_register, [$moniker, $class];
+    }
+
+    Class::C3->reinitialize;
+    for (@to_register) {
+        $self->schema->register_class(@$_);
+    }
 }
 
 sub _get_dump_filename {
@@ -450,23 +481,20 @@ sub _ensure_dump_subdirs {
 }
 
 sub _dump_to_dir {
-    my ($self) = @_;
-
-    my $target_dir = $self->dump_directory;
+    my ($self, @classes) = @_;
 
     my $schema_class = $self->schema_class;
     my $schema_base_class = $self->schema_base_class || 'DBIx::Class::Schema';
 
-    croak "Must specify target directory for dumping!" if ! $target_dir;
-
-    warn "Dumping manual schema for $schema_class to directory $target_dir ...\n";
+    my $target_dir = $self->dump_directory;
+    warn "Dumping manual schema for $schema_class to directory $target_dir ...\n"
+        unless $self->{dynamic} or $self->{quiet};
 
     my $schema_text =
           qq|package $schema_class;\n\n|
         . qq|use strict;\nuse warnings;\n\n|
         . qq|use base '$schema_base_class';\n\n|;
 
-    
     if ($self->use_namespaces) {
         $schema_text .= qq|__PACKAGE__->load_namespaces|;
         my $namespace_options;
@@ -482,14 +510,13 @@ sub _dump_to_dir {
     }
     else {
         $schema_text .= qq|__PACKAGE__->load_classes;\n|;
-
     }
 
     $self->_write_classfile($schema_class, $schema_text);
 
     my $result_base_class = $self->result_base_class || 'DBIx::Class';
 
-    foreach my $src_class (sort keys %{$self->{_dump_storage}}) {
+    foreach my $src_class (@classes) {
         my $src_text = 
               qq|package $src_class;\n\n|
             . qq|use strict;\nuse warnings;\n\n|
@@ -498,7 +525,8 @@ sub _dump_to_dir {
         $self->_write_classfile($src_class, $src_text);
     }
 
-    warn "Schema dump completed.\n";
+    warn "Schema dump completed.\n" unless $self->{dynamic} or $self->{quiet};
+
 }
 
 sub _write_classfile {
@@ -509,12 +537,11 @@ sub _write_classfile {
 
     if (-f $filename && $self->really_erase_my_files) {
         warn "Deleting existing file '$filename' due to "
-            . "'really_erase_my_files' setting\n";
+            . "'really_erase_my_files' setting\n" unless $self->{quiet};
         unlink($filename);
     }    
 
     my $custom_content = $self->_get_custom_content($class, $filename);
-
     $custom_content ||= qq|\n\n# You can replace this text with custom|
         . qq| content, and it will be preserved on regeneration|
         . qq|\n1;\n|;
@@ -537,10 +564,11 @@ sub _write_classfile {
     print $fh qq|$_\n|
         for @{$self->{_ext_storage}->{$class} || []};
 
+    # Write out any custom content the user has added
     print $fh $custom_content;
 
     close($fh)
-        or croak "Cannot close '$filename': $!";
+        or croak "Error closing '$filename': $!";
 }
 
 sub _get_custom_content {
@@ -579,16 +607,11 @@ sub _get_custom_content {
 sub _use {
     my $self = shift;
     my $target = shift;
-    my $evalstr;
 
     foreach (@_) {
         warn "$target: use $_;" if $self->debug;
         $self->_raw_stmt($target, "use $_;");
-        $_->require or croak ($_ . "->require: $UNIVERSAL::require::ERROR");
-        $evalstr .= "package $target; use $_;";
     }
-    eval $evalstr if $evalstr;
-    croak $@ if $@;
 }
 
 sub _inject {
@@ -599,10 +622,6 @@ sub _inject {
     my $blist = join(q{ }, @_);
     warn "$target: use base qw/ $blist /;" if $self->debug && @_;
     $self->_raw_stmt($target, "use base qw/ $blist /;") if @_;
-    foreach (@_) {
-        $_->require or croak ($_ . "->require: $UNIVERSAL::require::ERROR");
-        $schema_class->inject_base($target, $_);
-    }
 }
 
 # Create class with applicable bases, setup monikers, etc
@@ -633,19 +652,17 @@ sub _make_src_class {
     $self->monikers->{$table} = $table_moniker;
     $self->monikers->{$table_normalized} = $table_moniker;
 
-    { no strict 'refs'; @{"${table_class}::ISA"} = qw/DBIx::Class/ }
-
     $self->_use   ($table_class, @{$self->additional_classes});
-    $self->_inject($table_class, @{$self->additional_base_classes});
+    $self->_inject($table_class, @{$self->left_base_classes});
 
     $self->_dbic_stmt($table_class, 'load_components', @{$self->components}, 'Core');
 
     $self->_dbic_stmt($table_class, 'load_resultset_components', @{$self->resultset_components})
         if @{$self->resultset_components};
-    $self->_inject($table_class, @{$self->left_base_classes});
+    $self->_inject($table_class, @{$self->additional_base_classes});
 }
 
-# Set up metadata (cols, pks, etc) and register the class with the schema
+# Set up metadata (cols, pks, etc)
 sub _setup_src_meta {
     my ($self, $table) = @_;
 
@@ -655,7 +672,14 @@ sub _setup_src_meta {
     my $table_class = $self->classes->{$table};
     my $table_moniker = $self->monikers->{$table};
 
-    $self->_dbic_stmt($table_class,'table',$table);
+    my $table_name = $table;
+    my $name_sep   = $self->schema->storage->sql_maker->name_sep;
+
+    if ($name_sep && $table_name =~ /\Q$name_sep\E/) {
+        $table_name = \ $self->_quote_table_name($table_name);
+    }
+
+    $self->_dbic_stmt($table_class,'table',$table_name);
 
     my $cols = $self->_table_columns($table);
     my $col_info;
@@ -664,23 +688,43 @@ sub _setup_src_meta {
         $self->_dbic_stmt($table_class,'add_columns',@$cols);
     }
     else {
-        my %col_info_lc = map { lc($_), $col_info->{$_} } keys %$col_info;
+        if ($self->_is_case_sensitive) {
+            for my $col (keys %$col_info) {
+                $col_info->{$col}{accessor} = lc $col
+                    if $col ne lc($col);
+            }
+        } else {
+            $col_info = { map { lc($_), $col_info->{$_} } keys %$col_info };
+        }
+
+        my $fks = $self->_table_fk_info($table);
+
+        for my $fkdef (@$fks) {
+            for my $col (@{ $fkdef->{local_columns} }) {
+                $col_info->{$col}{is_foreign_key} = 1;
+            }
+        }
         $self->_dbic_stmt(
             $table_class,
             'add_columns',
-            map { $_, ($col_info_lc{$_}||{}) } @$cols
+            map { $_, ($col_info->{$_}||{}) } @$cols
         );
     }
+
+    my %uniq_tag; # used to eliminate duplicate uniqs
 
     my $pks = $self->_table_pk_info($table) || [];
     @$pks ? $self->_dbic_stmt($table_class,'set_primary_key',@$pks)
           : carp("$table has no primary key");
+    $uniq_tag{ join("\0", @$pks) }++ if @$pks; # pk is a uniq
 
     my $uniqs = $self->_table_uniq_info($table) || [];
-    $self->_dbic_stmt($table_class,'add_unique_constraint',@$_) for (@$uniqs);
+    for (@$uniqs) {
+        my ($name, $cols) = @$_;
+        next if $uniq_tag{ join("\0", @$cols) }++; # skip duplicates
+        $self->_dbic_stmt($table_class,'add_unique_constraint', $name, $cols);
+    }
 
-    $schema_class->register_class($table_moniker, $table_class);
-    $schema->register_class($table_moniker, $table_class) if $schema ne $schema_class;
 }
 
 =head2 tables
@@ -697,6 +741,13 @@ sub tables {
 }
 
 # Make a moniker from a table
+sub _default_table2moniker {
+    my ($self, $table) = @_;
+
+    return join '', map ucfirst, split /[\W_]+/,
+        Lingua::EN::Inflect::Number::to_S(lc $table);
+}
+
 sub _table2moniker {
     my ( $self, $table ) = @_;
 
@@ -709,7 +760,7 @@ sub _table2moniker {
         $moniker = $self->moniker_map->($table);
     }
 
-    $moniker ||= join '', map ucfirst, split /[\W_]+/, lc $table;
+    $moniker ||= $self->_default_table2moniker($table);
 
     return $moniker;
 }
@@ -722,17 +773,16 @@ sub _load_relationships {
         $fkdef->{remote_source} =
             $self->monikers->{delete $fkdef->{remote_table}};
     }
+    my $tbl_uniq_info = $self->_table_uniq_info($table);
 
     my $local_moniker = $self->monikers->{$table};
-    my $rel_stmts = $self->{relbuilder}->generate_code($local_moniker, $tbl_fk_info);
+    my $rel_stmts = $self->{relbuilder}->generate_code($local_moniker, $tbl_fk_info, $tbl_uniq_info);
 
     foreach my $src_class (sort keys %$rel_stmts) {
         my $src_stmts = $rel_stmts->{$src_class};
-        foreach my $stmt (@{$src_stmts->{stmts}}) {
+        foreach my $stmt (@$src_stmts) {
             $self->_dbic_stmt($src_class,$stmt->{method},@{$stmt->{args}});
         }
-        $self->schema_class->register_class($src_stmts->{moniker}, $src_class);
-        $self->schema->register_class($src_stmts->{moniker}, $src_class) if $self->schema_class ne $self->schema;
     }
 }
 
@@ -761,31 +811,41 @@ sub _dbic_stmt {
     my $class = shift;
     my $method = shift;
 
-    if(!$self->debug && !$self->dump_directory) {
-        $class->$method(@_);
-        return;
-    }
-
     my $args = dump(@_);
     $args = '(' . $args . ')' if @_ < 2;
     my $stmt = $method . $args . q{;};
 
     warn qq|$class\->$stmt\n| if $self->debug;
-    $class->$method(@_);
     $self->_raw_stmt($class, '__PACKAGE__->' . $stmt);
 }
 
 # Store a raw source line for a class (for dumping purposes)
 sub _raw_stmt {
     my ($self, $class, $stmt) = @_;
-    push(@{$self->{_dump_storage}->{$class}}, $stmt) if $self->dump_directory;
+    push(@{$self->{_dump_storage}->{$class}}, $stmt);
 }
 
 # Like above, but separately for the externally loaded stuff
 sub _ext_stmt {
     my ($self, $class, $stmt) = @_;
-    push(@{$self->{_ext_storage}->{$class}}, $stmt) if $self->dump_directory;
+    push(@{$self->{_ext_storage}->{$class}}, $stmt);
 }
+
+sub _quote_table_name {
+    my ($self, $table) = @_;
+
+    my $qt = $self->schema->storage->sql_maker->quote_char;
+
+    return $table unless $qt;
+
+    if (ref $qt) {
+        return $qt->[0] . $table . $qt->[1];
+    }
+
+    return $qt . $table . $qt;
+}
+
+sub _is_case_sensitive { 0 }
 
 =head2 monikers
 

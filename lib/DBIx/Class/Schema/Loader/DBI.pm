@@ -5,9 +5,8 @@ use warnings;
 use base qw/DBIx::Class::Schema::Loader::Base/;
 use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
-use UNIVERSAL::require;
 
-our $VERSION = '0.04006';
+our $VERSION = '0.04999_08';
 
 =head1 NAME
 
@@ -39,28 +38,16 @@ sub new {
     # rebless to vendor-specific class if it exists and loads
     my $dbh = $self->schema->storage->dbh;
     my $driver = $dbh->{Driver}->{Name};
+
     my $subclass = 'DBIx::Class::Schema::Loader::DBI::' . $driver;
-    
-    # must use $UNIVERSAL::require::ERROR, $@ is not safe. See RT #44444 --kane
-    $subclass->require;
-    if($UNIVERSAL::require::ERROR && 
-       $UNIVERSAL::require::ERROR !~ /^Can't locate /
-    ) {
-        croak "Failed to require $subclass: $@";
-    }
-    elsif(!$@) {
-        bless $self, "DBIx::Class::Schema::Loader::DBI::${driver}";
+    if ($self->load_optional_class($subclass)) {
+        bless $self, $subclass unless $self->isa($subclass);
+        $self->_rebless;
     }
 
     # Set up the default quoting character and name seperators
-    $self->{_quoter} = $self->schema->storage->sql_maker->quote_char
-                    || $dbh->get_info(29)
-                    || q{"};
-
-    $self->{_namesep} = $self->schema->storage->sql_maker->name_sep
-                     || $dbh->get_info(41)
-                     || q{.};
-
+    $self->{_quoter} = $self->_build_quoter;
+    $self->{_namesep} = $self->_build_namesep;
     # For our usage as regex matches, concatenating multiple quoter
     # values works fine (e.g. s/\Q<>\E// if quoter was [ '<', '>' ])
     if( ref $self->{_quoter} eq 'ARRAY') {
@@ -72,17 +59,45 @@ sub new {
     $self;
 }
 
+sub _build_quoter {
+    my $self = shift;
+    my $dbh = $self->schema->storage->dbh;
+    return $dbh->get_info(29)
+           || $self->schema->storage->sql_maker->quote_char
+           || q{"};
+}
+
+sub _build_namesep {
+    my $self = shift;
+    my $dbh = $self->schema->storage->dbh;
+    return $dbh->get_info(41)
+           || $self->schema->storage->sql_maker->name_sep
+           || q{.};
+}
+
 # Override this in vendor modules to do things at the end of ->new()
 sub _setup { }
+
+# Override this in vendor module to load a subclass if necessary
+sub _rebless { }
 
 # Returns an array of table names
 sub _tables_list { 
     my $self = shift;
 
+    my ($table, $type) = @_ ? @_ : ('%', '%');
+
     my $dbh = $self->schema->storage->dbh;
-    my @tables = $dbh->tables(undef, $self->db_schema, '%', '%');
-    s/\Q$self->{_quoter}\E//g for @tables;
-    s/^.*\Q$self->{_namesep}\E// for @tables;
+    my @tables = $dbh->tables(undef, $self->db_schema, $table, $type);
+
+    my $qt = qr/\Q$self->{_quoter}\E/;
+
+    if ($self->{_quoter} && $tables[0] =~ /$qt/) {
+        s/.* $qt (?= .* $qt)//xg for @tables;
+    } else {
+        s/^.*\Q$self->{_namesep}\E// for @tables;
+    }
+    s/$qt//g for @tables;
 
     return @tables;
 }
@@ -108,10 +123,13 @@ sub _table_columns {
     my $dbh = $self->schema->storage->dbh;
 
     if($self->{db_schema}) {
-        $table = $self->{db_schema} . $self->{_namesep} . $table;
+        $table = $self->{db_schema} . $self->{_namesep} .
+            $self->_quote_table_name($table);
+    } else {
+        $table = $self->_quote_table_name($table);
     }
 
-    my $sth = $dbh->prepare($self->schema->storage->sql_maker->select($table, undef, \'1 = 0'));
+    my $sth = $dbh->prepare($self->schema->storage->sql_maker->select(\$table, undef, \'1 = 0'));
     $sth->execute;
     my $retval = \@{$sth->{NAME_lc}};
     $sth->finish;
@@ -225,7 +243,9 @@ sub _columns_info_for {
                 my $col_name = $info->{COLUMN_NAME};
                 $col_name =~ s/^\"(.*)\"$/$1/;
 
-                $result{$col_name} = \%column_info;
+                my $extra_info = $self->_extra_column_info($info) || {};
+
+                $result{$col_name} = { %column_info, %$extra_info };
             }
             $sth->finish;
         };
@@ -250,7 +270,9 @@ sub _columns_info_for {
             $column_info{size}    = $2;
         }
 
-        $result{$columns[$i]} = \%column_info;
+        my $extra_info = $self->_extra_column_info($table, $columns[$i], $sth, $i) || {};
+
+        $result{$columns[$i]} = { %column_info, %$extra_info };
     }
     $sth->finish;
 
@@ -267,6 +289,10 @@ sub _columns_info_for {
 
     return \%result;
 }
+
+# Override this in vendor class to return any additional column
+# attributes
+sub _extra_column_info {}
 
 =head1 SEE ALSO
 

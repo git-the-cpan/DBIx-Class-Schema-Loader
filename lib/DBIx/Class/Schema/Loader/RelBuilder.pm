@@ -5,7 +5,7 @@ use warnings;
 use Carp::Clan qw/^DBIx::Class/;
 use Lingua::EN::Inflect::Number ();
 
-our $VERSION = '0.04006';
+our $VERSION = '0.04999_08';
 
 =head1 NAME
 
@@ -24,9 +24,9 @@ is module is not (yet) for external use.
 
 =head2 new
 
-Arguments: schema  inflect_plural, inflect_singular
+Arguments: schema_class (scalar), inflect_plural, inflect_singular
 
-C<$schema> should be a schema instance, where the source
+C<$schema_class> should be a schema class name, where the source
 classes have already been set up and registered.  Column info, primary
 key, and unique constraints will be drawn from this schema for all
 of the existing source monikers.
@@ -121,8 +121,63 @@ sub _inflect_singular {
     return Lingua::EN::Inflect::Number::to_S($relname);
 }
 
+sub _array_eq {
+    my ($a, $b) = @_;
+
+    return unless @$a == @$b;
+
+    for (my $i = 0; $i < @$a; $i++) {
+        return unless $a->[$i] eq $b->[$i];
+    }
+    return 1;
+}
+
+sub _uniq_fk_rel {
+    my ($self, $local_moniker, $local_relname, $local_cols, $uniqs) = @_;
+
+    my $remote_method = 'has_many';
+
+    # If the local columns have a UNIQUE constraint, this is a one-to-one rel
+    my $local_source = $self->{schema}->source($local_moniker);
+    if (_array_eq([ $local_source->primary_columns ], $local_cols) ||
+            grep { _array_eq($_->[1], $local_cols) } @$uniqs) {
+        $remote_method = 'might_have';
+        $local_relname = $self->_inflect_singular($local_relname);
+    }
+
+    return ($remote_method, $local_relname);
+}
+
+sub _remote_attrs {
+	my ($self, $local_moniker, $local_cols) = @_;
+
+	# If the referring column is nullable, make 'belongs_to' an outer join:
+	my $nullable = grep { $self->{schema}->source($local_moniker)->column_info($_)->{is_nullable} }
+		@$local_cols;
+
+	return $nullable ? { join_type => 'LEFT' } : ();
+}
+
+sub _remote_relname {
+    my ($self, $remote_table, $cond) = @_;
+
+    my $remote_relname;
+    # for single-column case, set the remote relname to the column
+    # name, to make filter accessors work, but strip trailing _id
+    if(scalar keys %{$cond} == 1) {
+        my ($col) = values %{$cond};
+        $col =~ s/_id$//;
+        $remote_relname = $self->_inflect_singular($col);
+    }
+    else {
+        $remote_relname = $self->_inflect_singular(lc $remote_table);
+    }
+
+    return $remote_relname;
+}
+
 sub generate_code {
-    my ($self, $local_moniker, $rels) = @_;
+    my ($self, $local_moniker, $rels, $uniqs) = @_;
 
     my $all_code = {};
 
@@ -156,17 +211,7 @@ sub generate_code {
         }
 
         my $local_relname;
-        my $remote_relname;
-
-        # for single-column case, set the remote relname to the column
-        # name, to make filter accessors work
-        if(scalar keys %cond == 1) {
-            my ($col) = keys %cond;
-            $remote_relname = $self->_inflect_singular($cond{$col});
-        }
-        else {
-            $remote_relname = $self->_inflect_singular(lc $remote_table);
-        }
+        my $remote_relname = $self->_remote_relname($remote_table, \%cond);
 
         # If more than one rel between this pair of tables, use the local
         # col names to distinguish
@@ -187,25 +232,28 @@ sub generate_code {
             delete $rev_cond{$_};
         }
 
-        push(@{$all_code->{$local_class}{stmts}},
+        my ($remote_method);
+
+        ($remote_method, $local_relname) = $self->_uniq_fk_rel($local_moniker, $local_relname, $local_cols, $uniqs);
+
+        push(@{$all_code->{$local_class}},
             { method => 'belongs_to',
               args => [ $remote_relname,
                         $remote_class,
                         \%cond,
+                        $self->_remote_attrs($local_moniker, $local_cols),
               ],
             }
         );
-        $all_code->{$local_class}{moniker} = $local_moniker;
 
-        push(@{$all_code->{$remote_class}{stmts}},
-            { method => 'has_many',
+        push(@{$all_code->{$remote_class}},
+            { method => $remote_method,
               args => [ $local_relname,
                         $local_class,
                         \%rev_cond,
               ],
             }
         );
-        $all_code->{$remote_class}{moniker} = $remote_moniker;
     }
 
     return $all_code;

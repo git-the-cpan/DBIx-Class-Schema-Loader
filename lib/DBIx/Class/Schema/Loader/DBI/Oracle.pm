@@ -1,6 +1,4 @@
-package # hide from pause/cpan for now, as there's a permissions
-        # issue and it's screwing the rest of the package
-  DBIx::Class::Schema::Loader::DBI::Oracle;
+package DBIx::Class::Schema::Loader::DBI::Oracle;
 
 use strict;
 use warnings;
@@ -8,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04006';
+our $VERSION = '0.04999_08';
 
 =head1 NAME
 
@@ -123,6 +121,31 @@ sub _columns_info_for {
     return $self->next::method(uc $table);
 }
 
+sub _extra_column_info {
+    my ($self, $info) = @_;
+    my %extra_info;
+
+    my ($table, $column) = @$info{qw/TABLE_NAME COLUMN_NAME/};
+
+    my $dbh = $self->schema->storage->dbh;
+    my $sth = $dbh->prepare_cached(
+        q{
+            SELECT COUNT(*)
+            FROM all_triggers ut JOIN all_trigger_cols atc USING (trigger_name)
+            WHERE atc.table_name = ? AND atc.column_name = ?
+            AND column_usage LIKE '%NEW%' AND column_usage LIKE '%OUT%'
+            AND trigger_type = 'BEFORE EACH ROW' AND triggering_event LIKE '%INSERT%'
+        },
+        {}, 1);
+
+    $sth->execute($table, $column);
+    if ($sth->fetchrow_array) {
+        $extra_info{is_auto_increment} = 1;
+    }
+
+    return \%extra_info;
+}
+
 =head1 SEE ALSO
 
 L<DBIx::Class::Schema::Loader>, L<DBIx::Class::Schema::Loader::Base>,
@@ -131,6 +154,8 @@ L<DBIx::Class::Schema::Loader::DBI>
 =head1 AUTHOR
 
 TSUNODA Kazuya C<drk@drk7.jp>
+
+Dagfinn Ilmari Mannsåker C<ilmari@ilmari.org>
 
 =cut
 

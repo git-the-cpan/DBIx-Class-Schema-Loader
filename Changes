@@ -1,18 +1,66 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
-0.04006 2009-05-01
-        - Fix Oracle constraint detection for non-owned schemas (RT #35732)
-        - Add result_base_class and schema_base_class options (RT #43977)
-        - Handle ResultSetManager deprecation warning in common tests
-        - Fix for DBIx::Class 0.081
+0.04999_08 2009-08-28
+        - Replace UNIVERSAL::require with Class::C3::Componentised
+        - Add Sybase/MSSQL support through DBD::Sybase
+        - use $dbh->get_info(29/41) for qote_car/name_sep if available (semifor)
+        - add MSSQL support through DBD::ODBC
+        - support MSSQL table names with a '.' in the name
+        - support MySQL CURRENT_TIMESTAMP()
 
-0.04005 Sat Apr 05, 2008
+0.04999_07 2009-04-18
+        - Add result_base_class and schema_base_class options (RT #43977)
+        - Ignore duplicate uniq indices (including duplicates of the PK).
+        - Fix for DBD::SQLite 1.20
+        - Fix for DBIx::Class 0.08100
+
+0.04999_06 Tue Nov 11, 2008
+        - Singularise table monikers by default
+        - Strip trailing _id from single-column belongs_to relationships
+        - Add "dbicdump" script for easy commandline dumping
+        - Throw out the in-memory class generation, just dump to a temporary
+          directory if the user didn't specify one
+        - Fix Oracle constraint and auto-increment detection for non-owned schemas
+          (RT #35732)
+	- Handle ResultSetManager deprecation warning in common tests
+
+0.04999_05 Mon Apr 14, 2008
+        - Fix limiting table list to the specified schema for DB2
+        - Default db_schema to the username for DB2
+        - Allow specifying a custom loader_class, overriding the
+          storage_type-based detection
+        - Cosmetic fixes to dumping of externally defined classes
+        - Make ResultSetManager notice externally defined :ResultSet methods
+        - Fix test failure for non-InnoDB MySQL due to wrong skip count
+        - Fix base class ordering in dumped classes
+        - Run the common tests against both dynamic and dumped versions of
+          the schema
+
+0.04999_04 Wed Mar 12, 2008
+        - Add is_auto_increment detecton for DB2
+
+0.04999_03 Wed Mar 12, 2008
         - Fix DB2 support
+
+0.04999_02 Tue Feb 12, 2008
+        - Add is_auto_increment detection for Oracle
+        - Unnhide the Oracle module now that the CPAN perms are sorted
+          out. Thanks to Tsunoda Kazuya for the quick response.
+
+0.04999_01 Tue Feb 5, 2008
+        - Mark foreign key columns with is_foreign_key => 1
+        - Add support for vendor-specific extra column attributes.
+        - Add support for extra => { unsigned => 1 } for MySQL.
+        - Add support for enum value lists for MySQL
+        - Set join_type => 'LEFT OUTER' for nullable foreign keys
+          (patch from Bernhard Weißhuhn)
+        - Set is_auto_increment for auto-increment columns (RT #31473)
+          (Only SQLite, MySQL and PostgreSQL are currently supported)
+        - Generate one-to-one accessors for unique foreign keys (ilmari)
         - Add support for load_namespaces-style class layout
         - Fix test skip count for main skip_rels block
         - Fix auto-inc column creation for the Oracle tests
-
-0.04004 Thu Nov 15, 2007
+        - Fix column ordering in unique constraints for Oracle
         - Fix Win32 test skip counts for good (RT #30568, Kenichi Ishigaki)
         - Default Oracle db_schema to db username (patch
           from Johannes Plunien)

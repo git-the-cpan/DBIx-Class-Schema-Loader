@@ -1,27 +1,31 @@
-
-use inc::Module::Install 0.71;
+use inc::Module::Install 0.91;
 
 name           'DBIx-Class-Schema-Loader';
 all_from       'lib/DBIx/Class/Schema/Loader.pm';
 
-test_requires 'Test::More'  => '0.47';
-test_requires 'DBI'         => '1.56';
-test_requires 'DBD::SQLite' => '1.12';
-test_requires 'File::Path'  => 0;
+test_requires 'Test::More'    => '0.47';
+test_requires 'DBI'           => '1.56';
+test_requires 'DBD::SQLite'   => '1.12';
+test_requires 'File::Path'    => 0;
+test_requires 'IPC::Open3'    => 0;
+test_requires 'Test::Exception';
 
 requires 'File::Spec'                  => 0;
 requires 'Scalar::Util'                => 0;
 requires 'Data::Dump'                  => '1.06';
-requires 'UNIVERSAL::require'          => '0.11';
 requires 'Lingua::EN::Inflect::Number' => '1.1';
 requires 'Text::Balanced'              => 0;
 requires 'Digest::MD5'                 => '2.36';
 requires 'Class::Accessor::Fast'       => '0.30';
 requires 'Class::Data::Accessor'       => '0.03';
 requires 'Class::C3'                   => '0.18';
+requires 'Class::C3::Componentised'    => '1.0005';
 requires 'Carp::Clan'                  => 0;
 requires 'Class::Inspector'            => 0;
-requires 'DBIx::Class'                 => '0.07006';
+requires 'DBIx::Class'                 => '0.08109';
+requires 'Class::Unload'               => 0;
+
+install_script 'script/dbicdump';
 
 # This is my manual hack for better feature control
 #  If you want to change the default answer for a feature,
@@ -74,6 +78,30 @@ my $_features = [
         deps  => [
             'DBI'         => '1.56',
             'DBD::Oracle' => '0.19',
+        ],
+    },
+    SYBASE => {
+        label => 'Sybase Support (experimental)',
+        def   => $ENV{DBIC_FEATURE_SYBASE} || 0,
+        deps  => [
+            'DBI'         => '1.56',
+            'DBD::Sybase' => '1.09',
+        ],
+    },
+    MSSQL => {
+        label => 'Microsoft SQL Server Support via DBD::Sybase (experimental)',
+        def   => $ENV{DBIC_FEATURE_MSSQL} || 0,
+        deps  => [
+            'DBI'         => '1.56',
+            'DBD::Sybase' => '1.09',
+        ],
+    },
+    MSSQL_ODBC => {
+        label => 'Microsoft SQL Server Support via DBD::ODBC (experimental)',
+        def   => $ENV{DBIC_FEATURE_MSSQL} || 0,
+        deps  => [
+            'DBI'       => '1.56',
+            'DBD::ODBC' => '1.22',
         ],
     },
 ];
