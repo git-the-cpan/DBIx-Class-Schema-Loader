@@ -5,7 +5,7 @@ use warnings;
 use Carp::Clan qw/^DBIx::Class/;
 use Lingua::EN::Inflect::Number ();
 
-our $VERSION = '0.04999_10';
+our $VERSION = '0.04999_11';
 
 =head1 NAME
 
@@ -258,5 +258,16 @@ sub generate_code {
 
     return $all_code;
 }
+
+=head1 AUTHOR
+
+See L<DBIx::Class::Schema::Loader/CONTRIBUTORS>.
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify it under
+the same terms as Perl itself.
+
+=cut
 
 1;

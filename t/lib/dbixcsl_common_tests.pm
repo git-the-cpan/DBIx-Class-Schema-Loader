@@ -8,6 +8,8 @@ use DBIx::Class::Schema::Loader;
 use Class::Unload;
 use File::Path;
 use DBI;
+use Digest::MD5;
+use File::Find 'find';
 
 my $DUMP_DIR = './t/_common_dump';
 rmtree $DUMP_DIR;
@@ -54,7 +56,7 @@ sub _monikerize {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 3 + 134 + ($self->{extra}->{count} || 0);
+    plan tests => 139 + ($self->{extra}->{count} || 0);
 
     $self->create();
 
@@ -70,6 +72,11 @@ sub run_tests {
     $self->test_schema($schema_class);
     $self->drop_tables;
 }
+
+# defined in sub create
+my (@statements, @statements_reltests, @statements_advanced,
+    @statements_advanced_sqlite, @statements_inline_rels,
+    @statements_implicit_rels);
 
 sub setup_schema {
     my $self = shift;
@@ -108,7 +115,24 @@ sub setup_schema {
             __PACKAGE__->connection(\@connect_info);
         };
 
-        ok(!$@, "Loader initialization") or diag $@;
+       ok(!$@, "Loader initialization") or diag $@;
+
+       my $file_count;
+       find sub { return if -d; $file_count++ }, $DUMP_DIR;
+
+       my $expected_count = 34;
+
+       $expected_count += @{ $self->{extra}{drop} || [] };
+
+       $expected_count -= grep /CREATE TABLE/, @statements_inline_rels
+           if $self->{no_inline_rels};
+
+       $expected_count -= grep /CREATE TABLE/, @statements_implicit_rels
+           if $self->{no_implicit_rels};
+
+       is $file_count, $expected_count, 'correct number of files generated';
+
+       exit if $file_count != $expected_count;
 
        my $warn_count = 2;
        $warn_count++ if grep /ResultSetManager/, @loader_warnings;
@@ -528,52 +552,46 @@ sub test_schema {
         }
 
         # from Chisel's tests...
+        my $moniker10 = $monikers->{loader_test10};
+        my $class10   = $classes->{loader_test10};
+        my $rsobj10   = $conn->resultset($moniker10);
+
+        my $moniker11 = $monikers->{loader_test11};
+        my $class11   = $classes->{loader_test11};
+        my $rsobj11   = $conn->resultset($moniker11);
+
+        isa_ok( $rsobj10, "DBIx::Class::ResultSet" ); 
+        isa_ok( $rsobj11, "DBIx::Class::ResultSet" );
+
+        ok($class10->column_info('loader_test11')->{is_foreign_key}, 'Foreign key detected');
+        ok($class11->column_info('loader_test10')->{is_foreign_key}, 'Foreign key detected');
+
+        my $obj10 = $rsobj10->create({ subject => 'xyzzy' });
+
+        $obj10->update();
+        ok( defined $obj10, 'Create row' );
+
+        my $obj11 = $rsobj11->create({ loader_test10 => $obj10->id() });
+        $obj11->update();
+        ok( defined $obj11, 'Create related row' );
+
+        eval {
+            my $obj10_2 = $obj11->loader_test10;
+            $obj10_2->loader_test11( $obj11->id11() );
+            $obj10_2->update();
+        };
+        ok(!$@, "Setting up circular relationship");
+
         SKIP: {
-            if($self->{vendor} =~ /sqlite/i) {
-                skip 'SQLite cannot do the advanced tests', 10;
-            }
+            skip 'Previous eval block failed', 3 if $@;
+    
+            my $results = $rsobj10->search({ subject => 'xyzzy' });
+            is( $results->count(), 1, 'No duplicate row created' );
 
-            my $moniker10 = $monikers->{loader_test10};
-            my $class10   = $classes->{loader_test10};
-            my $rsobj10   = $conn->resultset($moniker10);
-
-            my $moniker11 = $monikers->{loader_test11};
-            my $class11   = $classes->{loader_test11};
-            my $rsobj11   = $conn->resultset($moniker11);
-
-            isa_ok( $rsobj10, "DBIx::Class::ResultSet" ); 
-            isa_ok( $rsobj11, "DBIx::Class::ResultSet" );
-
-            ok($class10->column_info('loader_test11')->{is_foreign_key}, 'Foreign key detected');
-            ok($class11->column_info('loader_test10')->{is_foreign_key}, 'Foreign key detected');
-
-            my $obj10 = $rsobj10->create({ subject => 'xyzzy' });
-
-            $obj10->update();
-            ok( defined $obj10, 'Create row' );
-
-            my $obj11 = $rsobj11->create({ loader_test10 => $obj10->id() });
-            $obj11->update();
-            ok( defined $obj11, 'Create related row' );
-
-            eval {
-                my $obj10_2 = $obj11->loader_test10;
-                $obj10_2->loader_test11( $obj11->id11() );
-                $obj10_2->update();
-            };
-            ok(!$@, "Setting up circular relationship");
-
-            SKIP: {
-                skip 'Previous eval block failed', 3 if $@;
-        
-                my $results = $rsobj10->search({ subject => 'xyzzy' });
-                is( $results->count(), 1, 'No duplicate row created' );
-
-                my $obj10_3 = $results->first();
-                isa_ok( $obj10_3, $class10 );
-                is( $obj10_3->loader_test11()->id(), $obj11->id(),
-                    'Circular rel leads back to same row' );
-            }
+            my $obj10_3 = $results->first();
+            isa_ok( $obj10_3, $class10 );
+            is( $obj10_3->loader_test11()->id(), $obj11->id(),
+                'Circular rel leads back to same row' );
         }
 
         SKIP: {
@@ -622,11 +640,8 @@ sub test_schema {
         }
     }
 
-    # rescan test
+    # rescan and norewrite test
     SKIP: {
-        skip $self->{skip_rels}, 4 if $self->{skip_rels};
-        skip "Can't rescan dumped schema", 4 if $self->{dump};
-
         my @statements_rescan = (
             qq{
                 CREATE TABLE loader_test30 (
@@ -639,15 +654,57 @@ sub test_schema {
             q{ INSERT INTO loader_test30 (id,loader_test2) VALUES(321, 2) },
         );
 
+        # get md5
+        my $digest  = Digest::MD5->new;
+
+        my $find_cb = sub {
+            return if -d;
+            return if $_ eq 'LoaderTest30.pm';
+
+            open my $fh, '<', $_ or die "Could not open $_ for reading: $!";
+            binmode $fh;
+            $digest->addfile($fh);
+        };
+
+        find $find_cb, $DUMP_DIR;
+
+        my $before_digest = $digest->digest;
+
         my $dbh = $self->dbconnect(1);
-        $dbh->do($_) for @statements_rescan;
+
+        {
+            # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
+            local $SIG{__WARN__} = sub {
+                my $msg = shift;
+                print STDERR $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
+            };
+
+            $dbh->do($_) for @statements_rescan;
+        }
+
         $dbh->disconnect;
 
-        my @new = $conn->rescan;
+        sleep 1;
+
+        my @new = do {
+            # kill the 'Dumping manual schema' warnings
+            local $SIG{__WARN__} = sub {};
+            $conn->rescan;
+        };
         is_deeply(\@new, [ qw/LoaderTest30/ ], "Rescan");
+
+        $digest = Digest::MD5->new;
+        find $find_cb, $DUMP_DIR;
+        my $after_digest = $digest->digest;
+
+        is $before_digest, $after_digest,
+            'dumped files are not rewritten when there is no modification';
 
         my $rsobj30   = $conn->resultset('LoaderTest30');
         isa_ok($rsobj30, 'DBIx::Class::ResultSet');
+
+        skip 'no rels', 2 if $self->{skip_rels};
+
         my $obj30 = $rsobj30->find(123);
         isa_ok( $obj30->loader_test2, $class2);
 
@@ -695,7 +752,7 @@ sub create {
     $self->{_created} = 1;
 
     my $make_auto_inc = $self->{auto_inc_cb} || sub {};
-    my @statements = (
+    @statements = (
         qq{
             CREATE TABLE loader_test1s (
                 id $self->{auto_inc_pk},
@@ -738,7 +795,7 @@ sub create {
         },
     );
 
-    my @statements_reltests = (
+    @statements_reltests = (
         qq{
             CREATE TABLE loader_test3 (
                 id INTEGER NOT NULL PRIMARY KEY,
@@ -997,7 +1054,7 @@ sub create {
         q{ INSERT INTO loader_test34 (id,rel1) VALUES (1,2) },
     );
 
-    my @statements_advanced = (
+    @statements_advanced = (
         qq{
             CREATE TABLE loader_test10 (
                 id10 $self->{auto_inc_pk},
@@ -1022,7 +1079,30 @@ sub create {
          q{ REFERENCES loader_test11 (id11) }),
     );
 
-    my @statements_inline_rels = (
+    @statements_advanced_sqlite = (
+        qq{
+            CREATE TABLE loader_test10 (
+                id10 $self->{auto_inc_pk},
+                subject VARCHAR(8)
+            ) $self->{innodb}
+        },
+        $make_auto_inc->(qw/loader_test10 id10/),
+
+        qq{
+            CREATE TABLE loader_test11 (
+                id11 $self->{auto_inc_pk},
+                message VARCHAR(8) DEFAULT 'foo',
+                loader_test10 INTEGER $self->{null},
+                FOREIGN KEY (loader_test10) REFERENCES loader_test10 (id10)
+            ) $self->{innodb}
+        },
+        $make_auto_inc->(qw/loader_test11 id11/),
+
+        (q{ ALTER TABLE loader_test10 ADD COLUMN } .
+         q{ loader_test11 INTEGER REFERENCES loader_test11 (id11) }),
+    );
+
+    @statements_inline_rels = (
         qq{
             CREATE TABLE loader_test12 (
                 id INTEGER NOT NULL PRIMARY KEY,
@@ -1046,7 +1126,7 @@ sub create {
     );
 
 
-    my @statements_implicit_rels = (
+    @statements_implicit_rels = (
         qq{
             CREATE TABLE loader_test14 (
                 id INTEGER NOT NULL PRIMARY KEY,
@@ -1083,7 +1163,10 @@ sub create {
         # to test one for mysql, which works on everyone else...
         # this all needs to be refactored anyways.
         $dbh->do($_) for (@statements_reltests);
-        unless($self->{vendor} =~ /sqlite/i) {
+        if($self->{vendor} =~ /sqlite/i) {
+            $dbh->do($_) for (@statements_advanced_sqlite);
+        }
+        else {
             $dbh->do($_) for (@statements_advanced);
         }
         unless($self->{no_inline_rels}) {
@@ -1175,16 +1258,15 @@ sub drop_tables {
 
     unless($self->{skip_rels}) {
         $dbh->do("DROP TABLE $_") for (@tables_reltests);
-        unless($self->{vendor} =~ /sqlite/i) {
-            if($self->{vendor} =~ /mysql/i) {
-                $dbh->do($drop_fk_mysql);
-            }
-            else {
-                $dbh->do($drop_fk);
-            }
-            $dbh->do("DROP TABLE $_") for (@tables_advanced);
-            $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_advanced_auto_inc;
+        if($self->{vendor} =~ /mysql/i) {
+            $dbh->do($drop_fk_mysql);
         }
+        else {
+            $dbh->do($drop_fk);
+        }
+        $dbh->do("DROP TABLE $_") for (@tables_advanced);
+        $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_advanced_auto_inc;
+
         unless($self->{no_inline_rels}) {
             $dbh->do("DROP TABLE $_") for (@tables_inline_rels);
         }

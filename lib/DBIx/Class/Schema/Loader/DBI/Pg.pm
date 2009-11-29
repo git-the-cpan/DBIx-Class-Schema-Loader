@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04999_10';
+our $VERSION = '0.04999_11';
 
 =head1 NAME
 
@@ -34,6 +34,7 @@ sub _setup {
     $self->next::method(@_);
     $self->{db_schema} ||= 'public';
 }
+
 
 sub _table_uniq_info {
     my ($self, $table) = @_;
@@ -95,6 +96,32 @@ sub _table_uniq_info {
     return \@uniqs;
 }
 
+sub _table_comment {
+    my ( $self, $table ) = @_;
+     my ($table_comment) = $self->schema->storage->dbh->selectrow_array(
+        q{SELECT obj_description(oid) 
+            FROM pg_class 
+            WHERE relname=? AND relnamespace=(
+                SELECT oid FROM pg_namespace WHERE nspname=?)
+        }, undef, $table, $self->db_schema
+        );   
+    return $table_comment
+}
+
+
+sub _column_comment {
+    my ( $self, $table, $column_number ) = @_;
+     my ($table_oid) = $self->schema->storage->dbh->selectrow_array(
+        q{SELECT oid
+            FROM pg_class 
+            WHERE relname=? AND relnamespace=(
+                SELECT oid FROM pg_namespace WHERE nspname=?)
+        }, undef, $table, $self->db_schema
+        );   
+    return $self->schema->storage->dbh->selectrow_array('SELECT col_description(?,?)', undef, $table_oid,
+    $column_number );
+}
+
 sub _extra_column_info {
     my ($self, $info) = @_;
     my %extra_info;
@@ -110,6 +137,15 @@ sub _extra_column_info {
 
 L<DBIx::Class::Schema::Loader>, L<DBIx::Class::Schema::Loader::Base>,
 L<DBIx::Class::Schema::Loader::DBI>
+
+=head1 AUTHOR
+
+See L<DBIx::Class::Schema::Loader/CONTRIBUTORS>.
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify it under
+the same terms as Perl itself.
 
 =cut
 

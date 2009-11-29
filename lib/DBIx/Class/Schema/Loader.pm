@@ -10,7 +10,7 @@ use Scalar::Util qw/ weaken /;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.04999_10';
+our $VERSION = '0.04999_11';
 
 __PACKAGE__->mk_classaccessor('_loader_args' => {});
 __PACKAGE__->mk_classaccessors(qw/dump_to_dir _loader_invoked _loader loader_class/);
@@ -389,18 +389,39 @@ arrayref of schemas to load.
 In "normal" L<DBIx::Class::Schema> usage, manually-defined
 source classes and relationships have no problems crossing vendor schemas.
 
-=head1 AUTHOR
+=head1 ACKNOWLEDGEMENTS
 
-Brandon Black, C<blblack@gmail.com>
+Matt S Trout, all of the #dbix-class folks, and everyone who's ever sent
+in a bug report or suggestion.
 
 Based on L<DBIx::Class::Loader> by Sebastian Riedel
 
 Based upon the work of IKEBE Tomohiro
 
-=head1 THANK YOU
+=head1 AUTHOR
 
-Matt S Trout, all of the #dbix-class folks, and everyone who's ever sent
-in a bug report or suggestion.
+blblack: Brandon Black <blblack@gmail.com>
+
+=head1 CONTRIBUTORS
+
+ilmarii: Dagfinn Ilmari Mannsåker <ilmari@ilmari.org>
+
+arcanez: Justin Hunter <justin.d.hunter@gmail.com>
+
+ash: Ash Berlin <ash@cpan.org>
+
+Caelum: Rafael Kitover <rkitover@cpan.org>
+
+TSUNODA Kazuya <drk@drk7.jp>
+
+Robert Bohne <rbo@openserv.org>
+
+ribasushi: Peter Rabbitson <rabbit+dbic@rabbit.us>
+
+gugu: Andrey Kostenko <a.kostenko@rambler-co.ru>
+
+... and lots of other folks. If we forgot you, please write the current
+maintainer or RT.
 
 =head1 LICENSE
 

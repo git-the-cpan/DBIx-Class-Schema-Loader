@@ -6,7 +6,7 @@ use base qw/DBIx::Class::Schema::Loader::Base/;
 use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
 
-our $VERSION = '0.04999_10';
+our $VERSION = '0.04999_11';
 
 =head1 NAME
 
@@ -297,6 +297,15 @@ sub _extra_column_info {}
 =head1 SEE ALSO
 
 L<DBIx::Class::Schema::Loader>
+
+=head1 AUTHOR
+
+See L<DBIx::Class::Schema::Loader/CONTRIBUTORS>.
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify it under
+the same terms as Perl itself.
 
 =cut
 
