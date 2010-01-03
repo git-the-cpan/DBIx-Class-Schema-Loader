@@ -7,7 +7,7 @@ use Carp::Clan qw/^DBIx::Class/;
 use Text::Balanced qw( extract_bracketed );
 use Class::C3;
 
-our $VERSION = '0.04999_12';
+our $VERSION = '0.04999_13';
 
 =head1 NAME
 
@@ -202,7 +202,7 @@ L<DBIx::Class::Schema::Loader::DBI>
 
 =head1 AUTHOR
 
-See L<DBIx::Class::Schema::Loader/CONTRIBUTORS>.
+See L<DBIx::Class::Schema::Loader/AUTHOR> and L<DBIx::Class::Schema::Loader/CONTRIBUTORS>.
 
 =head1 LICENSE
 

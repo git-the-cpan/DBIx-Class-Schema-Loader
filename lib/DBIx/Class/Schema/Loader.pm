@@ -2,7 +2,7 @@ package DBIx::Class::Schema::Loader;
 
 use strict;
 use warnings;
-use base qw/DBIx::Class::Schema Class::Data::Accessor/;
+use base qw/DBIx::Class::Schema Class::Accessor::Grouped/;
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 use Scalar::Util qw/ weaken /;
@@ -10,10 +10,17 @@ use Scalar::Util qw/ weaken /;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.04999_12';
+our $VERSION = '0.04999_13';
 
-__PACKAGE__->mk_classaccessor('_loader_args' => {});
-__PACKAGE__->mk_classaccessors(qw/dump_to_dir _loader_invoked _loader loader_class/);
+__PACKAGE__->mk_group_accessors('inherited', qw/
+                                _loader_args
+                                dump_to_dir
+                                _loader_invoked
+                                _loader
+                                loader_class
+                                naming
+/);
+__PACKAGE__->_loader_args({});
 
 =head1 NAME
 
@@ -132,7 +139,7 @@ already been made is useless.
 
 sub loader_options {
     my $self = shift;
-    
+
     my %args = (ref $_[0] eq 'HASH') ? %{$_[0]} : @_;
     $self->_loader_args(\%args);
 
@@ -150,6 +157,7 @@ sub _invoke_loader {
     $args->{schema_class} = $class;
     weaken($args->{schema}) if ref $self;
     $args->{dump_directory} ||= $self->dump_to_dir;
+    $args->{naming} = $self->naming if $self->naming;
 
     # XXX this only works for relative storage_type, like ::DBI ...
     my $impl = $self->loader_class
@@ -285,15 +293,22 @@ Examples:
 
 sub import {
     my $self = shift;
+
     return if !@_;
+
+    my $cpkg = (caller)[0];
+
     foreach my $opt (@_) {
         if($opt =~ m{^dump_to_dir:(.*)$}) {
             $self->dump_to_dir($1)
         }
         elsif($opt eq 'make_schema_at') {
             no strict 'refs';
-            my $cpkg = (caller)[0];
             *{"${cpkg}::make_schema_at"} = \&make_schema_at;
+        }
+        elsif($opt eq 'naming') {
+            no strict 'refs';
+            *{"${cpkg}::naming"} = sub { $self->naming(@_) };
         }
     }
 }
@@ -370,6 +385,24 @@ Returns a list of the new monikers added.
 
 sub rescan { my $self = shift; $self->_loader->rescan($self) }
 
+=head2 naming
+
+=over 4
+
+=item Arguments: \%opts | $ver
+
+=back
+
+Controls the naming options for backward compatibility, see
+L<DBIx::Class::Schema::Loader::Base/naming> for details.
+
+To upgrade a dynamic schema, use:
+
+    __PACKAGE__->naming('current');
+
+Can be imported into your dump script and called as a function as well:
+
+    naming('v4');
 
 =head1 KNOWN ISSUES
 
@@ -420,10 +453,18 @@ ribasushi: Peter Rabbitson <rabbit+dbic@rabbit.us>
 
 gugu: Andrey Kostenko <a.kostenko@rambler-co.ru>
 
+jhannah: Jay Hannah <jay@jays.net>
+
+rbuels: Robert Buels <rmb32@cornell.edu>
+
 ... and lots of other folks. If we forgot you, please write the current
 maintainer or RT.
 
-=head1 LICENSE
+=head1 COPYRIGHT & LICENSE
+
+Copyright (c) 2006 - 2009 by the aforementioned
+L<DBIx::Class::Schema::Loader/AUTHOR> and
+L<DBIx::Class::Schema::Loader/CONTRIBUTORS>.
 
 This library is free software; you can redistribute it and/or modify it under
 the same terms as Perl itself.

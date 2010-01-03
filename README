@@ -205,6 +205,20 @@ METHODS
 
     Returns a list of the new monikers added.
 
+  naming
+    Arguments: \%opts | $ver
+
+    Controls the naming options for backward compatibility, see "naming" in
+    DBIx::Class::Schema::Loader::Base for details.
+
+    To upgrade a dynamic schema, use:
+
+        __PACKAGE__->naming('current');
+
+    Can be imported into your dump script and called as a function as well:
+
+        naming('v4');
+
 KNOWN ISSUES
   Multiple Database Schemas
     Currently the loader is limited to working within a single schema (using
@@ -249,10 +263,18 @@ CONTRIBUTORS
 
     gugu: Andrey Kostenko <a.kostenko@rambler-co.ru>
 
+    jhannah: Jay Hannah <jay@jays.net>
+
+    rbuels: Robert Buels <rmb32@cornell.edu>
+
     ... and lots of other folks. If we forgot you, please write the current
     maintainer or RT.
 
-LICENSE
+COPYRIGHT & LICENSE
+    Copyright (c) 2006 - 2009 by the aforementioned "AUTHOR" in
+    DBIx::Class::Schema::Loader and "CONTRIBUTORS" in
+    DBIx::Class::Schema::Loader.
+
     This library is free software; you can redistribute it and/or modify it
     under the same terms as Perl itself.
 

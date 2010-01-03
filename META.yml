@@ -6,8 +6,11 @@ build_requires:
   DBD::SQLite: 1.12
   DBI: 1.56
   ExtUtils::MakeMaker: 6.42
-  File::Path: 0
+  File::Copy: 0
+  File::Path: 2.07
+  File::Temp: 0.16
   IPC::Open3: 0
+  List::MoreUtils: 0
   Test::Exception: 0
   Test::More: 0.94
 configure_requires:
@@ -26,58 +29,59 @@ no_index:
 provides:
   DBIx::Class::Schema::Loader:
     file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::Base:
     file: lib/DBIx/Class/Schema/Loader/Base.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI:
     file: lib/DBIx/Class/Schema/Loader/DBI.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::DB2:
     file: lib/DBIx/Class/Schema/Loader/DBI/DB2.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::MSSQL:
     file: lib/DBIx/Class/Schema/Loader/DBI/MSSQL.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::ODBC:
     file: lib/DBIx/Class/Schema/Loader/DBI/ODBC.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::ODBC::Microsoft_SQL_Server:
     file: lib/DBIx/Class/Schema/Loader/DBI/ODBC/Microsoft_SQL_Server.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::Oracle:
     file: lib/DBIx/Class/Schema/Loader/DBI/Oracle.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::Pg:
     file: lib/DBIx/Class/Schema/Loader/DBI/Pg.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::SQLite:
     file: lib/DBIx/Class/Schema/Loader/DBI/SQLite.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::Sybase:
     file: lib/DBIx/Class/Schema/Loader/DBI/Sybase.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::Sybase::Common:
     file: lib/DBIx/Class/Schema/Loader/DBI/Sybase/Common.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::Sybase::Microsoft_SQL_Server:
     file: lib/DBIx/Class/Schema/Loader/DBI/Sybase/Microsoft_SQL_Server.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::Writing:
     file: lib/DBIx/Class/Schema/Loader/DBI/Writing.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::DBI::mysql:
     file: lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
-    version: 0.04999_12
+    version: 0.04999_13
   DBIx::Class::Schema::Loader::RelBuilder:
     file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
-    version: 0.04999_12
+    version: 0.04999_13
+  DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_040:
+    file: lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_040.pm
 requires:
   Carp::Clan: 0
-  Class::Accessor::Fast: 0.30
+  Class::Accessor::Grouped: 0.09002
   Class::C3: 0.18
   Class::C3::Componentised: 1.0005
-  Class::Data::Accessor: 0.03
   Class::Inspector: 0
   Class::Unload: 0
   DBIx::Class: 0.08114
@@ -92,4 +96,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: http://dev.catalyst.perl.org/repos/bast/branches/DBIx-Class-Schema-Loader/current/
-version: 0.04999_12
+version: 0.04999_13

@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04999_12';
+our $VERSION = '0.04999_13';
 
 =head1 NAME
 
@@ -36,7 +36,14 @@ sub _setup {
     $self->next::method(@_);
 
     my $dbh = $self->schema->storage->dbh;
-    $self->{db_schema} ||= $dbh->selectrow_array('SELECT USER FROM DUAL', {});
+
+    my ($current_schema) = $dbh->selectrow_array('SELECT USER FROM DUAL', {});
+
+    $self->{db_schema} ||= $current_schema;
+
+    if (lc($self->db_schema) ne lc($current_schema)) {
+        $dbh->do('ALTER SESSION SET current_schema=' . $self->db_schema);
+    }
 }
 
 
@@ -153,7 +160,7 @@ L<DBIx::Class::Schema::Loader::DBI>
 
 =head1 AUTHOR
 
-See L<DBIx::Class::Schema::Loader/CONTRIBUTORS>.
+See L<DBIx::Class::Schema::Loader/AUTHOR> and L<DBIx::Class::Schema::Loader/CONTRIBUTORS>.
 
 =head1 LICENSE
 
