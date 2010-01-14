@@ -89,6 +89,7 @@ sub run_tests {
         my $warn_count = 0;
         $warn_count++ if grep /ResultSetManager/, @loader_warnings;
         $warn_count++ if grep /Dynamic schema detected/, @loader_warnings;
+        $warn_count++ for grep /^Bad table or view/, @loader_warnings;
 
         if($self->{skip_rels}) {
             is(scalar(@loader_warnings), $warn_count)
@@ -183,10 +184,7 @@ sub run_tests {
         can_ok( $class1, 'dbix_class_testcomponent' ) or $skip_tcomp = 1;
         can_ok( $class1, 'loader_test1_classmeth' ) or $skip_cmeth = 1;
 
-        TODO: {
-            local $TODO = "Not yet supported by ResultSetManger code";
-            can_ok( $rsobj1, 'loader_test1_rsmeth' ) or $skip_rsmeth = 1;
-        }
+        can_ok( $rsobj1, 'loader_test1_rsmeth' ) or $skip_rsmeth = 1;
 
         SKIP: {
             skip "Pre-requisite test failed", 1 if $skip_tab;

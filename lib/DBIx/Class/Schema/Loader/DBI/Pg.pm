@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04999_13';
+our $VERSION = '0.04999_14';
 
 =head1 NAME
 
@@ -163,6 +163,14 @@ WHERE table_name = ? and column_name = ?
 EOF
 
             $result->{$col}{size} = $precision;
+        }
+        elsif ($data_type =~ /^(?:numeric|decimal)\z/i) {
+            my $size = $result->{$col}{size};
+            $size =~ s/\s*//g;
+
+            my ($scale, $precision) = split /,/, $size;
+
+            $result->{$col}{size} = [ $precision, $scale ];
         }
     }
 

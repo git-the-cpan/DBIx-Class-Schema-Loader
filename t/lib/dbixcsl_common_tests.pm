@@ -99,6 +99,7 @@ sub setup_schema {
         inflect_singular        => { fkid => 'fkid_singular' },
         moniker_map             => \&_monikerize,
         debug                   => $debug,
+        use_namespaces          => 0,
         dump_directory          => $DUMP_DIR,
     );
 
@@ -122,7 +123,8 @@ sub setup_schema {
 
        my $expected_count = 34;
 
-       $expected_count += @{ $self->{extra}{drop} || [] };
+       $expected_count += grep /CREATE (?:TABLE|VIEW)/i,
+           @{ $self->{extra}{create} || [] };
 
        $expected_count -= grep /CREATE TABLE/, @statements_inline_rels
            if $self->{no_inline_rels};
@@ -136,6 +138,12 @@ sub setup_schema {
 
        my $warn_count = 2;
        $warn_count++ if grep /ResultSetManager/, @loader_warnings;
+
+       $warn_count++ for grep /^Bad table or view/, @loader_warnings;
+
+       my $vendor = $self->{vendor};
+       $warn_count++ for grep /${vendor}_\S+ has no primary key/,
+           @loader_warnings;
 
         if($self->{skip_rels}) {
             SKIP: {

@@ -1,5 +1,12 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.04999_14  2010-01-14 06:47:07
+        - use_namespaces now default, with upgrade/downgrade support
+        - filter out un-selectable tables/views
+        - fix NUMERIC/DECIMAL size column_info for postgres
+        - now mentions skip_load_external feature in comments (jhannah)
+        - moniker_map POD correction (jhannah)
+
 0.04999_13  2010-01-03 12:32:25
         - exclude 'size' column_info for postgres when unnecessary, and
           use the correct precision for varying types (except NUMERIC)
@@ -8,8 +15,9 @@ Revision history for Perl extension DBIx::Class::Schema::Loader
           generated relationships
         - added overwrite_modifications option that ignores md5sums on
           generated code
+        - added skip_load_external (jhannah)
         - remove Class::Data::Accessor and Class::Accessor::Fast and switch
-          everything to Class::Accessor::Grouped
+          everything to Class::Accessor::Grouped (jhannah)
         - better handling of db_schema for Oracle, based on (RT#35732)
 
 0.04999_12  2009-11-30 23:36:14

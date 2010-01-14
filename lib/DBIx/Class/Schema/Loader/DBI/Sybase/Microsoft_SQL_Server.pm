@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI::MSSQL';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04999_13';
+our $VERSION = '0.04999_14';
 
 =head1 NAME
 
@@ -30,7 +30,7 @@ sub _tables_list {
     my $dbh = $self->schema->storage->dbh;
     my @tables = $dbh->tables(undef, $self->db_schema, $table, $type);
 
-    return @tables;
+    return $self->_filter_tables(@tables);
 }
 
 =head1 SEE ALSO

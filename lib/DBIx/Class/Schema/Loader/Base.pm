@@ -16,7 +16,7 @@ use File::Temp qw//;
 use Class::Unload;
 require DBIx::Class;
 
-our $VERSION = '0.04999_13';
+our $VERSION = '0.04999_14';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -38,8 +38,6 @@ __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 dump_directory
                                 dump_overwrite
                                 really_erase_my_files
-                                use_namespaces
-                                result_namespace
                                 resultset_namespace
                                 default_resultset_class
                                 schema_base_class
@@ -62,6 +60,11 @@ __PACKAGE__->mk_group_accessors('simple', qw/
                                 version_to_dump
                                 schema_version_to_dump
                                 _upgrading_from
+                                _upgrading_from_load_classes
+                                _downgrading_to_load_classes
+                                _rewriting_result_namespace
+                                use_namespaces
+                                result_namespace
 /);
 
 =head1 NAME
@@ -213,7 +216,7 @@ the chunks back together.  Examples:
     ---------------------------
     luser       | Luser
     luser_group | LuserGroup
-    luser-opts  | LuserOpts
+    luser-opts  | LuserOpt
 
 =head2 inflect_plural
 
@@ -262,6 +265,9 @@ C<ResultSetManager> will be automatically added to the above
 C<components> list if this option is set.
 
 =head2 use_namespaces
+
+This is now the default, to go back to L<DBIx::Class::Schema/load_classes> pass
+a C<0>.
 
 Generate result class names suitable for
 L<DBIx::Class::Schema/load_namespaces> and call that instead of
@@ -412,6 +418,8 @@ sub new {
 
     $self->_check_back_compat;
 
+    $self->use_namespaces(1) unless defined $self->use_namespaces;
+
     $self;
 }
 
@@ -431,6 +439,8 @@ Dynamic schema detected, will run in 0.04006 mode.
 Set the 'naming' attribute or the SCHEMA_LOADER_BACKCOMPAT environment variable
 to disable this warning.
 
+Also consider setting 'use_namespaces => 1' if/when upgrading.
+
 See perldoc DBIx::Class::Schema::Loader::Manual::UpgradingFromV4 for more
 details.
 EOF
@@ -442,6 +452,13 @@ EOF
         $self->naming->{relationships} ||= 'v4';
         $self->naming->{monikers}      ||= 'v4';
 
+        if ($self->use_namespaces) {
+            $self->_upgrading_from_load_classes(1);
+        }
+        else {
+            $self->use_namespaces(0);
+        }
+
         return;
     }
 
@@ -452,9 +469,50 @@ EOF
     open(my $fh, '<', $filename)
         or croak "Cannot open '$filename' for reading: $!";
 
+    my $load_classes     = 0;
+    my $result_namespace = '';
+
     while (<$fh>) {
-        if (/^# Created by DBIx::Class::Schema::Loader v((\d+)\.(\d+))/) {
-            my $real_ver = $1;
+        if (/^__PACKAGE__->load_classes;/) {
+            $load_classes = 1;
+        } elsif (/result_namespace => '([^']+)'/) {
+            $result_namespace = $1;
+        } elsif (my ($real_ver) =
+                /^# Created by DBIx::Class::Schema::Loader v(\d+\.\d+)/) {
+
+            if ($load_classes && (not defined $self->use_namespaces)) {
+                warn <<"EOF"  unless $ENV{SCHEMA_LOADER_BACKCOMPAT};
+
+'load_classes;' static schema detected, turning off 'use_namespaces'.
+
+Set the 'use_namespaces' attribute or the SCHEMA_LOADER_BACKCOMPAT environment
+variable to disable this warning.
+
+See perldoc DBIx::Class::Schema::Loader::Manual::UpgradingFromV4 for more
+details.
+EOF
+                $self->use_namespaces(0);
+            }
+            elsif ($load_classes && $self->use_namespaces) {
+                $self->_upgrading_from_load_classes(1);
+            }
+            elsif ((not $load_classes) && defined $self->use_namespaces
+                                       && (not $self->use_namespaces)) {
+                $self->_downgrading_to_load_classes(
+                    $result_namespace || 'Result'
+                );
+            }
+            elsif ((not defined $self->use_namespaces)
+                   || $self->use_namespaces) {
+                if (not $self->result_namespace) {
+                    $self->result_namespace($result_namespace || 'Result');
+                }
+                elsif ($result_namespace ne $self->result_namespace) {
+                    $self->_rewriting_result_namespace(
+                        $result_namespace || 'Result'
+                    );
+                }
+            }
 
             # XXX when we go past .0 this will need fixing
             my ($v) = $real_ver =~ /([1-9])/;
@@ -476,6 +534,7 @@ EOF
             }
             else {
                 $self->_upgrading_from($v);
+                last;
             }
 
             $self->naming->{relationships} ||= $v;
@@ -518,17 +577,27 @@ sub _find_class_in_inc {
     return $self->_find_file_in_inc($self->_class_path($class));
 }
 
+sub _rewriting {
+    my $self = shift;
+
+    return $self->_upgrading_from
+        || $self->_upgrading_from_load_classes
+        || $self->_downgrading_to_load_classes
+        || $self->_rewriting_result_namespace
+    ;
+}
+
 sub _rewrite_old_classnames {
     my ($self, $code) = @_;
 
-    return $code unless $self->_upgrading_from;
+    return $code unless $self->_rewriting;
 
     my %old_classes = reverse %{ $self->_upgrading_classes };
 
     my $re = join '|', keys %old_classes;
     $re = qr/\b($re)\b/;
 
-    $code =~ s/$re/$old_classes{$1}/eg;
+    $code =~ s/$re/$old_classes{$1} || $1/eg;
 
     return $code;
 }
@@ -544,7 +613,7 @@ sub _load_external {
     my $real_inc_path = $self->_find_class_in_inc($class);
 
     my $old_class = $self->_upgrading_classes->{$class}
-        if $self->_upgrading_from;
+        if $self->_rewriting;
 
     my $old_real_inc_path = $self->_find_class_in_inc($old_class)
         if $old_class && $old_class ne $class;
@@ -580,7 +649,8 @@ sub _load_external {
          .qq|# for you to hand-edit.  If you do not either delete\n|
          .qq|# this section or remove that file from \@INC, this section\n|
          .qq|# will be repeated redundantly when you re-create this\n|
-         .qq|# file again via Loader!\n|
+         .qq|# file again via Loader!  See skip_load_external to disable\n|
+         .qq|# this feature.\n|
         );
         chomp $code;
         $self->_ext_stmt($class, $code);
@@ -597,7 +667,7 @@ sub _load_external {
 # These lines were loaded from '$old_real_inc_path',
 # based on the Result class name that would have been created by an 0.04006
 # version of the Loader. For a static schema, this happens only once during
-# upgrade.
+# upgrade. See skip_load_external to disable this feature.
 EOF
 
         my $code = do {
@@ -870,7 +940,7 @@ sub _dump_to_dir {
 
     {
         local $self->{version_to_dump} = $self->schema_version_to_dump;
-        $self->_write_classfile($schema_class, $schema_text);
+        $self->_write_classfile($schema_class, $schema_text, 1);
     }
 
     my $result_base_class = $self->result_base_class || 'DBIx::Class::Core';
@@ -886,6 +956,23 @@ sub _dump_to_dir {
         $self->_write_classfile($src_class, $src_text);
     }
 
+    # remove Result dir if downgrading from use_namespaces, and there are no
+    # files left.
+    if (my $result_ns = $self->_downgrading_to_load_classes
+                        || $self->_rewriting_result_namespace) {
+        my $result_namespace = $self->_result_namespace(
+            $schema_class,
+            $result_ns,
+        );
+
+        (my $result_dir = $result_namespace) =~ s{::}{/}g;
+        $result_dir = $self->dump_directory . '/' . $result_dir;
+
+        unless (my @files = glob "$result_dir/*") {
+            rmdir $result_dir;
+        }
+    }
+
     warn "Schema dump completed.\n" unless $self->{dynamic} or $self->{quiet};
 
 }
@@ -899,7 +986,7 @@ sub _sig_comment {
 }
 
 sub _write_classfile {
-    my ($self, $class, $text) = @_;
+    my ($self, $class, $text, $is_schema) = @_;
 
     my $filename = $self->_get_dump_filename($class);
     $self->_ensure_dump_subdirs($class);
@@ -912,25 +999,21 @@ sub _write_classfile {
 
     my ($custom_content, $old_md5, $old_ver, $old_ts) = $self->_get_custom_content($class, $filename);
 
-    if ($self->_upgrading_from) {
-        my $old_class = $self->_upgrading_classes->{$class};
+    if (my $old_class = $self->_upgrading_classes->{$class}) {
+        my $old_filename = $self->_get_dump_filename($old_class);
 
-        if ($old_class && ($old_class ne $class)) {
-            my $old_filename = $self->_get_dump_filename($old_class);
+        my ($old_custom_content) = $self->_get_custom_content(
+            $old_class, $old_filename, 0 # do not add default comment
+        );
 
-            my ($old_custom_content) = $self->_get_custom_content(
-                $old_class, $old_filename, 0 # do not add default comment
-            );
+        $old_custom_content =~ s/\n\n# You can replace.*\n1;\n//;
 
-            $old_custom_content =~ s/\n\n# You can replace.*\n1;\n//;
-
-            if ($old_custom_content) {
-                $custom_content =
-                    "\n" . $old_custom_content . "\n" . $custom_content;
-            }
-
-            unlink $old_filename;
+        if ($old_custom_content) {
+            $custom_content =
+                "\n" . $old_custom_content . "\n" . $custom_content;
         }
+
+        unlink $old_filename;
     }
 
     $custom_content = $self->_rewrite_old_classnames($custom_content);
@@ -946,7 +1029,7 @@ sub _write_classfile {
       
 
       if (Digest::MD5::md5_base64($compare_to) eq $old_md5) {
-        return;
+        return unless $self->_upgrading_from && $is_schema;
       }
     }
 
@@ -1042,6 +1125,22 @@ sub _inject {
     $self->_raw_stmt($target, "use base qw/ $blist /;") if @_;
 }
 
+sub _result_namespace {
+    my ($self, $schema_class, $ns) = @_;
+    my @result_namespace;
+
+    if ($ns =~ /^\+(.*)/) {
+        # Fully qualified namespace
+        @result_namespace = ($1)
+    }
+    else {
+        # Relative namespace
+        @result_namespace = ($schema_class, $ns);
+    }
+
+    return wantarray ? @result_namespace : join '::', @result_namespace;
+}
+
 # Create class with applicable bases, setup monikers, etc
 sub _make_src_class {
     my ($self, $table) = @_;
@@ -1053,24 +1152,40 @@ sub _make_src_class {
     my @result_namespace = ($schema_class);
     if ($self->use_namespaces) {
         my $result_namespace = $self->result_namespace || 'Result';
-        if ($result_namespace =~ /^\+(.*)/) {
-            # Fully qualified namespace
-            @result_namespace =  ($1)
-        }
-        else {
-            # Relative namespace
-            push @result_namespace, $result_namespace;
-        }
+        @result_namespace = $self->_result_namespace(
+            $schema_class,
+            $result_namespace,
+        );
     }
     my $table_class = join(q{::}, @result_namespace, $table_moniker);
 
-    if (my $upgrading_v = $self->_upgrading_from) {
-        local $self->naming->{monikers} = $upgrading_v;
+    if ((my $upgrading_v = $self->_upgrading_from)
+            || $self->_rewriting) {
+        local $self->naming->{monikers} = $upgrading_v
+            if $upgrading_v;
+
+        my @result_namespace = @result_namespace;
+        if ($self->_upgrading_from_load_classes) {
+            @result_namespace = ($schema_class);
+        }
+        elsif (my $ns = $self->_downgrading_to_load_classes) {
+            @result_namespace = $self->_result_namespace(
+                $schema_class,
+                $ns,
+            );
+        }
+        elsif ($ns = $self->_rewriting_result_namespace) {
+            @result_namespace = $self->_result_namespace(
+                $schema_class,
+                $ns,
+            );
+        }
 
         my $old_class = join(q{::}, @result_namespace,
             $self->_table2moniker($table));
 
-        $self->_upgrading_classes->{$table_class} = $old_class;
+        $self->_upgrading_classes->{$table_class} = $old_class
+            unless $table_class eq $old_class;
     }
 
     my $table_normalized = lc $table;
