@@ -16,7 +16,7 @@ use File::Temp qw//;
 use Class::Unload;
 require DBIx::Class;
 
-our $VERSION = '0.05000';
+our $VERSION = '0.04999_14';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -173,28 +173,15 @@ Set this to C<0> to turn off all POD generation.
 
 =head2 pod_comment_mode
 
-Controls where table comments appear in the generated POD. Smaller table
-comments are appended to the C<NAME> section of the documentation, and larger
-ones are inserted into C<DESCRIPTION> instead. You can force a C<DESCRIPTION>
-section to be generated with the comment always, only use C<NAME>, or choose
-the length threshold at which the comment is forced into the description.
+Controls where table comments appear in the generated POD. By default table
+comments are appended to the C<NAME> section of the documentation. You can
+force a C<DESCRIPTION> section to be generated with the comment instead, or
+choose the length threshold at which the comment is forced into the
+description.
 
-=over 4
-
-=item name
-
-Use C<NAME> section only.
-
-=item description
-
-Force C<DESCRIPTION> always.
-
-=item auto
-
-Use C<DESCRIPTION> if length > L</pod_comment_spillover_length>, this is the
-default.
-
-=back
+  pod_comment_mode => 'name' # default behaviour
+  pod_comment_mode => 'description' # force creation of DESCRIPTION section
+  pod_comment_mode => 'auto' # use description if length > pod_comment_spillover_length
 
 =head2 pod_comment_spillover_length
 
@@ -602,9 +589,8 @@ sub _find_file_in_inc {
     foreach my $prefix (@INC) {
         my $fullpath = File::Spec->catfile($prefix, $file);
         return $fullpath if -f $fullpath
-            # abs_path throws on Windows for nonexistant files
-            and eval { Cwd::abs_path($fullpath) } ne
-               (eval { Cwd::abs_path(File::Spec->catfile($self->dump_directory, $file)) } || '');
+            and Cwd::abs_path($fullpath) ne
+               (Cwd::abs_path(File::Spec->catfile($self->dump_directory, $file)) || '');
     }
 
     return;
@@ -1410,7 +1396,7 @@ sub _dbic_stmt {
     my $method = shift;
 
     # generate the pod for this statement, storing it with $self->_pod
-    $self->_make_pod( $class, $method, @_ ) if $self->generate_pod;
+    $self->_make_pod( $class, $method, @_ );
 
     my $args = dump(@_);
     $args = '(' . $args . ')' if @_ < 2;
@@ -1427,6 +1413,8 @@ sub _make_pod {
     my $self   = shift;
     my $class  = shift;
     my $method = shift;
+
+    return unless $self->generate_pod;
 
     if ( $method eq 'table' ) {
         my ($table) = @_;

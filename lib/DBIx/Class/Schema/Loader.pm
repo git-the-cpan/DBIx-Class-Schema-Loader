@@ -10,7 +10,7 @@ use Scalar::Util qw/ weaken /;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.04999_14';
+our $VERSION = '0.05000';
 
 __PACKAGE__->mk_group_accessors('inherited', qw/
                                 _loader_args
@@ -474,13 +474,23 @@ TSUNODA Kazuya <drk@drk7.jp>
 
 Robert Bohne <rbo@openserv.org>
 
-ribasushi: Peter Rabbitson <rabbit+dbic@rabbit.us>
+ribasushi: Peter Rabbitson <ribasushi@cpan.org>
 
 gugu: Andrey Kostenko <a.kostenko@rambler-co.ru>
 
 jhannah: Jay Hannah <jay@jays.net>
 
 rbuels: Robert Buels <rmb32@cornell.edu>
+
+timbunce: Tim Bunce <timb@cpan.org>
+
+mst: Matt S. Trout <mst@shadowcatsystems.co.uk>
+
+kane: Jos Boumans <kane@cpan.org>
+
+waawaamilk: Nigel McNie <nigel@mcnie.name>
+
+acmoore: Andrew Moore <amoore@cpan.org>
 
 ... and lots of other folks. If we forgot you, please write the current
 maintainer or RT.

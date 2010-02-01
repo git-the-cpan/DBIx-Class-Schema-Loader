@@ -2,14 +2,11 @@ package DBIx::Class::Schema::Loader::DBI::MSSQL;
 
 use strict;
 use warnings;
-use base qw/
-    DBIx::Class::Schema::Loader::DBI
-    DBIx::Class::Schema::Loader::DBI::Sybase::Common
-/;
+use base 'DBIx::Class::Schema::Loader::DBI::Sybase::Common';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04999_14';
+our $VERSION = '0.05000';
 
 =head1 NAME
 
@@ -36,18 +33,6 @@ sub _setup {
     $self->next::method(@_);
     $self->{db_schema} ||= $self->_build_db_schema;
     $self->_set_quote_char_and_name_sep;
-}
-
-# remove 'IDENTITY' from column data_type
-sub _columns_info_for {
-    my $self   = shift;
-    my $result = $self->next::method(@_);
-
-    for my $col (keys %$result) {
-        $result->{$col}->{data_type} =~ s/\s* identity \s*//ix;
-    }
-
-    return $result;
 }
 
 sub _table_pk_info {

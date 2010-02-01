@@ -2,10 +2,11 @@ package DBIx::Class::Schema::Loader::DBI::Sybase::Common;
 
 use strict;
 use warnings;
+use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04999_14';
+our $VERSION = '0.05000';
 
 =head1 NAME
 
@@ -61,6 +62,18 @@ sub _build_db_schema {
         if $exception;
 
     return $db_schema;
+}
+
+# remove 'IDENTITY' from column data_type
+sub _columns_info_for {
+    my $self   = shift;
+    my $result = $self->next::method(@_);
+
+    for my $col (keys %$result) {
+        $result->{$col}->{data_type} =~ s/\s* identity \s*//ix;
+    }
+
+    return $result;
 }
 
 =head1 SEE ALSO

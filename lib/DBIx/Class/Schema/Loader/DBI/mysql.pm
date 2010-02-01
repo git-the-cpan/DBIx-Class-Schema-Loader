@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04999_14';
+our $VERSION = '0.05000';
 
 =head1 NAME
 
@@ -129,9 +129,9 @@ sub _extra_column_info {
     if ($info->{mysql_values}) {
         $extra_info{extra}{list} = $info->{mysql_values};
     }
-# XXX we need to distinguish between DEFAULT CURRENT_TIMESTAMP and DEFAULT 'foo'
-# somehow, but DBI column_info doesn't preserve quotes.
-    if ($info->{COLUMN_DEF} =~ /^CURRENT_TIMESTAMP\z/i) {
+    if (   $info->{COLUMN_DEF}      =~ /^CURRENT_TIMESTAMP\z/i
+        && $info->{mysql_type_name} =~ /^TIMESTAMP\z/i) {
+
         $extra_info{default_value} = \'CURRENT_TIMESTAMP';
     }
 

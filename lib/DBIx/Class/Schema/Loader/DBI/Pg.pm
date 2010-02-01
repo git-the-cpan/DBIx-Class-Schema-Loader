@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04999_14';
+our $VERSION = '0.05000';
 
 =head1 NAME
 
@@ -139,7 +139,7 @@ sub _columns_info_for {
             delete $result->{$col}{size};
         }
 # for datetime types, check if it has a precision or not
-        elsif ($data_type =~ /^(?:interval|time|timestamp)\b/) {
+        elsif ($data_type =~ /^(?:interval|time|timestamp)\b/i) {
             my ($precision) = $self->schema->storage->dbh
                 ->selectrow_array(<<EOF, {}, $table, $col);
 SELECT datetime_precision
@@ -147,7 +147,26 @@ FROM information_schema.columns
 WHERE table_name = ? and column_name = ?
 EOF
 
-            if ((not $precision) || $precision !~ /^\d/) {
+            if ($data_type =~ /^time\b/i) {
+                if ((not $precision) || $precision !~ /^\d/) {
+                    delete $result->{$col}{size};
+                }
+                else {
+                    my ($integer_datetimes) = $self->schema->storage->dbh
+                        ->selectrow_array('show integer_datetimes');
+
+                    my $max_precision =
+                        $integer_datetimes =~ /^on\z/i ? 6 : 10;
+
+                    if ($precision == $max_precision) {
+                        delete $result->{$col}{size};
+                    }
+                    else {
+                        $result->{$col}{size} = $precision;
+                    }
+                }
+            }
+            elsif ((not $precision) || $precision !~ /^\d/ || $precision == 6) {
                 delete $result->{$col}{size};
             }
             else {

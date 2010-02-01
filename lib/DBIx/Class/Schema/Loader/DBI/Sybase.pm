@@ -2,14 +2,11 @@ package DBIx::Class::Schema::Loader::DBI::Sybase;
 
 use strict;
 use warnings;
-use base qw/
-    DBIx::Class::Schema::Loader::DBI
-    DBIx::Class::Schema::Loader::DBI::Sybase::Common
-/;
+use base 'DBIx::Class::Schema::Loader::DBI::Sybase::Common';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.04999_14';
+our $VERSION = '0.05000';
 
 =head1 NAME
 
@@ -230,6 +227,59 @@ sub _table_uniq_info {
 
     my @uniqs = map { [ $_ => $constraints->{$_} ] } keys %$constraints;
     return \@uniqs;
+}
+
+# get the correct data types, defaults and size
+sub _columns_info_for {
+    my $self    = shift;
+    my ($table) = @_;
+    my $result  = $self->next::method(@_);
+
+    my $dbh = $self->schema->storage->dbh;
+    my $sth = $dbh->prepare(qq{
+SELECT c.name name, t.name type, cm.text deflt, c.prec prec, c.scale scale,
+        c.length len
+FROM syscolumns c
+JOIN sysobjects o ON c.id = o.id
+LEFT JOIN systypes t ON c.type = t.type AND c.usertype = t.usertype
+LEFT JOIN syscomments cm
+    ON cm.id = CASE WHEN c.cdefault = 0 THEN c.computedcol ELSE c.cdefault END
+WHERE o.name = @{[ $dbh->quote($table) ]} AND o.type = 'U'
+});
+    $sth->execute;
+    local $dbh->{FetchHashKeyName} = 'NAME_lc';
+    my $info = $sth->fetchall_hashref('name');
+
+    while (my ($col, $res) = each %$result) {
+        $res->{data_type} = $info->{$col}{type};
+
+        if (my $default = $info->{$col}{deflt}) {
+            if ($default =~ /^AS \s+ (\S+)/ix) {
+                my $function = $1;
+                $res->{default_value} = \$function;
+            }
+            elsif ($default =~ /^DEFAULT \s+ (\S+)/ix) {
+                my ($constant_default) = $1 =~ /^['"\[\]]?(.*?)['"\[\]]\z/;
+                $res->{default_value} = $constant_default;
+            }
+        }
+
+# XXX we need to handle "binary precision" for FLOAT(X)
+# (see: http://msdn.microsoft.com/en-us/library/aa258876(SQL.80).aspx )
+        if (my $data_type = $res->{data_type}) {
+            if ($data_type =~ /^(?:text|unitext|image|bigint|int|integer|smallint|tinyint|real|double|double precision|float|date|time|datetime|smalldatetime|money|smallmoney|timestamp|bit)\z/i) {
+                delete $res->{size};
+            }
+            elsif ($data_type =~ /^(?:numeric|decimal)\z/i) {
+                $res->{size} = [ $info->{$col}{prec}, $info->{$col}{scale} ];
+            }
+            elsif ($data_type =~ /^(?:unichar|univarchar)\z/i) {
+                $res->{size} /= 2;
+            }
+        }
+    }
+
+    return $result;
 }
 
 sub _extra_column_info {

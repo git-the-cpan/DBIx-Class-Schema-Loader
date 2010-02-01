@@ -6,10 +6,6 @@ use IPC::Open3;
 use make_dbictest_db;
 require DBIx::Class::Schema::Loader;
 
-$^O eq 'MSWin32' && plan(skip_all =>
-"ActiveState perl produces additional warnings, and this test uses unix paths"
-);
-
 my $DUMP_PATH = './t/_dump';
 
 sub dump_directly {
@@ -48,7 +44,8 @@ sub dump_dbicdump {
     push @cmd, $tdata{classname}, $make_dbictest_db::dsn;
 
     # make sure our current @INC gets used by dbicdump
-    local $ENV{PERL5LIB} = join ":", @INC, $ENV{PERL5LIB};
+    use Config;
+    local $ENV{PERL5LIB} = join $Config{path_sep}, @INC, $ENV{PERL5LIB};
 
     my ($in, $out, $err);
     my $pid = open3($in, $out, $err, @cmd);
@@ -128,6 +125,42 @@ sub append_to_class {
 
 rmtree($DUMP_PATH, 1, 1);
 
+# test loading external content
+do_dump_test(
+    classname => 'DBICTest::Schema::13',
+    options => { },
+    error => '',
+    warnings => [
+        qr/Dumping manual schema for DBICTest::Schema::13 to directory /,
+        qr/Schema dump completed/,
+    ],
+    regexes => {
+        Foo => [
+qr/package DBICTest::Schema::13::Foo;\nour \$skip_me = "bad mojo";\n1;/
+        ],
+    },
+);
+
+# test skipping external content
+do_dump_test(
+    classname => 'DBICTest::Schema::14',
+    options => { skip_load_external => 1 },
+    error => '',
+    warnings => [
+        qr/Dumping manual schema for DBICTest::Schema::14 to directory /,
+        qr/Schema dump completed/,
+    ],
+    neg_regexes => {
+        Foo => [
+qr/package DBICTest::Schema::14::Foo;\nour \$skip_me = "bad mojo";\n1;/
+        ],
+    },
+);
+
+rmtree($DUMP_PATH, 1, 1);
+
+# test out the POD
+
 do_dump_test(
     classname => 'DBICTest::DumpMore::1',
     options => { },
@@ -142,18 +175,26 @@ do_dump_test(
             qr/->load_classes/,
         ],
         Foo => [
-            qr/package DBICTest::DumpMore::1::Foo;/,
-            qr/=head1 NAME/,
-            qr/=head1 ACCESSORS/,
-            qr/->set_primary_key/,
-            qr/1;\n$/,
+qr/package DBICTest::DumpMore::1::Foo;/,
+qr/=head1 NAME\n\nDBICTest::DumpMore::1::Foo\n\n=cut\n\n/,
+qr/=head1 ACCESSORS\n\n/,
+qr/=head2 fooid\n\n  data_type: INTEGER\n  default_value: undef\n  is_nullable: 1\n  size: undef\n\n/,
+qr/=head2 footext\n\n  data_type: TEXT\n  default_value: undef\n  is_nullable: 1\n  size: undef\n\n/,
+qr/->set_primary_key/,
+qr/=head1 RELATIONS\n\n/,
+qr/=head2 bars\n\nType: has_many\n\nRelated object: L<DBICTest::DumpMore::1::Bar>\n\n=cut\n\n/,
+qr/1;\n$/,
         ],
         Bar => [
-            qr/package DBICTest::DumpMore::1::Bar;/,
-            qr/=head1 NAME/,
-            qr/=head1 ACCESSORS/,
-            qr/->set_primary_key/,
-            qr/1;\n$/,
+qr/package DBICTest::DumpMore::1::Bar;/,
+qr/=head1 NAME\n\nDBICTest::DumpMore::1::Bar\n\n=cut\n\n/,
+qr/=head1 ACCESSORS\n\n/,
+qr/=head2 barid\n\n  data_type: INTEGER\n  default_value: undef\n  is_nullable: 1\n  size: undef\n\n/,
+qr/=head2 fooref\n\n  data_type: INTEGER\n  default_value: undef\n  is_foreign_key: 1\n  is_nullable: 1\n  size: undef\n\n/,
+qr/->set_primary_key/,
+qr/=head1 RELATIONS\n\n/,
+qr/=head2 fooref\n\nType: belongs_to\n\nRelated object: L<DBICTest::DumpMore::1::Foo>\n\n=cut\n\n/,
+qr/1;\n$/,
         ],
     },
 );
@@ -216,6 +257,21 @@ do_dump_test(
     neg_regexes => {
         Foo => [
             qr/# XXX This is my custom content XXX/,
+        ],
+    },
+);
+
+do_dump_test(
+    classname => 'DBICTest::DumpMore::1',
+    options => { use_namespaces => 1, generate_pod => 0 },
+    error => '',
+    warnings => [
+        qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
+        qr/Schema dump completed/,
+    ],
+    neg_regexes => {
+        'Result/Foo' => [
+            qr/^=/m,
         ],
     },
 );
@@ -319,4 +375,4 @@ do_dump_test(
 
 done_testing;
 
-END { rmtree($DUMP_PATH, 1, 1); }
+END { rmtree($DUMP_PATH, 1, 1) unless $ENV{SCHEMA_LOADER_TESTS_NOCLEANUP} }
