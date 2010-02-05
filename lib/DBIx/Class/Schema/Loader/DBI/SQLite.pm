@@ -2,12 +2,15 @@ package DBIx::Class::Schema::Loader::DBI::SQLite;
 
 use strict;
 use warnings;
-use base qw/DBIx::Class::Schema::Loader::DBI/;
+use base qw/
+    DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault
+    DBIx::Class::Schema::Loader::DBI
+/;
 use Carp::Clan qw/^DBIx::Class/;
 use Text::Balanced qw( extract_bracketed );
 use Class::C3;
 
-our $VERSION = '0.05000';
+our $VERSION = '0.05001';
 
 =head1 NAME
 

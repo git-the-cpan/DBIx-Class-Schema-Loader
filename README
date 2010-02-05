@@ -51,9 +51,10 @@ DESCRIPTION
 
     DBIx::Class::Schema::Loader currently supports only the DBI storage
     type. It has explicit support for DBD::Pg, DBD::mysql, DBD::DB2,
-    DBD::SQLite, and DBD::Oracle. Other DBI drivers may function to a
-    greater or lesser degree with this loader, depending on how much of the
-    DBI spec they implement, and how standard their implementation is.
+    DBD::SQLite, DBD::Sybase (for Sybase ASE and MSSSQL), DBD::ODBC (for
+    MSSQL) and DBD::Oracle. Other DBI drivers may function to a greater or
+    lesser degree with this loader, depending on how much of the DBI spec
+    they implement, and how standard their implementation is.
 
     Patches to make other DBDs work correctly welcome.
 
@@ -261,7 +262,7 @@ AUTHOR
     blblack: Brandon Black <blblack@gmail.com>
 
 CONTRIBUTORS
-    ilmarii: Dagfinn Ilmari MannsÃ¥ker <ilmari@ilmari.org>
+    ilmari: Dagfinn Ilmari Mannsåker <ilmari@ilmari.org>
 
     arcanez: Justin Hunter <justin.d.hunter@gmail.com>
 
@@ -271,7 +272,7 @@ CONTRIBUTORS
 
     TSUNODA Kazuya <drk@drk7.jp>
 
-    Robert Bohne <rbo@openserv.org>
+    rbo: Robert Bohne <rbo@cpan.org>
 
     ribasushi: Peter Rabbitson <ribasushi@cpan.org>
 

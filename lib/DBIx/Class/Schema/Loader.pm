@@ -10,7 +10,7 @@ use Scalar::Util qw/ weaken /;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.05000';
+our $VERSION = '0.05001';
 
 __PACKAGE__->mk_group_accessors('inherited', qw/
                                 _loader_args
@@ -76,11 +76,12 @@ DBIx::Class::Schema::Loader automates the definition of a
 L<DBIx::Class::Schema> by scanning database table definitions and
 setting up the columns, primary keys, and relationships.
 
-DBIx::Class::Schema::Loader currently supports only the DBI storage type.
-It has explicit support for L<DBD::Pg>, L<DBD::mysql>, L<DBD::DB2>,
-L<DBD::SQLite>, and L<DBD::Oracle>.  Other DBI drivers may function to
-a greater or lesser degree with this loader, depending on how much of the
-DBI spec they implement, and how standard their implementation is.
+DBIx::Class::Schema::Loader currently supports only the DBI storage type.  It
+has explicit support for L<DBD::Pg>, L<DBD::mysql>, L<DBD::DB2>,
+L<DBD::SQLite>, L<DBD::Sybase> (for Sybase ASE and MSSSQL), L<DBD::ODBC> (for
+MSSQL) and L<DBD::Oracle>.  Other DBI drivers may function to a greater or
+lesser degree with this loader, depending on how much of the DBI spec they
+implement, and how standard their implementation is.
 
 Patches to make other DBDs work correctly welcome.
 
@@ -462,7 +463,7 @@ blblack: Brandon Black <blblack@gmail.com>
 
 =head1 CONTRIBUTORS
 
-ilmarii: Dagfinn Ilmari Mannsåker <ilmari@ilmari.org>
+ilmari: Dagfinn Ilmari MannsE<aring>ker <ilmari@ilmari.org>
 
 arcanez: Justin Hunter <justin.d.hunter@gmail.com>
 
@@ -472,7 +473,7 @@ Caelum: Rafael Kitover <rkitover@cpan.org>
 
 TSUNODA Kazuya <drk@drk7.jp>
 
-Robert Bohne <rbo@openserv.org>
+rbo: Robert Bohne <rbo@cpan.org>
 
 ribasushi: Peter Rabbitson <ribasushi@cpan.org>
 
