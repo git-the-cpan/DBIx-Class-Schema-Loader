@@ -20,8 +20,10 @@ lib/DBIx/Class/Schema/Loader/DBI/MSSQL.pm
 lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
 lib/DBIx/Class/Schema/Loader/DBI/ODBC.pm
 lib/DBIx/Class/Schema/Loader/DBI/ODBC/Microsoft_SQL_Server.pm
+lib/DBIx/Class/Schema/Loader/DBI/ODBC/SQL_Anywhere.pm
 lib/DBIx/Class/Schema/Loader/DBI/Oracle.pm
 lib/DBIx/Class/Schema/Loader/DBI/Pg.pm
+lib/DBIx/Class/Schema/Loader/DBI/SQLAnywhere.pm
 lib/DBIx/Class/Schema/Loader/DBI/SQLite.pm
 lib/DBIx/Class/Schema/Loader/DBI/Sybase.pm
 lib/DBIx/Class/Schema/Loader/DBI/Sybase/Common.pm
@@ -47,6 +49,8 @@ t/14ora_common.t
 t/15sybase_common.t
 t/16mssql_common.t
 t/16mssql_odbc_common.t
+t/17sybase_asa_common.t
+t/17sybase_asa_odbc_common.t
 t/20invocations.t
 t/21misc_fatal.t
 t/22dump.t
