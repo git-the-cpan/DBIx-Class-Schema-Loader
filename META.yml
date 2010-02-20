@@ -16,7 +16,7 @@ build_requires:
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.91'
+generated_by: 'Module::Install version 0.93'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -29,61 +29,61 @@ no_index:
 provides:
   DBIx::Class::Schema::Loader:
     file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::Base:
     file: lib/DBIx/Class/Schema/Loader/Base.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI:
     file: lib/DBIx/Class/Schema/Loader/DBI.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault:
     file: lib/DBIx/Class/Schema/Loader/DBI/Component/QuotedDefault.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::DB2:
     file: lib/DBIx/Class/Schema/Loader/DBI/DB2.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::MSSQL:
     file: lib/DBIx/Class/Schema/Loader/DBI/MSSQL.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::ODBC:
     file: lib/DBIx/Class/Schema/Loader/DBI/ODBC.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::ODBC::Microsoft_SQL_Server:
     file: lib/DBIx/Class/Schema/Loader/DBI/ODBC/Microsoft_SQL_Server.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::ODBC::SQL_Anywhere:
     file: lib/DBIx/Class/Schema/Loader/DBI/ODBC/SQL_Anywhere.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::Oracle:
     file: lib/DBIx/Class/Schema/Loader/DBI/Oracle.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::Pg:
     file: lib/DBIx/Class/Schema/Loader/DBI/Pg.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::SQLAnywhere:
     file: lib/DBIx/Class/Schema/Loader/DBI/SQLAnywhere.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::SQLite:
     file: lib/DBIx/Class/Schema/Loader/DBI/SQLite.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::Sybase:
     file: lib/DBIx/Class/Schema/Loader/DBI/Sybase.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::Sybase::Common:
     file: lib/DBIx/Class/Schema/Loader/DBI/Sybase/Common.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::Sybase::Microsoft_SQL_Server:
     file: lib/DBIx/Class/Schema/Loader/DBI/Sybase/Microsoft_SQL_Server.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::Writing:
     file: lib/DBIx/Class/Schema/Loader/DBI/Writing.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::DBI::mysql:
     file: lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::RelBuilder:
     file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
-    version: 0.05002
+    version: 0.05003
   DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_040:
     file: lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_040.pm
 requires:
@@ -108,4 +108,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.05002
+version: 0.05003
