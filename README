@@ -12,7 +12,9 @@ SYNOPSIS
           { debug => 1,
             dump_directory => './lib',
           },
-          [ 'dbi:Pg:dbname="foo"', 'myuser', 'mypassword' ],
+          [ 'dbi:Pg:dbname="foo"', 'myuser', 'mypassword',
+             { loader_class => 'MyLoader' } # optionally
+          ],
       );
 
       # from the command line or a shell script with dbicdump (distributed
@@ -176,6 +178,8 @@ METHODS
     For a complete list of supported loader_options, see
     DBIx::Class::Schema::Loader::Base
 
+    The last hashref in the "\@connect_info" can specify the "loader_class".
+
     This function can be imported in the usual way, as illustrated in these
     Examples:
 
@@ -185,7 +189,9 @@ METHODS
         make_schema_at(
             'New::Schema::Name',
             { debug => 1 },
-            [ 'dbi:Pg:dbname="foo"','postgres' ],
+            [ 'dbi:Pg:dbname="foo"','postgres','',
+              { loader_class => 'MyLoader' } # optionally
+            ],
         );
 
         # Inside a script, specifying a dump directory in which to write
@@ -194,8 +200,14 @@ METHODS
         make_schema_at(
             'New::Schema::Name',
             { debug => 1, dump_directory => './lib' },
-            [ 'dbi:Pg:dbname="foo"','postgres' ],
+            [ 'dbi:Pg:dbname="foo"','postgres','',
+              { loader_class => 'MyLoader' } # optionally
+            ],
         );
+
+    The last hashref in the "\@connect_info" is checked for loader arguments
+    such as "loader_options" and "loader_class", see "connection" for more
+    details.
 
   rescan
     Return Value: @new_monikers

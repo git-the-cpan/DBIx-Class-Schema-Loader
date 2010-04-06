@@ -4,9 +4,9 @@ use strict;
 use warnings;
 use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
-use Lingua::EN::Inflect::Number ();
+use Lingua::EN::Inflect::Phrase ();
 
-our $VERSION = '0.05003';
+our $VERSION = '0.06000';
 
 =head1 NAME
 
@@ -76,7 +76,6 @@ arguments, like so:
 =cut
 
 sub new {
-
     my ( $class, $schema, $inflect_pl, $inflect_singular, $rel_attrs ) = @_;
 
     my $self = {
@@ -100,6 +99,8 @@ sub new {
 sub _inflect_plural {
     my ($self, $relname) = @_;
 
+    return '' if !defined $relname || $relname eq '';
+
     if( ref $self->{inflect_plural} eq 'HASH' ) {
         return $self->{inflect_plural}->{$relname}
             if exists $self->{inflect_plural}->{$relname};
@@ -109,12 +110,14 @@ sub _inflect_plural {
         return $inflected if $inflected;
     }
 
-    return Lingua::EN::Inflect::Number::to_PL($relname);
+    return $self->_to_PL($relname);
 }
 
 # Singularize a relationship name
 sub _inflect_singular {
     my ($self, $relname) = @_;
+
+    return '' if !defined $relname || $relname eq '';
 
     if( ref $self->{inflect_singular} eq 'HASH' ) {
         return $self->{inflect_singular}->{$relname}
@@ -125,8 +128,44 @@ sub _inflect_singular {
         return $inflected if $inflected;
     }
 
-    return Lingua::EN::Inflect::Number::to_S($relname);
+    return $self->_to_S($relname);
 }
+
+sub _to_PL {
+    my ($self, $name) = @_;
+
+    $name =~ s/_/ /g;
+    my $plural = Lingua::EN::Inflect::Phrase::to_PL($name);
+    $plural =~ s/ /_/g;
+
+    return $plural;
+}
+
+sub _to_S {
+    my ($self, $name) = @_;
+
+    $name =~ s/_/ /g;
+    my $singular = Lingua::EN::Inflect::Phrase::to_S($name);
+    $singular =~ s/ /_/g;
+
+    return $singular;
+}
+
+sub _default_relationship_attrs { +{
+    has_many => {
+        cascade_delete => 0,
+        cascade_copy   => 0,
+    },
+    might_have => {
+        cascade_delete => 0,
+        cascade_copy   => 0,
+    },
+    belongs_to => {
+        on_delete => 'CASCADE',
+        on_update => 'CASCADE',
+        is_deferrable => 1,
+    },
+} }
 
 # accessor for options to be passed to each generated relationship
 # type.  take single argument, the relationship type name, and returns
@@ -134,9 +173,12 @@ sub _inflect_singular {
 sub _relationship_attrs {
     my ( $self, $reltype ) = @_;
     my $r = $self->{relationship_attrs};
-    return unless $r && ( $r->{all} || $r->{$reltype} );
 
-    my %composite = %{ $r->{all} || {} };
+    my %composite = (
+        %{ $self->_default_relationship_attrs->{$reltype} || {} },
+        %{ $r->{all} || {} }
+    );
+
     if( my $specific = $r->{$reltype} ) {
 	while( my ($k,$v) = each %$specific ) {
 	    $composite{$k} = $v;
@@ -146,7 +188,7 @@ sub _relationship_attrs {
 }
 
 sub _array_eq {
-    my ($a, $b) = @_;
+    my ($self, $a, $b) = @_;
 
     return unless @$a == @$b;
 
@@ -156,36 +198,18 @@ sub _array_eq {
     return 1;
 }
 
-sub _uniq_fk_rel {
-    my ($self, $local_moniker, $local_relname, $local_cols, $uniqs) = @_;
-
-    my $remote_method = 'has_many';
-
-    # If the local columns have a UNIQUE constraint, this is a one-to-one rel
-    my $local_source = $self->{schema}->source($local_moniker);
-    if (_array_eq([ $local_source->primary_columns ], $local_cols) ||
-            grep { _array_eq($_->[1], $local_cols) } @$uniqs) {
-        $remote_method = 'might_have';
-        $local_relname = $self->_inflect_singular($local_relname);
-    }
-
-    return ($remote_method, $local_relname);
-}
-
 sub _remote_attrs {
-	my ($self, $local_moniker, $local_cols) = @_;
+    my ($self, $local_moniker, $local_cols) = @_;
 
-	# get our base set of attrs from _relationship_attrs, if present
-	my $attrs = $self->_relationship_attrs('belongs_to') || {};
+    # get our base set of attrs from _relationship_attrs, if present
+    my $attrs = $self->_relationship_attrs('belongs_to') || {};
 
-	# If the referring column is nullable, make 'belongs_to' an
-	# outer join, unless explicitly set by relationship_attrs
-	my $nullable = grep { $self->{schema}->source($local_moniker)->column_info($_)->{is_nullable} }
-		@$local_cols;
-	$attrs->{join_type} = 'LEFT'
-	    if $nullable && !defined $attrs->{join_type};
+    # If the referring column is nullable, make 'belongs_to' an
+    # outer join, unless explicitly set by relationship_attrs
+    my $nullable = grep { $self->{schema}->source($local_moniker)->column_info($_)->{is_nullable} } @$local_cols;
+    $attrs->{join_type} = 'LEFT' if $nullable && !defined $attrs->{join_type};
 
-	return $attrs;
+    return $attrs;
 }
 
 sub _remote_relname {
@@ -196,6 +220,7 @@ sub _remote_relname {
     # name, to make filter accessors work, but strip trailing _id
     if(scalar keys %{$cond} == 1) {
         my ($col) = values %{$cond};
+        $col = lc $col;
         $col =~ s/_id$//;
         $remote_relname = $self->_inflect_singular($col);
     }
@@ -211,9 +236,8 @@ sub generate_code {
 
     my $all_code = {};
 
-    my $local_table = $self->{schema}->source($local_moniker)->from;
     my $local_class = $self->{schema}->class($local_moniker);
-        
+
     my %counters;
     foreach my $rel (@$rels) {
         next if !$rel->{remote_source};
@@ -221,14 +245,14 @@ sub generate_code {
     }
 
     foreach my $rel (@$rels) {
-        next if !$rel->{remote_source};
-        my $local_cols = $rel->{local_columns};
-        my $remote_cols = $rel->{remote_columns};
-        my $remote_moniker = $rel->{remote_source};
-        my $remote_obj = $self->{schema}->source($remote_moniker);
-        my $remote_class = $self->{schema}->class($remote_moniker);
-        my $remote_table = $remote_obj->from;
-        $remote_cols ||= [ $remote_obj->primary_columns ];
+        my $remote_moniker = $rel->{remote_source}
+            or next;
+
+        my $remote_class   = $self->{schema}->class($remote_moniker);
+        my $remote_obj     = $self->{schema}->source($remote_moniker);
+        my $remote_cols    = $rel->{remote_columns} || [ $remote_obj->primary_columns ];
+
+        my $local_cols     = $rel->{local_columns};
 
         if($#$local_cols != $#$remote_cols) {
             croak "Column count mismatch: $local_moniker (@$local_cols) "
@@ -240,35 +264,8 @@ sub generate_code {
             $cond{$remote_cols->[$i]} = $local_cols->[$i];
         }
 
-        my $local_relname;
-        my $remote_relname = $self->_remote_relname($remote_table, \%cond);
-
-        # If more than one rel between this pair of tables, use the local
-        # col names to distinguish
-        if($counters{$remote_moniker} > 1) {
-            my $colnames = q{_} . join(q{_}, @$local_cols);
-            $remote_relname .= $colnames if keys %cond > 1;
-
-            my $is_singular =
-              ($self->_uniq_fk_rel($local_moniker, 'dummy', $local_cols, $uniqs))[0] ne 'has_many';
-
-            $local_relname = $self->_multi_rel_local_relname(
-                $remote_class, $local_table, $local_cols, $is_singular
-            );
-        } else {
-            $local_relname = $self->_inflect_plural(lc $local_table);
-        }
-
-        my %rev_cond = reverse %cond;
-
-        for (keys %rev_cond) {
-            $rev_cond{"foreign.$_"} = "self.".$rev_cond{$_};
-            delete $rev_cond{$_};
-        }
-
-        my ($remote_method);
-
-        ($remote_method, $local_relname) = $self->_uniq_fk_rel($local_moniker, $local_relname, $local_cols, $uniqs);
+        my ( $local_relname, $remote_relname, $remote_method ) =
+            $self->_relnames_and_method( $local_moniker, $rel, \%cond,  $uniqs, \%counters );
 
         push(@{$all_code->{$local_class}},
             { method => 'belongs_to',
@@ -279,6 +276,12 @@ sub generate_code {
               ],
             }
         );
+
+        my %rev_cond = reverse %cond;
+        for (keys %rev_cond) {
+            $rev_cond{"foreign.$_"} = "self.".$rev_cond{$_};
+            delete $rev_cond{$_};
+        }
 
         push(@{$all_code->{$remote_class}},
             { method => $remote_method,
@@ -294,24 +297,45 @@ sub generate_code {
     return $all_code;
 }
 
-sub _multi_rel_local_relname {
-    my ($self, $remote_class, $local_table, $local_cols, $is_singular) = @_;
+sub _relnames_and_method {
+    my ( $self, $local_moniker, $rel, $cond, $uniqs, $counters ) = @_;
 
-    my $inflect = $is_singular ? '_inflect_singular' : '_inflect_plural';
-    $inflect    = $self->can($inflect);
+    my $remote_moniker = $rel->{remote_source};
+    my $remote_obj     = $self->{schema}->source( $remote_moniker );
+    my $remote_class   = $self->{schema}->class(  $remote_moniker );
+    my $remote_relname = $self->_remote_relname( $remote_obj->from, $cond);
 
-    my $colnames = q{_} . join(q{_}, @$local_cols);
-    my $old_relname = #< TODO: remove me after 0.05003 release
-    my $local_relname = lc($local_table) . $colnames;
-    my $stripped_id = $local_relname =~ s/_id$//; #< strip off any trailing _id
-    $local_relname = $self->$inflect( $local_relname );
+    my $local_cols  = $rel->{local_columns};
+    my $local_table = $self->{schema}->source($local_moniker)->from;
 
-    # TODO: remove me after 0.05003 release
-    $old_relname = $self->$inflect( $old_relname );
-    warn __PACKAGE__." $VERSION: warning, stripping trailing _id from ${remote_class} relation '$old_relname', renaming to '$local_relname'.  This behavior is new as of 0.05003.\n"
-        if $stripped_id;
+    # If more than one rel between this pair of tables, use the local
+    # col names to distinguish
+    my ($local_relname, $local_relname_uninflected);
+    if ( $counters->{$remote_moniker} > 1) {
+        my $colnames = lc(q{_} . join(q{_}, map lc($_), @$local_cols));
+        $remote_relname .= $colnames if keys %$cond > 1;
 
-    return $local_relname;
+        $local_relname = lc($local_table) . $colnames;
+        $local_relname =~ s/_id$//;
+
+        $local_relname_uninflected = $local_relname;
+        $local_relname = $self->_inflect_plural( $local_relname );
+    } else {
+        $local_relname_uninflected = lc $local_table;
+        $local_relname = $self->_inflect_plural(lc $local_table);
+    }
+
+    my $remote_method = 'has_many';
+
+    # If the local columns have a UNIQUE constraint, this is a one-to-one rel
+    my $local_source = $self->{schema}->source($local_moniker);
+    if ($self->_array_eq([ $local_source->primary_columns ], $local_cols) ||
+            grep { $self->_array_eq($_->[1], $local_cols) } @$uniqs) {
+        $remote_method = 'might_have';
+        $local_relname = $self->_inflect_singular($local_relname_uninflected);
+    }
+
+    return ( $local_relname, $remote_relname, $remote_method );
 }
 
 =head1 AUTHOR

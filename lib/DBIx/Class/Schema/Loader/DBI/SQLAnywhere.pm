@@ -2,16 +2,14 @@ package DBIx::Class::Schema::Loader::DBI::SQLAnywhere;
 
 use strict;
 use warnings;
-use namespace::autoclean;
 use Class::C3;
 use base qw/
     DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault
     DBIx::Class::Schema::Loader::DBI
 /;
 use Carp::Clan qw/^DBIx::Class/;
-use List::MoreUtils 'uniq';
 
-our $VERSION = '0.05003';
+our $VERSION = '0.06000';
 
 =head1 NAME
 
@@ -24,17 +22,83 @@ See L<DBIx::Class::Schema::Loader::Base>.
 
 =cut
 
-# check for IDENTITY columns
+sub _setup {
+    my $self = shift;
+
+    $self->{db_schema} ||=
+        ($self->schema->storage->dbh->selectrow_array('select user'))[0];
+}
+
+sub _tables_list {
+    my ($self, $opts) = @_;
+
+    my $dbh = $self->schema->storage->dbh;
+    my $sth = $dbh->prepare(<<'EOF');
+select t.table_name from systab t
+join sysuser u on u.user_id = t.creator
+where u.user_name = ?
+EOF
+    $sth->execute($self->db_schema);
+
+    my @tables = map @$_, @{ $sth->fetchall_arrayref };
+
+    return $self->_filter_tables(\@tables, $opts);
+}
+
 sub _columns_info_for {
-    my $self   = shift;
+    my $self    = shift;
+    my ($table) = @_;
+
     my $result = $self->next::method(@_);
 
-    while (my ($col, $info) = each %$result) {
+    my $dbh = $self->schema->storage->dbh;
+
+    while (my ($column, $info) = each %$result) {
         my $def = $info->{default_value};
         if (ref $def eq 'SCALAR' && $$def eq 'autoincrement') {
             delete $info->{default_value};
             $info->{is_auto_increment} = 1;
         }
+
+        my ($user_type) = $dbh->selectrow_array(<<'EOF', {}, $table, lc $column);
+SELECT ut.type_name
+FROM systabcol tc
+JOIN systab t ON tc.table_id = t.table_id
+JOIN sysusertype ut on tc.user_type = ut.type_id
+WHERE t.table_name = ? AND lower(tc.column_name) = ?
+EOF
+        $info->{data_type} = $user_type if defined $user_type;
+
+        if ($info->{data_type} eq 'double') {
+            $info->{data_type} = 'double precision';
+        }
+
+        if ($info->{data_type} =~ /^(?:char|varchar|binary|varbinary)\z/ && ref($info->{size}) eq 'ARRAY') {
+            $info->{size} = $info->{size}[0];
+        }
+        elsif ($info->{data_type} !~ /^(?:char|varchar|binary|varbinary|numeric|decimal)\z/) {
+            delete $info->{size};
+        }
+
+        my $sth = $dbh->prepare(<<'EOF');
+SELECT tc.width, tc.scale
+FROM systabcol tc
+JOIN systab t ON t.table_id = tc.table_id
+WHERE t.table_name = ? AND lower(tc.column_name) = ?
+EOF
+        $sth->execute($table, lc $column);
+        my ($width, $scale) = $sth->fetchrow_array;
+        $sth->finish;
+
+        if ($info->{data_type} =~ /^(?:numeric|decimal)\z/) {
+            # We do not check for the default precision/scale, because they can be changed as PUBLIC database options.
+            $info->{size} = [$width, $scale];
+        }
+        elsif ($info->{data_type} =~ /^(?:n(?:varchar|char) | varbit)\z/x) {
+            $info->{size} = $width;
+        }
+
+        delete $info->{default_value} if ref($info->{default_value}) eq 'SCALAR' && ${ $info->{default_value} } eq 'NULL';
     }
 
     return $result;
@@ -64,14 +128,13 @@ sub _table_fk_info {
     my $sth = $dbh->prepare(<<'EOF');
 select fki.index_name fk_name, fktc.column_name local_column, pkt.table_name remote_table, pktc.column_name remote_column
 from sysfkey fk
-join sysidx    pki  on fk.primary_table_id = pki.table_id  and fk.primary_index_id = pki.index_id
-join sysidx    fki  on fk.foreign_table_id = fki.table_id  and fk.foreign_index_id = fki.index_id
 join systab    pkt  on fk.primary_table_id = pkt.table_id
 join systab    fkt  on fk.foreign_table_id = fkt.table_id
-join sysidxcol pkic on pki.table_id        = pkic.table_id and pki.index_id        = pkic.index_id
-join sysidxcol fkic on fki.table_id        = fkic.table_id and fki.index_id        = fkic.index_id
-join systabcol pktc on pkic.table_id       = pktc.table_id and pkic.column_id      = pktc.column_id
-join systabcol fktc on fkic.table_id       = fktc.table_id and fkic.column_id      = fktc.column_id
+join sysidx    pki  on fk.primary_table_id = pki.table_id  and fk.primary_index_id    = pki.index_id
+join sysidx    fki  on fk.foreign_table_id = fki.table_id  and fk.foreign_index_id    = fki.index_id
+join sysidxcol fkic on fkt.table_id        = fkic.table_id and fki.index_id           = fkic.index_id
+join systabcol pktc on pkt.table_id        = pktc.table_id and fkic.primary_column_id = pktc.column_id
+join systabcol fktc on fkt.table_id        = fktc.table_id and fkic.column_id         = fktc.column_id
 where fkt.table_name = ?
 EOF
     $sth->execute($table);
@@ -84,8 +147,8 @@ EOF
 
     foreach my $fk (keys %$remote_table) {
         push @rels, {
-            local_columns => [ uniq @{ $local_cols->{$fk} } ],
-            remote_columns => [ uniq @{ $remote_cols->{$fk} } ],
+            local_columns => $local_cols->{$fk},
+            remote_columns => $remote_cols->{$fk},
             remote_table => $remote_table->{$fk},
         };
     }
@@ -133,3 +196,4 @@ the same terms as Perl itself.
 =cut
 
 1;
+# vim:et sw=4 sts=4 tw=0:

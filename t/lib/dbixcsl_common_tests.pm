@@ -10,6 +10,9 @@ use File::Path;
 use DBI;
 use Digest::MD5;
 use File::Find 'find';
+use Class::Unload ();
+use Data::Dumper::Concise;
+use List::MoreUtils 'apply';
 
 my $DUMP_DIR = './t/_common_dump';
 rmtree $DUMP_DIR;
@@ -30,7 +33,7 @@ sub new {
     # Only MySQL uses this
     $self->{innodb} ||= '';
 
-    # DB2 doesn't support this
+    # DB2 and Firebird don't support 'field type NULL'
     $self->{null} = 'NULL' unless defined $self->{null};
     
     $self->{verbose} = $ENV{TEST_VERBOSE} || 0;
@@ -38,11 +41,17 @@ sub new {
     # Optional extra tables and tests
     $self->{extra} ||= {};
 
+    $self->{date_datatype} ||= 'DATE';
+
     # Not all DBS do SQL-standard CURRENT_TIMESTAMP
     $self->{default_function} ||= "CURRENT_TIMESTAMP";
     $self->{default_function_def} ||= "TIMESTAMP DEFAULT $self->{default_function}";
 
-    return bless $self => $class;
+    $self = bless $self, $class;
+
+    $self->setup_data_type_tests;
+
+    return $self;
 }
 
 sub skip_tests {
@@ -57,47 +66,89 @@ sub _monikerize {
     return undef;
 }
 
-sub _custom_column_info {
-    my ( $table_name, $column_name, $column_info ) = @_;
-
-    $table_name = lc ( $table_name );
-    $column_name = lc ( $column_name );
-
-    if ( $table_name eq 'loader_test11' 
-        and $column_name eq 'loader_test10' 
-    ){
-        return { is_numeric => 1 }
-    }
-    # Set inflate_datetime or  inflate_date to check 
-    #   datetime_timezone and datetime_locale
-    if ( $table_name eq 'loader_test36' ){
-        return { inflate_datetime => 1 } if 
-            ( $column_name eq 'b_char_as_data' );
-        return { inflate_date => 1 } if 
-            ( $column_name eq 'c_char_as_data' );
-    }
-
-    return;
-}
-
 sub run_tests {
     my $self = shift;
 
-    plan tests => 156 + ($self->{extra}->{count} || 0);
+    my @connect_info;
 
-    $self->create();
+    if ($self->{dsn}) {
+        push @connect_info, [ @{$self}{qw/dsn user password connect_info_opts/ } ];
+    }
+    else {
+        foreach my $info (@{ $self->{connect_info} || [] }) {
+            push @connect_info, [ @{$info}{qw/dsn user password connect_info_opts/ } ];
+        }
+    }
+    
+    if ($ENV{SCHEMA_LOADER_TESTS_EXTRA_ONLY}) {
+        $self->run_only_extra_tests(\@connect_info);
+        return;
+    }
 
-    my @connect_info = (
-	$self->{dsn},
-	$self->{user},
-	$self->{password},
-	$self->{connect_info_opts},
-    );
+    my $extra_count = $self->{extra}{count} || 0;
 
-    # First, with in-memory classes
-    my $schema_class = $self->setup_schema(@connect_info);
-    $self->test_schema($schema_class);
-    $self->drop_tables;
+    plan tests => @connect_info * (174 + $extra_count + ($self->{data_type_tests}{test_count} || 0));
+
+    foreach my $info_idx (0..$#connect_info) {
+        my $info = $connect_info[$info_idx];
+
+        @{$self}{qw/dsn user password connect_info_opts/} = @$info;
+
+        $self->create();
+
+        my $schema_class = $self->setup_schema($info);
+        $self->test_schema($schema_class);
+
+        rmtree $DUMP_DIR
+            unless $ENV{SCHEMA_LOADER_TESTS_NOCLEANUP} && $info_idx == $#connect_info;
+    }
+}
+
+sub run_only_extra_tests {
+    my ($self, $connect_info) = @_;
+
+    plan tests => @$connect_info * (4 + ($self->{extra}{count} || 0) + ($self->{data_type_tests}{test_count} || 0));
+
+    foreach my $info_idx (0..$#$connect_info) {
+        my $info = $connect_info->[$info_idx];
+
+        @{$self}{qw/dsn user password connect_info_opts/} = @$info;
+
+        $self->drop_extra_tables_only;
+
+        my $dbh = $self->dbconnect(1);
+        $dbh->do($_) for @{ $self->{extra}{create} || [] };
+        $dbh->do($self->{data_type_tests}{ddl}) if $self->{data_type_tests}{ddl};
+        $self->{_created} = 1;
+
+        my $file_count = grep /CREATE (?:TABLE|VIEW)/i, @{ $self->{extra}{create} || [] };
+        $file_count++; # schema
+        $file_count++ if $self->{data_type_tests}{ddl};
+
+        my $schema_class = $self->setup_schema($info, $file_count);
+        my ($monikers, $classes) = $self->monikers_and_classes($schema_class);
+        my $conn = $schema_class->clone;
+
+        $self->test_data_types($conn);
+        $self->{extra}{run}->($conn, $monikers, $classes) if $self->{extra}{run};
+
+        if (not ($ENV{SCHEMA_LOADER_TESTS_NOCLEANUP} && $info_idx == $#$connect_info)) {
+            $self->drop_extra_tables_only;
+            rmtree $DUMP_DIR;
+        }
+    }
+}
+
+sub drop_extra_tables_only {
+    my $self = shift;
+
+    my $dbh = $self->dbconnect(0);
+    $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
+    $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
+
+    if (my $data_type_table = $self->{data_type_tests}{table_name}) {
+        $dbh->do("DROP TABLE $data_type_table");
+    }
 }
 
 # defined in sub create
@@ -106,8 +157,7 @@ my (@statements, @statements_reltests, @statements_advanced,
     @statements_implicit_rels);
 
 sub setup_schema {
-    my $self = shift;
-    my @connect_info = @_;
+    my ($self, $connect_info, $expected_count) = @_;
 
     my $schema_class = 'DBIXCSL_Test::Schema';
 
@@ -130,72 +180,86 @@ sub setup_schema {
         use_namespaces          => 0,
         dump_directory          => $DUMP_DIR,
         datetime_timezone       => 'Europe/Berlin',
-        datetime_locale         => 'de_DE'
+        datetime_locale         => 'de_DE',
+        %{ $self->{loader_options} || {} },
     );
 
     $loader_opts{db_schema} = $self->{db_schema} if $self->{db_schema};
 
+    Class::Unload->unload($schema_class);
+
+    my $file_count;
     {
-       my @loader_warnings;
-       local $SIG{__WARN__} = sub { push(@loader_warnings, $_[0]); };
-        eval qq{
-            package $schema_class;
-            use base qw/DBIx::Class::Schema::Loader/;
-    
-            __PACKAGE__->loader_options(\%loader_opts);
-            __PACKAGE__->connection(\@connect_info);
-        };
+        my @loader_warnings;
+        local $SIG{__WARN__} = sub { push(@loader_warnings, $_[0]); };
+         eval qq{
+             package $schema_class;
+             use base qw/DBIx::Class::Schema::Loader/;
+     
+             __PACKAGE__->loader_options(\%loader_opts);
+             __PACKAGE__->connection(\@\$connect_info);
+         };
+ 
+        ok(!$@, "Loader initialization") or diag $@;
 
-       ok(!$@, "Loader initialization") or diag $@;
+        find sub { return if -d; $file_count++ }, $DUMP_DIR;
 
-       my $file_count;
-       find sub { return if -d; $file_count++ }, $DUMP_DIR;
+        my $standard_sources = not defined $expected_count;
 
-       my $expected_count = 36;
+        if ($standard_sources) {
+            $expected_count = 36 + ($self->{data_type_tests}{test_count} ? 1 : 0);
 
-       $expected_count += grep /CREATE (?:TABLE|VIEW)/i,
-           @{ $self->{extra}{create} || [] };
+            $expected_count += grep /CREATE (?:TABLE|VIEW)/i,
+                @{ $self->{extra}{create} || [] };
+     
+            $expected_count -= grep /CREATE TABLE/, @statements_inline_rels
+                if $self->{skip_rels} || $self->{no_inline_rels};
+     
+            $expected_count -= grep /CREATE TABLE/, @statements_implicit_rels
+                if $self->{skip_rels} || $self->{no_implicit_rels};
+     
+            $expected_count -= grep /CREATE TABLE/, ($self->{vendor} =~ /sqlite/ ? @statements_advanced_sqlite : @statements_advanced), @statements_reltests
+                if $self->{skip_rels};
+        }
+ 
+        is $file_count, $expected_count, 'correct number of files generated';
+ 
+        my $warn_count = 2;
+        $warn_count++ if grep /ResultSetManager/, @loader_warnings;
+ 
+        $warn_count++ for grep /^Bad table or view/, @loader_warnings;
+ 
+        $warn_count++ for grep /renaming \S+ relation/, @loader_warnings;
+ 
+        $warn_count++ for grep /\b(?!loader_test9)\w+ has no primary key/i, @loader_warnings;
 
-       $expected_count -= grep /CREATE TABLE/, @statements_inline_rels
-           if $self->{skip_rels} || $self->{no_inline_rels};
-
-       $expected_count -= grep /CREATE TABLE/, @statements_implicit_rels
-           if $self->{skip_rels} || $self->{no_implicit_rels};
-
-       $expected_count -= grep /CREATE TABLE/, ($self->{vendor} =~ /sqlite/ ? @statements_advanced_sqlite : @statements_advanced), @statements_reltests
-           if $self->{skip_rels};
-
-       is $file_count, $expected_count, 'correct number of files generated';
-
-       exit if $file_count != $expected_count;
-
-       my $warn_count = 2;
-       $warn_count++ if grep /ResultSetManager/, @loader_warnings;
-
-       $warn_count++ for grep /^Bad table or view/, @loader_warnings;
-
-       $warn_count++ for grep /stripping trailing _id/, @loader_warnings;
-
-       my $vendor = $self->{vendor};
-       $warn_count++ for grep /${vendor}_\S+ has no primary key/,
-           @loader_warnings;
-
-        if($self->{skip_rels}) {
-            SKIP: {
-                is(scalar(@loader_warnings), $warn_count, "No loader warnings")
+        if ($standard_sources) {
+            if($self->{skip_rels}) {
+                SKIP: {
+                    is(scalar(@loader_warnings), $warn_count, "No loader warnings")
+                        or diag @loader_warnings;
+                    skip "No missing PK warnings without rels", 1;
+                }
+            }
+            else {
+                $warn_count++;
+                is(scalar(@loader_warnings), $warn_count, "Expected loader warning")
                     or diag @loader_warnings;
-                skip "No missing PK warnings without rels", 1;
+                is(grep(/loader_test9 has no primary key/i, @loader_warnings), 1,
+                     "Missing PK warning");
             }
         }
         else {
-	    $warn_count++;
-            is(scalar(@loader_warnings), $warn_count, "Expected loader warning")
-                or diag @loader_warnings;
-            is(grep(/loader_test9 has no primary key/, @loader_warnings), 1,
-                 "Missing PK warning");
+            SKIP: {
+                is scalar(@loader_warnings), $warn_count, 'Correct number of warnings'
+                    or diag @loader_warnings;
+                skip "not testing standard sources", 1;
+            }
         }
     }
-    
+
+    exit if $file_count != $expected_count;
+   
     return $schema_class;
 }
 
@@ -204,13 +268,10 @@ sub test_schema {
     my $schema_class = shift;
 
     my $conn = $schema_class->clone;
-    my $monikers = {};
-    my $classes = {};
-    foreach my $source_name ($schema_class->sources) {
-        my $table_name = $schema_class->source($source_name)->from;
-        $monikers->{$table_name} = $source_name;
-        $classes->{$table_name} = $schema_class . q{::} . $source_name;
-    }
+
+    ($self->{before_tests_run} || sub {})->($conn);
+
+    my ($monikers, $classes) = $self->monikers_and_classes($schema_class);
 
     my $moniker1 = $monikers->{loader_test1s};
     my $class1   = $classes->{loader_test1s};
@@ -222,12 +283,12 @@ sub test_schema {
     my $rsobj2   = $conn->resultset($moniker2);
     check_no_duplicate_unique_constraints($class2);
 
-    my $moniker23 = $monikers->{LOADER_TEST23};
-    my $class23   = $classes->{LOADER_TEST23};
+    my $moniker23 = $monikers->{LOADER_test23} || $monikers->{loader_test23};
+    my $class23   = $classes->{LOADER_test23}  || $classes->{loader_test23};
     my $rsobj23   = $conn->resultset($moniker1);
 
-    my $moniker24 = $monikers->{LoAdEr_test24};
-    my $class24   = $classes->{LoAdEr_test24};
+    my $moniker24 = $monikers->{LoAdEr_test24} || $monikers->{loader_test24};
+    my $class24   = $classes->{LoAdEr_test24}  || $classes->{loader_test24};
     my $rsobj24   = $conn->resultset($moniker2);
 
     my $moniker35 = $monikers->{loader_test35};
@@ -321,7 +382,7 @@ sub test_schema {
         is( $rsobj1->loader_test1_rsmeth, 'all is still well', 'Result set method' );
     }
     
-    ok( $class1->column_info('id')->{is_auto_increment}, 'is_auto_incrment detection' );
+    ok( $class1->column_info('id')->{is_auto_increment}, 'is_auto_increment detection' );
 
     my $obj    = $rsobj1->find(1);
     is( $obj->id,  1, "Find got the right row" );
@@ -366,7 +427,7 @@ sub test_schema {
     );
 
     SKIP: {
-        skip $self->{skip_rels}, 96 if $self->{skip_rels};
+        skip $self->{skip_rels}, 116 if $self->{skip_rels};
 
         my $moniker3 = $monikers->{loader_test3};
         my $class3   = $classes->{loader_test3};
@@ -499,6 +560,59 @@ sub test_schema {
         my $rs_rel4 = $obj3->search_related('loader_test4zes');
         isa_ok( $rs_rel4->first, $class4);
 
+        # check rel naming with prepositions
+        ok ($rsobj4->result_source->has_relationship('loader_test5s_to'),
+            "rel with preposition 'to' pluralized correctly");
+
+        ok ($rsobj4->result_source->has_relationship('loader_test5s_from'),
+            "rel with preposition 'from' pluralized correctly");
+
+        # check default relationship attributes
+        is $rsobj3->result_source->relationship_info('loader_test4zes')->{attrs}{cascade_delete}, 0,
+            'cascade_delete => 0 on has_many by default';
+
+        is $rsobj3->result_source->relationship_info('loader_test4zes')->{attrs}{cascade_copy}, 0,
+            'cascade_copy => 0 on has_many by default';
+
+        ok ((not exists $rsobj3->result_source->relationship_info('loader_test4zes')->{attrs}{on_delete}),
+            'has_many does not have on_delete');
+
+        ok ((not exists $rsobj3->result_source->relationship_info('loader_test4zes')->{attrs}{on_update}),
+            'has_many does not have on_update');
+
+        ok ((not exists $rsobj3->result_source->relationship_info('loader_test4zes')->{attrs}{is_deferrable}),
+            'has_many does not have is_deferrable');
+
+        is $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{on_delete}, 'CASCADE',
+            "on_delete => 'CASCADE' on belongs_to by default";
+
+        is $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{on_update}, 'CASCADE',
+            "on_update => 'CASCADE' on belongs_to by default";
+
+        is $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{is_deferrable}, 1,
+            "is_deferrable => 1 on belongs_to by default";
+
+        ok ((not exists $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{cascade_delete}),
+            'belongs_to does not have cascade_delete');
+
+        ok ((not exists $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{cascade_copy}),
+            'belongs_to does not have cascade_copy');
+
+        is $rsobj27->result_source->relationship_info('loader_test28')->{attrs}{cascade_delete}, 0,
+            'cascade_delete => 0 on might_have by default';
+
+        is $rsobj27->result_source->relationship_info('loader_test28')->{attrs}{cascade_copy}, 0,
+            'cascade_copy => 0 on might_have by default';
+
+        ok ((not exists $rsobj27->result_source->relationship_info('loader_test28')->{attrs}{on_delete}),
+            'might_have does not have on_delete');
+
+        ok ((not exists $rsobj27->result_source->relationship_info('loader_test28')->{attrs}{on_update}),
+            'might_have does not have on_update');
+
+        ok ((not exists $rsobj27->result_source->relationship_info('loader_test28')->{attrs}{is_deferrable}),
+            'might_have does not have is_deferrable');
+
         # find on multi-col pk
         my $obj5 = 
 	    eval { $rsobj5->find({id1 => 1, iD2 => 1}) } ||
@@ -592,40 +706,33 @@ sub test_schema {
         is($obj27->loader_test29, undef, "Undef for missing one-to-one row");
 
         # test outer join for nullable referring columns:
-        SKIP: {
-          skip "unreliable column info from db driver",11 unless 
-            ($class32->column_info('rel2')->{is_nullable});
+        is $class32->column_info('rel2')->{is_nullable}, 1,
+          'is_nullable detection';
 
-          ok($class32->column_info('rel1')->{is_foreign_key}, 'Foreign key detected');
-          ok($class32->column_info('rel2')->{is_foreign_key}, 'Foreign key detected');
-          
-          my $obj32 = $rsobj32->find(1,{prefetch=>[qw/rel1 rel2/]});
-          my $obj34 = $rsobj34->find(
-            1,{prefetch=>[qw/loader_test33_id_rel1 loader_test33_id_rel2/]}
-          );
-          my $skip_outerjoin;
-          isa_ok($obj32,$class32) or $skip_outerjoin = 1;
-          isa_ok($obj34,$class34) or $skip_outerjoin = 1;
+        ok($class32->column_info('rel1')->{is_foreign_key}, 'Foreign key detected');
+        ok($class32->column_info('rel2')->{is_foreign_key}, 'Foreign key detected');
+        
+        my $obj32 = $rsobj32->find(1,{prefetch=>[qw/rel1 rel2/]});
+        my $obj34 = $rsobj34->find(
+          1,{prefetch=>[qw/loader_test33_id_rel1 loader_test33_id_rel2/]}
+        );
+        isa_ok($obj32,$class32);
+        isa_ok($obj34,$class34);
 
-          ok($class34->column_info('id')->{is_foreign_key}, 'Foreign key detected');
-          ok($class34->column_info('rel1')->{is_foreign_key}, 'Foreign key detected');
-          ok($class34->column_info('rel2')->{is_foreign_key}, 'Foreign key detected');
+        ok($class34->column_info('id')->{is_foreign_key}, 'Foreign key detected');
+        ok($class34->column_info('rel1')->{is_foreign_key}, 'Foreign key detected');
+        ok($class34->column_info('rel2')->{is_foreign_key}, 'Foreign key detected');
 
-          SKIP: {
-            skip "Pre-requisite test failed", 4 if $skip_outerjoin;
-            my $rs_rel31_one = $obj32->rel1;
-            my $rs_rel31_two = $obj32->rel2;
-            isa_ok($rs_rel31_one, $class31);
-            is($rs_rel31_two, undef);
+        my $rs_rel31_one = $obj32->rel1;
+        my $rs_rel31_two = $obj32->rel2;
+        isa_ok($rs_rel31_one, $class31);
+        is($rs_rel31_two, undef);
 
-            my $rs_rel33_one = $obj34->loader_test33_id_rel1;
-            my $rs_rel33_two = $obj34->loader_test33_id_rel2;
+        my $rs_rel33_one = $obj34->loader_test33_id_rel1;
+        my $rs_rel33_two = $obj34->loader_test33_id_rel2;
 
-            isa_ok($rs_rel33_one,$class33);
-            is($rs_rel33_two, undef);
-
-          }
-        }
+        isa_ok($rs_rel33_one,$class33);
+        is($rs_rel33_two, undef);
 
         # from Chisel's tests...
         my $moniker10 = $monikers->{loader_test10};
@@ -642,20 +749,6 @@ sub test_schema {
         ok($class10->column_info('loader_test11')->{is_foreign_key}, 'Foreign key detected');
         ok($class11->column_info('loader_test10')->{is_foreign_key}, 'Foreign key detected');
 
-        # Added by custom_column_info
-        ok($class11->column_info('loader_test10')->{is_numeric}, 'custom_column_info');
-
-        is($class36->column_info('a_date')->{locale},'de_DE','datetime_locale');
-        is($class36->column_info('a_date')->{timezone},'Europe/Berlin','datetime_timezone');
-
-        ok($class36->column_info('b_char_as_data')->{inflate_datetime},'custom_column_info');
-        is($class36->column_info('b_char_as_data')->{locale},'de_DE','datetime_locale');
-        is($class36->column_info('b_char_as_data')->{timezone},'Europe/Berlin','datetime_timezone');
-
-        ok($class36->column_info('c_char_as_data')->{inflate_date},'custom_column_info');
-        is($class36->column_info('c_char_as_data')->{locale},'de_DE','datetime_locale');
-        is($class36->column_info('c_char_as_data')->{timezone},'Europe/Berlin','datetime_timezone');
-
         my $obj10 = $rsobj10->create({ subject => 'xyzzy' });
 
         $obj10->update();
@@ -667,9 +760,9 @@ sub test_schema {
 
         eval {
             my $obj10_2 = $obj11->loader_test10;
-            $obj10_2->loader_test11( $obj11->id11() );
-            $obj10_2->update();
+            $obj10_2->update({ loader_test11 => $obj11->id11 });
         };
+        diag $@ if $@;
         ok(!$@, "Setting up circular relationship");
 
         SKIP: {
@@ -733,6 +826,25 @@ sub test_schema {
         }
     }
 
+    # test custom_column_info and datetime_timezone/datetime_locale
+    {
+        my $class35 = $classes->{loader_test35};
+        my $class36 = $classes->{loader_test36};
+
+        ok($class35->column_info('an_int')->{is_numeric}, 'custom_column_info');
+
+        is($class36->column_info('a_date')->{locale},'de_DE','datetime_locale');
+        is($class36->column_info('a_date')->{timezone},'Europe/Berlin','datetime_timezone');
+
+        ok($class36->column_info('b_char_as_data')->{inflate_datetime},'custom_column_info');
+        is($class36->column_info('b_char_as_data')->{locale},'de_DE','datetime_locale');
+        is($class36->column_info('b_char_as_data')->{timezone},'Europe/Berlin','datetime_timezone');
+
+        ok($class36->column_info('c_char_as_data')->{inflate_date},'custom_column_info');
+        is($class36->column_info('c_char_as_data')->{locale},'de_DE','datetime_locale');
+        is($class36->column_info('c_char_as_data')->{timezone},'Europe/Berlin','datetime_timezone');
+    }
+
     # rescan and norewrite test
     SKIP: {
         my @statements_rescan = (
@@ -776,6 +888,7 @@ sub test_schema {
         }
 
         $dbh->disconnect;
+        $conn->storage->disconnect; # needed for Firebird
 
         sleep 1;
 
@@ -805,7 +918,67 @@ sub test_schema {
            'Foreign key detected');
     }
 
-    $self->{extra}->{run}->($conn, $monikers, $classes) if $self->{extra}->{run};
+    $self->test_data_types($conn);
+
+    # run extra tests
+    $self->{extra}{run}->($conn, $monikers, $classes) if $self->{extra}{run};
+
+    $self->drop_tables unless $ENV{SCHEMA_LOADER_TESTS_NOCLEANUP};
+
+    $conn->storage->disconnect;
+}
+
+sub test_data_types {
+    my ($self, $conn) = @_;
+
+    if ($self->{data_type_tests}{test_count}) {
+        my $data_type_tests = $self->{data_type_tests};
+        my $columns = $data_type_tests->{columns};
+
+        my $rsrc = $conn->resultset($data_type_tests->{table_moniker})->result_source;
+
+        while (my ($col_name, $expected_info) = each %$columns) {
+            my %info = %{ $rsrc->column_info($col_name) };
+            delete @info{qw/is_nullable timezone locale sequence/};
+
+            my $text_col_def = do {
+                my $dd = Dumper;
+                $dd->Indent(0);
+                $dd->Values([\%info]);
+                $dd->Dump;
+            };
+
+            my $text_expected_info = do {
+                my $dd = Dumper;
+                $dd->Indent(0);
+                $dd->Values([$expected_info]);
+                $dd->Dump;
+            };
+
+            is_deeply \%info, $expected_info,
+                "test column $col_name has definition: $text_col_def expecting: $text_expected_info";
+        }
+    }
+}
+
+sub monikers_and_classes {
+    my ($self, $schema_class) = @_;
+    my ($monikers, $classes);
+
+    foreach my $source_name ($schema_class->sources) {
+        my $table_name = $schema_class->source($source_name)->from;
+
+        $table_name = $$table_name if ref $table_name;
+
+        $monikers->{$table_name} = $source_name;
+        $classes->{$table_name} = $schema_class . q{::} . $source_name;
+
+        # some DBs (Firebird) uppercase everything
+        $monikers->{lc $table_name} = $source_name;
+        $classes->{lc $table_name} = $schema_class . q{::} . $source_name;
+    }
+
+    return ($monikers, $classes);
 }
 
 sub check_no_duplicate_unique_constraints {
@@ -824,17 +997,26 @@ sub check_no_duplicate_unique_constraints {
 sub dbconnect {
     my ($self, $complain) = @_;
 
-    my $dbh = DBI->connect(
-         $self->{dsn}, $self->{user},
-         $self->{password},
-         {
-             RaiseError => $complain,
-             PrintError => $complain,
-             AutoCommit => 1,
-         }
-    );
+    require DBIx::Class::Storage::DBI;
+    my $storage = DBIx::Class::Storage::DBI->new;
 
-    die "Failed to connect to database: $DBI::errstr" if !$dbh;
+    $complain = defined $complain ? $complain : 1;
+
+    $storage->connect_info([
+        @{ $self }{qw/dsn user password/},
+        {
+            unsafe => 1,
+            RaiseError => $complain,
+            ShowErrorStatement => $complain,
+            PrintError => 0,
+            %{ $self->{connect_info_opts} || {} },
+        },
+    ]);
+
+    my $dbh = eval { $storage->dbh };
+    die "Failed to connect to database: $@" if !$dbh;
+
+    $self->{storage} = $storage; # storage DESTROY disconnects
 
     return $dbh;
 }
@@ -874,7 +1056,7 @@ sub create {
         q{ INSERT INTO loader_test2 (dat, dat2) VALUES('ddd', 'www') }, 
 
         qq{
-            CREATE TABLE LOADER_TEST23 (
+            CREATE TABLE LOADER_test23 (
                 ID INTEGER NOT NULL PRIMARY KEY,
                 DAT VARCHAR(32) NOT NULL UNIQUE
             ) $self->{innodb}
@@ -900,7 +1082,7 @@ sub create {
         qq{
             CREATE TABLE loader_test36 (
                 id INTEGER NOT NULL PRIMARY KEY,
-                a_date DATE,
+                a_date $self->{date_datatype},
                 b_char_as_data VARCHAR(100),
                 c_char_as_data VARCHAR(100)
             ) $self->{innodb}
@@ -939,7 +1121,11 @@ sub create {
                 id1 INTEGER NOT NULL,
                 iD2 INTEGER NOT NULL,
                 dat VARCHAR(8),
-                PRIMARY KEY (id1,iD2)
+                from_id INTEGER $self->{null},
+                to_id INTEGER $self->{null},
+                PRIMARY KEY (id1,iD2),
+                FOREIGN KEY (from_id) REFERENCES loader_test4 (id),
+                FOREIGN KEY (to_id) REFERENCES loader_test4 (id)
             ) $self->{innodb}
         },
 
@@ -1260,6 +1446,7 @@ sub create {
     );
 
     $self->drop_tables;
+    $self->drop_tables; # twice for good measure
 
     my $dbh = $self->dbconnect(1);
 
@@ -1270,6 +1457,9 @@ sub create {
     };
 
     $dbh->do($_) for (@statements);
+
+    $dbh->do($self->{data_type_tests}{ddl}) if $self->{data_type_tests}{ddl};
+
     unless($self->{skip_rels}) {
         # hack for now, since DB2 doesn't like inline comments, and we need
         # to test one for mysql, which works on everyone else...
@@ -1299,7 +1489,7 @@ sub drop_tables {
     my @tables = qw/
         loader_test1s
         loader_test2
-        LOADER_TEST23
+        LOADER_test23
         LoAdEr_test24
         loader_test35
         loader_test36
@@ -1366,7 +1556,8 @@ sub drop_tables {
 
     my $dbh = $self->dbconnect(0);
 
-    $dbh->do("DROP TABLE $_") for @{ $self->{extra}->{drop} || [] };
+    $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
+    $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
 
     my $drop_auto_inc = $self->{auto_inc_drop_cb} || sub {};
 
@@ -1378,8 +1569,8 @@ sub drop_tables {
         else {
             $dbh->do($drop_fk);
         }
-        $dbh->do("DROP TABLE $_") for (@tables_advanced);
         $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_advanced_auto_inc;
+        $dbh->do("DROP TABLE $_") for (@tables_advanced);
 
         unless($self->{no_inline_rels}) {
             $dbh->do("DROP TABLE $_") for (@tables_inline_rels);
@@ -1388,9 +1579,104 @@ sub drop_tables {
             $dbh->do("DROP TABLE $_") for (@tables_implicit_rels);
         }
     }
-    $dbh->do("DROP TABLE $_") for (@tables, @tables_rescan);
     $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_auto_inc;
+    $dbh->do("DROP TABLE $_") for (@tables, @tables_rescan);
+
+    if (my $data_type_table = $self->{data_type_tests}{table_name}) {
+        $dbh->do("DROP TABLE $data_type_table");
+    }
+
     $dbh->disconnect;
+
+# fixup for Firebird
+    $dbh = $self->dbconnect(0);
+    $dbh->do('DROP TABLE loader_test2');
+    $dbh->disconnect;
+}
+
+sub _custom_column_info {
+    my ( $table_name, $column_name, $column_info ) = @_;
+
+    $table_name = lc ( $table_name );
+    $column_name = lc ( $column_name );
+
+    if ( $table_name eq 'loader_test35' 
+        and $column_name eq 'an_int' 
+    ){
+        return { is_numeric => 1 }
+    }
+    # Set inflate_datetime or  inflate_date to check 
+    #   datetime_timezone and datetime_locale
+    if ( $table_name eq 'loader_test36' ){
+        return { inflate_datetime => 1 } if 
+            ( $column_name eq 'b_char_as_data' );
+        return { inflate_date => 1 } if 
+            ( $column_name eq 'c_char_as_data' );
+    }
+
+    return;
+}
+
+sub setup_data_type_tests {
+    my $self = shift;
+
+    return unless my $types = $self->{data_types};
+
+    my $tests = $self->{data_type_tests} = {};
+    my $cols  = $tests->{columns}        = {};
+
+    $tests->{table_name}    = 'loader_test9999';
+    $tests->{table_moniker} = 'LoaderTest9999';
+
+    my $ddl = "CREATE TABLE loader_test9999 (\n    id INTEGER NOT NULL PRIMARY KEY,\n";
+
+    my $test_count = 0;
+
+    my %seen_col_names;
+
+    while (my ($col_def, $expected_info) = each %$types) {
+        (my $type_alias = lc($col_def)) =~ s/\( ([^)]+) \)//xg;
+
+        my $size = $1;
+        $size = '' unless defined $size;
+        $size =~ s/\s+//g;
+        my @size = split /,/, $size;
+
+        # some DBs don't like very long column names
+        if ($self->{vendor} =~ /^firebird|sqlanywhere\z/i) {
+            my ($col_def, $default) = $type_alias =~ /^(.*)(default.*)?\z/i;
+
+            $type_alias = substr $col_def, 0, 15;
+
+            $type_alias .= '_with_dflt' if $default;
+        }
+
+        $type_alias =~ s/\s/_/g;
+        $type_alias =~ s/\W//g;
+
+        my $col_name = 'col_' . $type_alias;
+        
+        if (@size) {
+            my $size_name = join '_', apply { s/\W//g } @size;
+
+            $col_name .= "_sz_$size_name";
+        }
+
+        $col_name .= "_$seen_col_names{$col_name}" if $seen_col_names{$col_name}++;
+
+        $ddl .= "    $col_name $col_def,\n";
+
+        $cols->{$col_name} = $expected_info;
+
+        $test_count++;
+    }
+
+    $ddl =~ s/,\n\z/\n)/;
+
+    $tests->{ddl}        = $ddl;
+    $tests->{test_count} = $test_count;
+
+    return $test_count;
 }
 
 sub DESTROY {
@@ -1402,3 +1688,4 @@ sub DESTROY {
 }
 
 1;
+# vim:et sts=4 sw=4 tw=0:

@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.05003';
+our $VERSION = '0.06000';
 
 =head1 NAME
 
@@ -28,9 +28,9 @@ See L<DBIx::Class::Schema::Loader::Base>.
 =cut
 
 sub _tables_list { 
-    my $self = shift;
+    my ($self, $opts) = @_;
 
-    return $self->next::method(undef, undef);
+    return $self->next::method($opts, undef, undef);
 }
 
 sub _table_fk_info {
@@ -115,22 +115,74 @@ sub _table_uniq_info {
     return \@uniqs;
 }
 
+sub _columns_info_for {
+    my $self = shift;
+    my ($table) = @_;
+
+    my $result = $self->next::method(@_);
+
+    my $dbh = $self->schema->storage->dbh;
+
+    while (my ($col, $info) = each %$result) {
+        delete $info->{size}
+            unless $info->{data_type} =~ /^(?: (?:var)?(?:char(?:acter)?|binary) | bit | year)\z/ix;
+
+        if ($info->{data_type} eq 'int') {
+            $info->{data_type} = 'integer';
+        }
+        elsif ($info->{data_type} eq 'double') {
+            $info->{data_type} = 'double precision';
+        }
+
+        my ($precision, $scale, $column_type) = eval { $dbh->selectrow_array(<<'EOF', {}, lc $table, lc $col) };
+SELECT numeric_precision, numeric_scale, column_type
+FROM information_schema.columns
+WHERE lower(table_name) = ? AND lower(column_name) = ?
+EOF
+        $column_type = '' if not defined $column_type;
+
+        if ($info->{data_type} eq 'bit' && (not exists $info->{size})) {
+            $info->{size} = $precision if defined $precision;
+        }
+        elsif ($info->{data_type} =~ /^(?:float|double precision|decimal)\z/) {
+            if (defined $precision && defined $scale) {
+                if ($precision == 10 && $scale == 0) {
+                    delete $info->{size};
+                }
+                else {
+                    $info->{size} = [$precision,$scale];
+                }
+            }
+        }
+        elsif ($info->{data_type} eq 'year') {
+            if ($column_type =~ /\(2\)/) {
+                $info->{size} = 2;
+            }
+            elsif ($column_type =~ /\(4\)/ || $info->{size} == 4) {
+                delete $info->{size};
+            }
+        }
+    }
+
+    return $result;
+}
+
 sub _extra_column_info {
     no warnings 'uninitialized';
-    my ($self, $info) = @_;
+    my ($self, $table, $col, $info, $dbi_info) = @_;
     my %extra_info;
 
-    if ($info->{mysql_is_auto_increment}) {
+    if ($dbi_info->{mysql_is_auto_increment}) {
         $extra_info{is_auto_increment} = 1
     }
-    if ($info->{mysql_type_name} =~ /\bunsigned\b/i) {
+    if ($dbi_info->{mysql_type_name} =~ /\bunsigned\b/i) {
         $extra_info{extra}{unsigned} = 1;
     }
-    if ($info->{mysql_values}) {
-        $extra_info{extra}{list} = $info->{mysql_values};
+    if ($dbi_info->{mysql_values}) {
+        $extra_info{extra}{list} = $dbi_info->{mysql_values};
     }
-    if (   $info->{COLUMN_DEF}      =~ /^CURRENT_TIMESTAMP\z/i
-        && $info->{mysql_type_name} =~ /^TIMESTAMP\z/i) {
+    if (   $dbi_info->{COLUMN_DEF}      =~ /^CURRENT_TIMESTAMP\z/i
+        && $dbi_info->{mysql_type_name} =~ /^TIMESTAMP\z/i) {
 
         $extra_info{default_value} = \'CURRENT_TIMESTAMP';
     }
@@ -155,3 +207,4 @@ the same terms as Perl itself.
 =cut
 
 1;
+# vim:et sw=4 sts=4 tw=0:

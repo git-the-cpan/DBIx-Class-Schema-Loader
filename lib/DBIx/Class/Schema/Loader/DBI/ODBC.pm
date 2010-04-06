@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.05003';
+our $VERSION = '0.06000';
 
 =head1 NAME
 
@@ -42,15 +42,16 @@ sub _rebless {
 }
 
 sub _tables_list { 
-    my $self = shift;
+    my ($self, $opts) = @_;
 
-    return $self->next::method(undef, undef);
+    return $self->next::method($opts, undef, undef);
 }
 
 =head1 SEE ALSO
 
 L<DBIx::Class::Schema::Loader::DBI::ODBC::Microsoft_SQL_Server>,
-L<DBIx::Class::Schema::Loader::DBI::MSSQL>,
+L<DBIx::Class::Schema::Loader::DBI::ODBC::SQL_Anywhere>,
+L<DBIx::Class::Schema::Loader::DBI::ODBC::Firebird>,
 L<DBIx::Class::Schema::Loader>, L<DBIx::Class::Schema::Loader::Base>,
 L<DBIx::Class::Schema::Loader::DBI>
 

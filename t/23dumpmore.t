@@ -1,12 +1,15 @@
 use strict;
 use Test::More;
-use lib qw(t/lib);
 use File::Path;
 use IPC::Open3;
-use make_dbictest_db;
-require DBIx::Class::Schema::Loader;
+use Data::Dumper::Concise;
+use DBIx::Class::Schema::Loader ();
+use File::Temp 'tempfile';
+use lib qw(t/lib);
 
 my $DUMP_PATH = './t/_dump';
+
+my $TEST_DB_CLASS = 'make_dbictest_db';
 
 sub dump_directly {
     my %tdata = @_;
@@ -20,7 +23,7 @@ sub dump_directly {
     my @warns;
     eval {
         local $SIG{__WARN__} = sub { push(@warns, @_) };
-        $schema_class->connect($make_dbictest_db::dsn);
+        $schema_class->connect(get_dsn(\%tdata));
     };
     my $err = $@;
     $schema_class->storage->disconnect if !$err && $schema_class->storage;
@@ -38,10 +41,11 @@ sub dump_dbicdump {
     my @cmd = ($^X, qw(./script/dbicdump));
 
     while (my ($opt, $val) = each(%{ $tdata{options} })) {
+        $val = Dumper($val) if ref $val;
         push @cmd, '-o', "$opt=$val";
     }
 
-    push @cmd, $tdata{classname}, $make_dbictest_db::dsn;
+    push @cmd, $tdata{classname}, get_dsn(\%tdata);
 
     # make sure our current @INC gets used by dbicdump
     use Config;
@@ -64,6 +68,22 @@ sub dump_dbicdump {
     }
 
     return @warns;
+}
+
+sub get_dsn {
+    my $opts = shift;
+
+    my $test_db_class = $opts->{test_db_class} || $TEST_DB_CLASS;
+
+    eval "require $test_db_class;";
+    die $@ if $@;
+
+    my $dsn = do {
+        no strict 'refs';
+        ${$test_db_class . '::dsn'};
+    };
+
+    return $dsn;
 }
 
 sub check_error {
@@ -109,7 +129,9 @@ sub test_dumps {
     
     my $schema_path = $DUMP_PATH . '/' . $schema_class;
     $schema_path =~ s{::}{/}g;
-    dump_file_like($schema_path . '.pm', @$schema_regexes);
+
+    dump_file_like($schema_path . '.pm', @$schema_regexes) if $schema_regexes;
+
     foreach my $src (keys %$file_regexes) {
         my $src_file = $schema_path . '/' . $src . '.pm';
         dump_file_like($src_file, @{$file_regexes->{$src}});
@@ -152,8 +174,6 @@ rmtree($DUMP_PATH, 1, 1);
 # test loading external content
 do_dump_test(
     classname => 'DBICTest::Schema::13',
-    options => { },
-    error => '',
     warnings => [
         qr/Dumping manual schema for DBICTest::Schema::13 to directory /,
         qr/Schema dump completed/,
@@ -169,7 +189,6 @@ qr/package DBICTest::Schema::13::Foo;\nour \$skip_me = "bad mojo";\n1;/
 do_dump_test(
     classname => 'DBICTest::Schema::14',
     options => { skip_load_external => 1 },
-    error => '',
     warnings => [
         qr/Dumping manual schema for DBICTest::Schema::14 to directory /,
         qr/Schema dump completed/,
@@ -183,12 +202,51 @@ qr/package DBICTest::Schema::14::Foo;\nour \$skip_me = "bad mojo";\n1;/
 
 rmtree($DUMP_PATH, 1, 1);
 
+# test config_file
+
+my ($fh, $config_file) = tempfile;
+
+print $fh <<'EOF';
+{ skip_relationships => 1 }
+EOF
+close $fh;
+
+do_dump_test(
+    classname => 'DBICTest::Schema::14',
+    options => { config_file => $config_file },
+    warnings => [
+        qr/Dumping manual schema for DBICTest::Schema::14 to directory /,
+        qr/Schema dump completed/,
+    ],
+    neg_regexes => {
+        Foo => [
+            qr/has_many/,
+        ],
+    },
+);
+
+unlink $config_file;
+
+rmtree($DUMP_PATH, 1, 1);
+
+do_dump_test(
+    classname => 'DBICTest::Schema::14',
+    test_db_class => 'make_dbictest_db_clashing_monikers',
+    error => qr/tables 'bar', 'bars' reduced to the same source moniker 'Bar'/,
+);
+
+rmtree($DUMP_PATH, 1, 1);
+
 # test out the POD
 
 do_dump_test(
     classname => 'DBICTest::DumpMore::1',
-    options => { },
-    error => '',
+    options => {
+        custom_column_info => sub {
+            my ($table, $col, $info) = @_;
+            return +{ extra => { is_footext => 1 } } if $col eq 'footext';
+        }
+    },
     warnings => [
         qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
         qr/Schema dump completed/,
@@ -202,8 +260,8 @@ do_dump_test(
 qr/package DBICTest::DumpMore::1::Foo;/,
 qr/=head1 NAME\n\nDBICTest::DumpMore::1::Foo\n\n=cut\n\n/,
 qr/=head1 ACCESSORS\n\n/,
-qr/=head2 fooid\n\n  data_type: INTEGER\n  default_value: undef\n  is_nullable: 1\n  size: undef\n\n/,
-qr/=head2 footext\n\n  data_type: TEXT\n  default_value: undef\n  is_nullable: 1\n  size: undef\n\n/,
+qr/=head2 fooid\n\n  data_type: 'integer'\n  is_nullable: 1\n\n/,
+qr/=head2 footext\n\n  data_type: 'text'\n  default_value: 'footext'\n  extra: {is_footext => 1}\n  is_nullable: 1\n\n/,
 qr/->set_primary_key/,
 qr/=head1 RELATIONS\n\n/,
 qr/=head2 bars\n\nType: has_many\n\nRelated object: L<DBICTest::DumpMore::1::Bar>\n\n=cut\n\n/,
@@ -213,8 +271,8 @@ qr/1;\n$/,
 qr/package DBICTest::DumpMore::1::Bar;/,
 qr/=head1 NAME\n\nDBICTest::DumpMore::1::Bar\n\n=cut\n\n/,
 qr/=head1 ACCESSORS\n\n/,
-qr/=head2 barid\n\n  data_type: INTEGER\n  default_value: undef\n  is_nullable: 1\n  size: undef\n\n/,
-qr/=head2 fooref\n\n  data_type: INTEGER\n  default_value: undef\n  is_foreign_key: 1\n  is_nullable: 1\n  size: undef\n\n/,
+qr/=head2 barid\n\n  data_type: 'integer'\n  is_nullable: 1\n\n/,
+qr/=head2 fooref\n\n  data_type: 'integer'\n  is_foreign_key: 1\n  is_nullable: 1\n\n/,
 qr/->set_primary_key/,
 qr/=head1 RELATIONS\n\n/,
 qr/=head2 fooref\n\nType: belongs_to\n\nRelated object: L<DBICTest::DumpMore::1::Foo>\n\n=cut\n\n/,
@@ -227,8 +285,6 @@ append_to_class('DBICTest::DumpMore::1::Foo',q{# XXX This is my custom content X
 
 do_dump_test(
     classname => 'DBICTest::DumpMore::1',
-    options => { },
-    error => '',
     warnings => [
         qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
         qr/Schema dump completed/,
@@ -254,7 +310,6 @@ do_dump_test(
 do_dump_test(
     classname => 'DBICTest::DumpMore::1',
     options => { really_erase_my_files => 1 },
-    error => '',
     warnings => [
         qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
         qr/Deleting existing file /,
@@ -285,10 +340,11 @@ do_dump_test(
     },
 );
 
+rmtree($DUMP_PATH, 1, 1);
+
 do_dump_test(
     classname => 'DBICTest::DumpMore::1',
     options => { use_namespaces => 1, generate_pod => 0 },
-    error => '',
     warnings => [
         qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
         qr/Schema dump completed/,
@@ -300,10 +356,11 @@ do_dump_test(
     },
 );
 
+rmtree($DUMP_PATH, 1, 1);
+
 do_dump_test(
     classname => 'DBICTest::DumpMore::1',
     options => { use_namespaces => 1 },
-    error => '',
     warnings => [
         qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
         qr/Schema dump completed/,
@@ -326,6 +383,8 @@ do_dump_test(
     },
 );
 
+rmtree($DUMP_PATH, 1, 1);
+
 do_dump_test(
     classname => 'DBICTest::DumpMore::1',
     options => { use_namespaces => 1,
@@ -333,7 +392,6 @@ do_dump_test(
                  resultset_namespace => 'RSet',
                  default_resultset_class => 'RSetBase',
              },
-    error => '',
     warnings => [
         qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
         qr/Schema dump completed/,
@@ -359,6 +417,8 @@ do_dump_test(
     },
 );
 
+rmtree($DUMP_PATH, 1, 1);
+
 do_dump_test(
     classname => 'DBICTest::DumpMore::1',
     options => { use_namespaces => 1,
@@ -368,7 +428,6 @@ do_dump_test(
                  result_base_class => 'My::ResultBaseClass',
                  schema_base_class => 'My::SchemaBaseClass',
              },
-    error => '',
     warnings => [
         qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
         qr/Schema dump completed/,
@@ -396,6 +455,8 @@ do_dump_test(
         ],
     },
 );
+
+rmtree($DUMP_PATH, 1, 1);
 
 do_dump_test(
     classname => 'DBICTest::DumpMore::1',

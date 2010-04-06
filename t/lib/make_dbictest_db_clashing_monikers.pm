@@ -1,4 +1,4 @@
-package make_dbictest_db;
+package make_dbictest_db_clashing_monikers;
 
 use strict;
 use warnings;
@@ -7,7 +7,7 @@ use DBI;
 eval { require DBD::SQLite };
 my $class = $@ ? 'SQLite2' : 'SQLite';
 
-my $fn = './t/dbictest.db';
+my $fn = './t/dbictest_clashing_tables.db';
 
 unlink($fn);
 our $dsn = "dbi:$class:dbname=$fn";
@@ -20,6 +20,11 @@ $dbh->do($_) for (
         foodt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )|,
     q|CREATE TABLE bar (
+        barid INTEGER PRIMARY KEY,
+        fooref INTEGER REFERENCES foo(fooid)
+      )|,
+# this will cause a singularized moniker clash
+    q|CREATE TABLE bars (
         barid INTEGER PRIMARY KEY,
         fooref INTEGER REFERENCES foo(fooid)
       )|,

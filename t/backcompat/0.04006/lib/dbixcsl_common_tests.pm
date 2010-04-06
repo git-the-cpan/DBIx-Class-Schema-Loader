@@ -43,7 +43,7 @@ sub _monikerize {
 sub run_tests {
     my $self = shift;
 
-    plan tests => 89;
+    plan tests => 101;
 
     $self->create();
 
@@ -255,7 +255,7 @@ sub run_tests {
     is( $obj2->id, 2 );
 
     SKIP: {
-        skip $self->{skip_rels}, 50 if $self->{skip_rels};
+        skip $self->{skip_rels}, 63 if $self->{skip_rels};
 
         my $moniker3 = $monikers->{loader_test3};
         my $class3   = $classes->{loader_test3};
@@ -345,6 +345,45 @@ sub run_tests {
         my $obj3 = $rsobj3->find(1);
         my $rs_rel4 = $obj3->search_related('loader_test4zes');
         isa_ok( $rs_rel4->first, $class4);
+
+        # test that _id is not stripped and prepositions in rel names are
+        # ignored
+        ok ($rsobj4->result_source->has_relationship('loader_test5_to_ids'),
+            "rel with preposition 'to' and _id pluralized backward-compatibly");
+
+        ok ($rsobj4->result_source->has_relationship('loader_test5_from_ids'),
+            "rel with preposition 'from' and _id pluralized backward-compatibly");
+
+        # check that default relationship attributes are not applied in 0.04006 mode
+        is $rsobj3->result_source->relationship_info('loader_test4zes')->{attrs}{cascade_delete}, 1,
+            'cascade_delete => 1 on has_many by default';
+
+        is $rsobj3->result_source->relationship_info('loader_test4zes')->{attrs}{cascade_copy}, 1,
+            'cascade_copy => 1 on has_many by default';
+
+        ok ((not exists $rsobj3->result_source->relationship_info('loader_test4zes')->{attrs}{on_delete}),
+            'has_many does not have on_delete');
+
+        ok ((not exists $rsobj3->result_source->relationship_info('loader_test4zes')->{attrs}{on_update}),
+            'has_many does not have on_update');
+
+        ok ((not exists $rsobj3->result_source->relationship_info('loader_test4zes')->{attrs}{is_deferrable}),
+            'has_many does not have is_deferrable');
+
+        isnt $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{on_delete}, 'CASCADE',
+            "on_delete => 'CASCADE' not on belongs_to by default";
+
+        isnt $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{on_update}, 'CASCADE',
+            "on_update => 'CASCADE' not on belongs_to by default";
+
+        isnt $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{is_deferrable}, 1,
+            "is_deferrable => 1 not on belongs_to by default";
+
+        ok ((not exists $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{cascade_delete}),
+            'belongs_to does not have cascade_delete');
+
+        ok ((not exists $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{cascade_copy}),
+            'belongs_to does not have cascade_copy');
 
         # find on multi-col pk
         my $obj5 = $rsobj5->find({id1 => 1, id2 => 1});
@@ -624,7 +663,11 @@ sub create {
                 id1 INTEGER NOT NULL,
                 iD2 INTEGER NOT NULL,
                 dat VARCHAR(8),
-                PRIMARY KEY (id1,id2)
+                from_id INTEGER,
+                to_id INTEGER,
+                PRIMARY KEY (id1,id2),
+                FOREIGN KEY (from_id) REFERENCES loader_test4 (id),
+                FOREIGN KEY (to_id) REFERENCES loader_test4 (id)
             ) $self->{innodb}
         },
 

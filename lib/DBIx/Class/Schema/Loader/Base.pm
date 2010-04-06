@@ -3,6 +3,7 @@ package DBIx::Class::Schema::Loader::Base;
 use strict;
 use warnings;
 use base qw/Class::Accessor::Grouped Class::C3::Componentised/;
+use namespace::autoclean;
 use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
 use DBIx::Class::Schema::Loader::RelBuilder;
@@ -12,12 +13,16 @@ use File::Spec qw//;
 use Cwd qw//;
 use Digest::MD5 qw//;
 use Lingua::EN::Inflect::Number qw//;
+use Lingua::EN::Inflect::Phrase qw//;
 use File::Temp qw//;
 use Class::Unload;
 use Class::Inspector ();
+use Data::Dumper::Concise;
+use Scalar::Util 'looks_like_number';
+use File::Slurp 'slurp';
 require DBIx::Class;
 
-our $VERSION = '0.05003';
+our $VERSION = '0.06000';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -57,6 +62,8 @@ __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 naming
                                 datetime_timezone
                                 datetime_locale
+                                config_file
+                                loader_class
 /);
 
 
@@ -104,15 +111,15 @@ with the same name found in @INC into the schema file we are creating.
 
 =head2 naming
 
-Static schemas (ones dumped to disk) will, by default, use the new-style 0.05XXX
+Static schemas (ones dumped to disk) will, by default, use the new-style
 relationship names and singularized Results, unless you're overwriting an
-existing dump made by a 0.04XXX version of L<DBIx::Class::Schema::Loader>, in
-which case the backward compatible RelBuilder will be activated, and
-singularization will be turned off.
+existing dump made by an older version of L<DBIx::Class::Schema::Loader>, in
+which case the backward compatible RelBuilder will be activated, and the
+appropriate monikerization used.
 
 Specifying
 
-    naming => 'v5'
+    naming => 'current'
 
 will disable the backward-compatible RelBuilder and use
 the new-style relationship names along with singularized Results, even when
@@ -120,7 +127,7 @@ overwriting a dump made with an earlier version.
 
 The option also takes a hashref:
 
-    naming => { relationships => 'v5', monikers => 'v4' }
+    naming => { relationships => 'v6', monikers => 'v6' }
 
 The keys are:
 
@@ -142,15 +149,26 @@ The values can be:
 
 =item current
 
-Latest default style, whatever that happens to be.
-
-=item v5
-
-Version 0.05XXX style.
+Latest style, whatever that happens to be.
 
 =item v4
 
-Version 0.04XXX style.
+Unsingularlized monikers, C<has_many> only relationships with no _id stripping.
+
+=item v5
+
+Monikers singularized as whole words, C<might_have> relationships for FKs on
+C<UNIQUE> constraints, C<_id> stripping for belongs_to relationships.
+
+Some of the C<_id> stripping edge cases in C<0.05003> have been reverted for
+the v5 RelBuilder.
+
+=item v6
+
+All monikers and relationships inflected using L<Lingua::EN::Inflect::Phrase>,
+more aggressive C<_id> stripping from relationships.
+
+In general, there is very little difference between v5 and v6 schemas.
 
 =back
 
@@ -414,6 +432,11 @@ columns with the DATE/DATETIME/TIMESTAMP data_types.
 Sets the locale attribute for L<DBIx::Class::InflateColumn::DateTime> for all
 columns with the DATE/DATETIME/TIMESTAMP data_types.
 
+=head1 config_file
+
+File in Perl format, which should return a HASH reference, from which to read
+loader options.
+
 =head1 METHODS
 
 None of these methods are intended for direct invocation by regular
@@ -422,9 +445,9 @@ L<DBIx::Class::Schema::Loader>.
 
 =cut
 
-use constant CURRENT_V  => 'v5';
+my $CURRENT_V = 'v6';
 
-use constant CLASS_ARGS => qw(
+my @CLASS_ARGS = qw(
     schema_base_class result_base_class additional_base_classes
     left_base_classes additional_classes components resultset_components
 );
@@ -454,6 +477,18 @@ sub new {
     my $self = { %args };
 
     bless $self => $class;
+
+    if (my $config_file = $self->config_file) {
+        my $config_opts = do $config_file;
+
+        croak "Error reading config from $config_file: $@" if $@;
+
+        croak "Config file $config_file must be a hashref" unless ref($config_opts) eq 'HASH';
+
+        while (my ($k, $v) = each %$config_opts) {
+            $self->{$k} = $v unless exists $self->{$k};
+        }
+    }
 
     $self->_ensure_arrayref(qw/additional_classes
                                additional_base_classes
@@ -499,7 +534,7 @@ sub new {
 
     if ($self->naming) {
         for (values %{ $self->naming }) {
-            $_ = CURRENT_V if $_ eq 'current';
+            $_ = $CURRENT_V if $_ eq 'current';
         }
     }
     $self->{naming} ||= {};
@@ -613,7 +648,7 @@ EOF
             my ($v) = $real_ver =~ /([1-9])/;
             $v = "v$v";
 
-            last if $v eq CURRENT_V || $real_ver =~ /^0\.\d\d999/;
+            last if $v eq $CURRENT_V || $real_ver =~ /^0\.\d\d999/;
 
             if (not %{ $self->naming }) {
                 warn <<"EOF" unless $ENV{SCHEMA_LOADER_BACKCOMPAT};
@@ -623,8 +658,8 @@ Version $real_ver static schema detected, turning on backcompat mode.
 Set the 'naming' attribute or the SCHEMA_LOADER_BACKCOMPAT environment variable
 to disable this warning.
 
-See perldoc DBIx::Class::Schema::Loader::Manual::UpgradingFromV4 for more
-details.
+See perldoc DBIx::Class::Schema::Loader::Manual::UpgradingFromV4 if upgrading
+from version 0.04006.
 EOF
             }
             else {
@@ -647,7 +682,7 @@ sub _validate_class_args {
     my $self = shift;
     my $args = shift;
     
-    foreach my $k (CLASS_ARGS) {
+    foreach my $k (@CLASS_ARGS) {
         next unless $self->$k;
 
         my @classes = ref $self->$k eq 'ARRAY' ? @{ $self->$k } : $self->$k;
@@ -794,9 +829,7 @@ sub _load_external {
 # upgrade. See skip_load_external to disable this feature.
 EOF
 
-        my $code = do {
-            local ($/, @ARGV) = (undef, $old_real_inc_path); <>
-        };
+        my $code = slurp $old_real_inc_path;
         $code = $self->_rewrite_old_classnames($code);
 
         if ($self->dynamic) {
@@ -835,7 +868,9 @@ Does the actual schema-construction work.
 sub load {
     my $self = shift;
 
-    $self->_load_tables($self->_tables_list);
+    $self->_load_tables(
+        $self->_tables_list({ constraint => $self->constraint, exclude => $self->exclude })
+    );
 }
 
 =head2 rescan
@@ -860,8 +895,8 @@ sub rescan {
     $self->_relbuilder->{schema} = $schema;
 
     my @created;
-    my @current = $self->_tables_list;
-    foreach my $table ($self->_tables_list) {
+    my @current = $self->_tables_list({ constraint => $self->constraint, exclude => $self->exclude });
+    foreach my $table (@current) {
         if(!exists $self->{_tables}->{$table}) {
             push(@created, $table);
         }
@@ -885,26 +920,26 @@ sub _relbuilder {
                 $self->schema, $self->inflect_plural, $self->inflect_singular
             );
     }
+    elsif ($self->naming->{relationships} eq 'v5') {
+        require DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_05;
+        return $self->{relbuilder} ||= DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_05->new (
+             $self->schema,
+             $self->inflect_plural,
+             $self->inflect_singular,
+             $self->relationship_attrs,
+        );
+    }
 
-    $self->{relbuilder} ||= DBIx::Class::Schema::Loader::RelBuilder->new (
-	 $self->schema,
-	 $self->inflect_plural,
-	 $self->inflect_singular,
-	 $self->relationship_attrs,
+    return $self->{relbuilder} ||= DBIx::Class::Schema::Loader::RelBuilder->new (
+             $self->schema,
+             $self->inflect_plural,
+             $self->inflect_singular,
+             $self->relationship_attrs,
     );
 }
 
 sub _load_tables {
     my ($self, @tables) = @_;
-
-    # First, use _tables_list with constraint and exclude
-    #  to get a list of tables to operate on
-
-    my $constraint   = $self->constraint;
-    my $exclude      = $self->exclude;
-
-    @tables = grep { /$constraint/ } @tables if $constraint;
-    @tables = grep { ! /$exclude/ } @tables if $exclude;
 
     # Save the new tables to the tables list
     foreach (@tables) {
@@ -912,6 +947,33 @@ sub _load_tables {
     }
 
     $self->_make_src_class($_) for @tables;
+
+    # sanity-check for moniker clashes
+    my $inverse_moniker_idx;
+    for (keys %{$self->monikers}) {
+      push @{$inverse_moniker_idx->{$self->monikers->{$_}}}, $_;
+    }
+
+    my @clashes;
+    for (keys %$inverse_moniker_idx) {
+      my $tables = $inverse_moniker_idx->{$_};
+      if (@$tables > 1) {
+        push @clashes, sprintf ("tables %s reduced to the same source moniker '%s'",
+          join (', ', map { "'$_'" } @$tables),
+          $_,
+        );
+      }
+    }
+
+    if (@clashes) {
+      die   'Unable to load schema - chosen moniker/class naming style results in moniker clashes. '
+          . 'Either change the naming style, or supply an explicit moniker_map: '
+          . join ('; ', @clashes)
+          . "\n"
+      ;
+    }
+
+
     $self->_setup_src_meta($_) for @tables;
 
     if(!$self->skip_relationships) {
@@ -1048,9 +1110,12 @@ sub _dump_to_dir {
     if ($self->use_namespaces) {
         $schema_text .= qq|__PACKAGE__->load_namespaces|;
         my $namespace_options;
-        for my $attr (qw(result_namespace
-                         resultset_namespace
-                         default_resultset_class)) {
+
+        my @attr = qw/resultset_namespace default_resultset_class/;
+
+        unshift @attr, 'result_namespace' unless (not $self->result_namespace) || $self->result_namespace eq 'Result';
+
+        for my $attr (@attr) {
             if ($self->$attr) {
                 $namespace_options .= qq|    $attr => '| . $self->$attr . qq|',\n|
             }
@@ -1312,11 +1377,13 @@ sub _make_src_class {
             unless $table_class eq $old_class;
     }
 
-    my $table_normalized = lc $table;
+# this was a bad idea, should be ok now without it
+#    my $table_normalized = lc $table;
+#    $self->classes->{$table_normalized} = $table_class;
+#    $self->monikers->{$table_normalized} = $table_moniker;
+
     $self->classes->{$table} = $table_class;
-    $self->classes->{$table_normalized} = $table_class;
     $self->monikers->{$table} = $table_moniker;
-    $self->monikers->{$table_normalized} = $table_moniker;
 
     $self->_use   ($table_class, @{$self->additional_classes});
     $self->_inject($table_class, @{$self->left_base_classes});
@@ -1350,34 +1417,28 @@ sub _setup_src_meta {
     $self->_dbic_stmt($table_class,'table',$table_name);
 
     my $cols = $self->_table_columns($table);
-    my $col_info;
-    eval { $col_info = $self->__columns_info_for($table) };
-    if($@) {
-        $self->_dbic_stmt($table_class,'add_columns',@$cols);
-    }
-    else {
-        if ($self->_is_case_sensitive) {
-            for my $col (keys %$col_info) {
-                $col_info->{$col}{accessor} = lc $col
-                    if $col ne lc($col);
-            }
-        } else {
-            $col_info = { map { lc($_), $col_info->{$_} } keys %$col_info };
+    my $col_info = $self->__columns_info_for($table);
+    if ($self->_is_case_sensitive) {
+        for my $col (keys %$col_info) {
+            $col_info->{$col}{accessor} = lc $col
+                if $col ne lc($col);
         }
-
-        my $fks = $self->_table_fk_info($table);
-
-        for my $fkdef (@$fks) {
-            for my $col (@{ $fkdef->{local_columns} }) {
-                $col_info->{$col}{is_foreign_key} = 1;
-            }
-        }
-        $self->_dbic_stmt(
-            $table_class,
-            'add_columns',
-            map { $_, ($col_info->{$_}||{}) } @$cols
-        );
+    } else {
+        $col_info = { map { lc($_), $col_info->{$_} } keys %$col_info };
     }
+
+    my $fks = $self->_table_fk_info($table);
+
+    for my $fkdef (@$fks) {
+        for my $col (@{ $fkdef->{local_columns} }) {
+            $col_info->{$col}{is_foreign_key} = 1;
+        }
+    }
+    $self->_dbic_stmt(
+        $table_class,
+        'add_columns',
+        map { $_, ($col_info->{$_}||{}) } @$cols
+    );
 
     my %uniq_tag; # used to eliminate duplicate uniqs
 
@@ -1431,9 +1492,15 @@ sub _default_table2moniker {
     if ($self->naming->{monikers} eq 'v4') {
         return join '', map ucfirst, split /[\W_]+/, lc $table;
     }
+    elsif ($self->naming->{monikers} eq 'v5') {
+        return join '', map ucfirst, split /[\W_]+/,
+            Lingua::EN::Inflect::Number::to_S(lc $table);
+    }
 
-    return join '', map ucfirst, split /[\W_]+/,
-        Lingua::EN::Inflect::Number::to_S(lc $table);
+    (my $as_phrase = lc $table) =~ s/_+/ /g;
+    my $inflected = Lingua::EN::Inflect::Phrase::to_S($as_phrase);
+
+    return join '', map ucfirst, split /\W+/, $inflected;
 }
 
 sub _table2moniker {
@@ -1550,8 +1617,15 @@ sub _make_pod {
 			     my $s = $attrs->{$_};
 			     $s = !defined $s         ? 'undef'          :
                                   length($s) == 0     ? '(empty string)' :
-                                  ref($s) eq 'SCALAR' ? $$s              :
-                                                        $s
+                                  ref($s) eq 'SCALAR' ? $$s :
+                                  ref($s)             ? do {
+                                                        my $dd = Dumper;
+                                                        $dd->Indent(0);
+                                                        $dd->Values([$s]);
+                                                        $dd->Dump;
+                                                      } :
+                                  looks_like_number($s) ? $s :
+                                                        qq{'$s'}
                                   ;
 
 			     "  $_: $s"
@@ -1673,3 +1747,4 @@ the same terms as Perl itself.
 =cut
 
 1;
+# vim:et sts=4 sw=4 tw=0:

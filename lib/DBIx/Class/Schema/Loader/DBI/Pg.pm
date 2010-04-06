@@ -9,7 +9,7 @@ use base qw/
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.05003';
+our $VERSION = '0.06000';
 
 =head1 NAME
 
@@ -186,28 +186,23 @@ EOF
 
             $result->{$col}{size} = $precision;
         }
-        elsif ($data_type =~ /^(?:numeric|decimal)\z/i) {
-            my $size = $result->{$col}{size};
+        elsif ($data_type =~ /^(?:numeric|decimal)\z/i && (my $size = $result->{$col}{size})) {
             $size =~ s/\s*//g;
 
             my ($scale, $precision) = split /,/, $size;
 
             $result->{$col}{size} = [ $precision, $scale ];
         }
+
+# process SERIAL columns
+        if (ref($result->{$col}{default_value}) eq 'SCALAR' && ${ $result->{$col}{default_value} } =~ /\bnextval\(['"](\w+)/i) {
+            $result->{$col}{is_auto_increment} = 1;
+            $result->{$col}{sequence}          = $1;
+            delete $result->{$col}{default_value};
+        }
     }
 
     return $result;
-}
-
-sub _extra_column_info {
-    my ($self, $info) = @_;
-    my %extra_info;
-
-    if ($info->{COLUMN_DEF} && $info->{COLUMN_DEF} =~ /\bnextval\(/i) {
-        $extra_info{is_auto_increment} = 1;
-    }
-
-    return \%extra_info;
 }
 
 =head1 SEE ALSO

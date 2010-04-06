@@ -9,7 +9,7 @@ use base qw/
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.05003';
+our $VERSION = '0.06000';
 
 =head1 NAME
 
@@ -56,7 +56,7 @@ sub _table_as_sql {
 }
 
 sub _tables_list { 
-    my $self = shift;
+    my ($self, $opts) = @_;
 
     my $dbh = $self->schema->storage->dbh;
 
@@ -73,7 +73,8 @@ sub _tables_list {
         push @tables, $1
           if $table =~ /\A(\w+)\z/;
     }
-    return $self->_filter_tables(@tables);
+
+    return $self->_filter_tables(\@tables, $opts);
 }
 
 sub _table_uniq_info {
@@ -127,10 +128,8 @@ sub _columns_info_for {
 }
 
 sub _extra_column_info {
-    my ($self, $info) = @_;
+    my ($self, $table, $column, $info, $dbi_info) = @_;
     my %extra_info;
-
-    my ($table, $column) = @$info{qw/TABLE_NAME COLUMN_NAME/};
 
     my $dbh = $self->schema->storage->dbh;
     my $sth = $dbh->prepare_cached(

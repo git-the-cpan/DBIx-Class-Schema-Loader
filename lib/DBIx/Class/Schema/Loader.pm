@@ -10,7 +10,7 @@ use Scalar::Util qw/ weaken /;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.05003';
+our $VERSION = '0.06000';
 
 __PACKAGE__->mk_group_accessors('inherited', qw/
                                 _loader_args
@@ -38,7 +38,9 @@ DBIx::Class::Schema::Loader - Dynamic definition of a DBIx::Class::Schema
       { debug => 1,
         dump_directory => './lib',
       },
-      [ 'dbi:Pg:dbname="foo"', 'myuser', 'mypassword' ],
+      [ 'dbi:Pg:dbname="foo"', 'myuser', 'mypassword',
+         { loader_class => 'MyLoader' } # optionally
+      ],
   );
 
   # from the command line or a shell script with dbicdump (distributed
@@ -163,11 +165,15 @@ sub _invoke_loader {
     $args->{use_namespaces} = $self->use_namespaces if $self->use_namespaces;
 
     # XXX this only works for relative storage_type, like ::DBI ...
-    my $impl = $self->loader_class
-      || "DBIx::Class::Schema::Loader" . $self->storage_type;
-    $impl = "DBIx::Class::Schema::Loader${impl}" if $impl =~ /^::/;
+    my $loader_class = $self->loader_class;
+    if ($loader_class) {
+        $loader_class = "DBIx::Class::Schema::Loader${loader_class}" if $loader_class =~ /^::/;
+        $args->{loader_class} = $loader_class;
+    };
+
+    my $impl = $loader_class || "DBIx::Class::Schema::Loader" . $self->storage_type;
     eval { $self->ensure_class_loaded($impl) };
-    croak qq/Could not load storage_type loader "$impl": "$@"/ if $@;
+    croak qq/Could not load loader_class "$impl": "$@"/ if $@;
 
     $self->_loader($impl->new(%$args));
     $self->_loader->load;
@@ -339,6 +345,8 @@ memory at runtime without generating on-disk class files.
 For a complete list of supported loader_options, see
 L<DBIx::Class::Schema::Loader::Base>
 
+The last hashref in the C<\@connect_info> can specify the L</loader_class>.
+
 This function can be imported in the usual way, as illustrated in
 these Examples:
 
@@ -348,7 +356,9 @@ these Examples:
     make_schema_at(
         'New::Schema::Name',
         { debug => 1 },
-        [ 'dbi:Pg:dbname="foo"','postgres' ],
+        [ 'dbi:Pg:dbname="foo"','postgres','',
+          { loader_class => 'MyLoader' } # optionally
+        ],
     );
 
     # Inside a script, specifying a dump directory in which to write
@@ -357,8 +367,13 @@ these Examples:
     make_schema_at(
         'New::Schema::Name',
         { debug => 1, dump_directory => './lib' },
-        [ 'dbi:Pg:dbname="foo"','postgres' ],
+        [ 'dbi:Pg:dbname="foo"','postgres','',
+          { loader_class => 'MyLoader' } # optionally
+        ],
     );
+
+The last hashref in the C<\@connect_info> is checked for loader arguments such
+as C<loader_options> and C<loader_class>, see L</connection> for more details.
 
 =cut
 
@@ -369,6 +384,8 @@ sub make_schema_at {
         no strict 'refs';
         @{$target . '::ISA'} = qw/DBIx::Class::Schema::Loader/;
     }
+
+    eval { $target->_loader_invoked(0) };
 
     $target->loader_options($opts);
     $target->connection(@$connect_info);
@@ -518,3 +535,4 @@ L<DBIx::Class>, L<DBIx::Class::Manual::ExampleSchema>
 =cut
 
 1;
+# vim:et sts=4 sw=4 tw=0:

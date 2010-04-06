@@ -6,7 +6,7 @@ use base qw/DBIx::Class::Schema::Loader::Base/;
 use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
 
-our $VERSION = '0.05003';
+our $VERSION = '0.06000';
 
 =head1 NAME
 
@@ -35,19 +35,23 @@ things.
 sub new {
     my $self = shift->next::method(@_);
 
-    # rebless to vendor-specific class if it exists and loads
-    my $dbh = $self->schema->storage->dbh;
-    my $driver = $dbh->{Driver}->{Name};
+    # rebless to vendor-specific class if it exists and loads and we're not in a
+    # custom class.
+    if (not $self->loader_class) {
+        my $dbh = $self->schema->storage->dbh;
+        my $driver = $dbh->{Driver}->{Name};
 
-    my $subclass = 'DBIx::Class::Schema::Loader::DBI::' . $driver;
-    if ($self->load_optional_class($subclass)) {
-        bless $self, $subclass unless $self->isa($subclass);
-        $self->_rebless;
+        my $subclass = 'DBIx::Class::Schema::Loader::DBI::' . $driver;
+        if ($self->load_optional_class($subclass)) {
+            bless $self, $subclass unless $self->isa($subclass);
+            $self->_rebless;
+        }
     }
 
     # Set up the default quoting character and name seperators
-    $self->{_quoter} = $self->_build_quoter;
+    $self->{_quoter}  = $self->_build_quoter;
     $self->{_namesep} = $self->_build_namesep;
+
     # For our usage as regex matches, concatenating multiple quoter
     # values works fine (e.g. s/\Q<>\E// if quoter was [ '<', '>' ])
     if( ref $self->{_quoter} eq 'ARRAY') {
@@ -83,7 +87,7 @@ sub _rebless { }
 
 # Returns an array of table names
 sub _tables_list { 
-    my $self = shift;
+    my ($self, $opts) = (shift, shift);
 
     my ($table, $type) = @_ ? @_ : ('%', '%');
 
@@ -101,14 +105,22 @@ sub _tables_list {
     }
     s/$qt//g for @tables;
 
-    return $self->_filter_tables(@tables);
+    return $self->_filter_tables(\@tables, $opts);
 }
 
-# ignore bad tables and views
+# apply constraint/exclude and ignore bad tables and views
 sub _filter_tables {
-    my ($self, @tables) = @_;
+    my ($self, $tables, $opts) = @_;
 
+    my @tables = @$tables;
     my @filtered_tables;
+
+    $opts ||= {};
+    my $constraint   = $opts->{constraint};
+    my $exclude      = $opts->{exclude};
+
+    @tables = grep { /$constraint/ } @$tables if defined $constraint;
+    @tables = grep { ! /$exclude/  } @$tables if defined $exclude;
 
     for my $table (@tables) {
         eval {
@@ -178,7 +190,7 @@ sub _table_columns {
 
     my $sth = $self->_sth_for($table, undef, \'1 = 0');
     $sth->execute;
-    my $retval = \@{$sth->{NAME_lc}};
+    my $retval = $self->_is_case_sensitive ? \@{$sth->{NAME}} : \@{$sth->{NAME_lc}};
     $sth->finish;
 
     $retval;
@@ -280,17 +292,28 @@ sub _columns_info_for {
     if ($dbh->can('column_info')) {
         my %result;
         eval {
-            my $sth = $dbh->column_info( undef, $self->db_schema, $table, '%' );
+            my $sth = eval { local $SIG{__WARN__} = sub {}; $dbh->column_info( undef, $self->db_schema, $table, '%' ); };
             while ( my $info = $sth->fetchrow_hashref() ){
                 my $column_info = {};
-                $column_info->{data_type}   = $info->{TYPE_NAME};
-                $column_info->{size}      = $info->{COLUMN_SIZE};
+                $column_info->{data_type}     = lc $info->{TYPE_NAME};
+
+                my $size = $info->{COLUMN_SIZE};
+
+                if (defined $size && defined $info->{DECIMAL_DIGITS}) {
+                    $column_info->{size} = [$size, $info->{DECIMAL_DIGITS}];
+                }
+                elsif (defined $size) {
+                    $column_info->{size} = $size;
+                }
+
                 $column_info->{is_nullable}   = $info->{NULLABLE} ? 1 : 0;
-                $column_info->{default_value} = $info->{COLUMN_DEF};
+                $column_info->{default_value} = $info->{COLUMN_DEF} if defined $info->{COLUMN_DEF};
                 my $col_name = $info->{COLUMN_NAME};
                 $col_name =~ s/^\"(.*)\"$/$1/;
 
-                my $extra_info = $self->_extra_column_info($info) || {};
+                my $extra_info = $self->_extra_column_info(
+                    $table, $col_name, $column_info, $info
+                ) || {};
                 $column_info = { %$column_info, %$extra_info };
 
                 $result{$col_name} = $column_info;
@@ -303,11 +326,20 @@ sub _columns_info_for {
     my %result;
     my $sth = $self->_sth_for($table, undef, \'1 = 0');
     $sth->execute;
-    my @columns = @{$sth->{NAME_lc}};
+    my @columns = @{ $self->_is_case_sensitive ? $sth->{NAME} : $sth->{NAME_lc} };
     for my $i ( 0 .. $#columns ){
         my $column_info = {};
-        $column_info->{data_type} = $sth->{TYPE}->[$i];
-        $column_info->{size} = $sth->{PRECISION}->[$i];
+        $column_info->{data_type} = lc $sth->{TYPE}->[$i];
+
+        my $size = $sth->{PRECISION}[$i];
+
+        if (defined $size && defined $sth->{SCALE}[$i]) {
+            $column_info->{size} = [$size, $sth->{SCALE}[$i]];
+        }
+        elsif (defined $size) {
+            $column_info->{size} = $size;
+        }
+
         $column_info->{is_nullable} = $sth->{NULLABLE}->[$i] ? 1 : 0;
 
         if ($column_info->{data_type} =~ m/^(.*?)\((.*?)\)$/) {
@@ -315,7 +347,7 @@ sub _columns_info_for {
             $column_info->{size}    = $2;
         }
 
-        my $extra_info = $self->_extra_column_info($table, $columns[$i], $sth, $i) || {};
+        my $extra_info = $self->_extra_column_info($table, $columns[$i], $column_info) || {};
         $column_info = { %$column_info, %$extra_info };
 
         $result{$columns[$i]} = $column_info;
@@ -326,10 +358,10 @@ sub _columns_info_for {
         my $colinfo = $result{$col};
         my $type_num = $colinfo->{data_type};
         my $type_name;
-        if(defined $type_num && $dbh->can('type_info')) {
+        if(defined $type_num && $type_num =~ /^\d+\z/ && $dbh->can('type_info')) {
             my $type_info = $dbh->type_info($type_num);
             $type_name = $type_info->{TYPE_NAME} if $type_info;
-            $colinfo->{data_type} = $type_name if $type_name;
+            $colinfo->{data_type} = lc $type_name if $type_name;
         }
     }
 
@@ -356,3 +388,4 @@ the same terms as Perl itself.
 =cut
 
 1;
+# vim:et sts=4 sw=4 tw=0:
