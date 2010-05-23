@@ -8,11 +8,7 @@ use base qw/DBIx::Class::Schema::Loader::DBI/;
 use Carp::Clan qw/^DBIx::Class/;
 use List::Util 'first';
 
-__PACKAGE__->mk_group_ro_accessors('simple', qw/
-    unquoted_ddl
-/);
-
-our $VERSION = '0.06001';
+our $VERSION = '0.07000';
 
 =head1 NAME
 
@@ -21,21 +17,22 @@ Firebird Implementation.
 
 =head1 DESCRIPTION
 
-See L<DBIx::Class::Schema::Loader::Base> for available options.
+See L<DBIx::Class::Schema::Loader> and L<DBIx::Class::Schema::Loader::Base>.
 
-By default column names from unquoted DDL will be generated in uppercase, as
-that is the only way they will work with quoting on.
+=head1 COLUMN NAME CASE ISSUES
 
-See the L</unquoted_ddl> option in this driver if you would like to have
-lowercase column names.
+By default column names from unquoted DDL will be generated in lowercase, for
+consistency with other backends. 
 
-=head1 DRIVER OPTIONS
+Set the L<preserve_case|DBIx::Class::Schema::Loader::Base/preserve_case> option
+to true if you would like to have column names in the internal case, which is
+uppercase for DDL that uses unquoted identifiers.
 
-=head2 unquoted_ddl
+Do not use quoting (the L<quote_char|DBIx::Class::Storage::DBI/quote_char>
+option in L<connect_info|DBIx::Class::Storage::DBI/connect_info> when in the
+default C<< preserve_case => 0 >> mode.
 
-Set this loader option if your DDL uses unquoted identifiers and you will not
-use quoting (the L<quote_char|DBIx::Class::Storage::DBI/quote_char> option in
-L<connect_info|DBIx::Class::Storage::DBI/connect_info>.)
+Be careful to also not use any SQL reserved words in your DDL.
 
 This will generate lowercase column names (as opposed to the actual uppercase
 names) in your Result classes that will only work with quoting off.
@@ -45,47 +42,32 @@ will not work with quoting turned off.
 
 =cut
 
-sub _is_case_sensitive {
-    my $self = shift;
-
-    return $self->unquoted_ddl ? 0 : 1;
-}
-
 sub _setup {
     my $self = shift;
 
-    $self->next::method;
+    $self->next::method(@_);
 
-    $self->schema->storage->sql_maker->name_sep('.');
-
-    if (not defined $self->unquoted_ddl) {
+    if (not defined $self->preserve_case) {
         warn <<'EOF';
 
-WARNING: Assuming mixed-case Firebird DDL, see the unquoted_ddl option in
+WARNING: Assuming unquoted Firebird DDL, see
 perldoc DBIx::Class::Schema::Loader::DBI::InterBase
+and the 'preserve_case' option in
+perldoc DBIx::Class::Schema::Loader::Base
 for more information.
 
 EOF
+        $self->preserve_case(0);
     }
 
-    if (not $self->unquoted_ddl) {
+    if ($self->preserve_case) {
         $self->schema->storage->sql_maker->quote_char('"');
+        $self->schema->storage->sql_maker->name_sep('.');
     }
     else {
         $self->schema->storage->sql_maker->quote_char(undef);
+        $self->schema->storage->sql_maker->name_sep(undef);
     }
-}
-
-sub _lc {
-    my ($self, $name) = @_;
-
-    return $self->unquoted_ddl ? lc($name) : $name;
-}
-
-sub _uc {
-    my ($self, $name) = @_;
-
-    return $self->unquoted_ddl ? uc($name) : $name;
 }
 
 sub _table_pk_info {
@@ -272,9 +254,6 @@ EOF
         elsif ($info->{data_type} eq 'character') {
             $info->{data_type} = 'char';
         }
-        elsif ($info->{data_type} eq 'real') {
-            $info->{data_type} = 'float';
-        }
         elsif ($info->{data_type} eq 'int64' || $info->{data_type} eq '-9581') {
             # the constant is just in case, the query should pick up the type
             $info->{data_type} = 'bigint';
@@ -305,9 +284,12 @@ EOF
                 $info->{default_value} = $quoted;
             }
             else {
-                $info->{default_value} = $def =~ /^\d/ ? $def : \$def;
+                $info->{default_value} = $def =~ /^-?\d/ ? $def : \$def;
             }
         }
+
+        ${ $info->{default_value} } = 'current_timestamp'
+            if ref $info->{default_value} && ${ $info->{default_value} } eq 'CURRENT_TIMESTAMP';
     }
 
     return $result;

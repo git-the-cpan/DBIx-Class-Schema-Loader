@@ -24,7 +24,6 @@ my $odbc_password = $ENV{DBICTEST_MSSQL_ODBC_PASS} || '';
 my $tester = dbixcsl_common_tests->new(
     vendor      => 'mssql',
     auto_inc_pk => 'INTEGER IDENTITY NOT NULL PRIMARY KEY',
-    default_function     => 'getdate()',
     default_function_def => 'DATETIME DEFAULT getdate()',
     connect_info => [ ($dbd_sybase_dsn ? {
             dsn         => $dbd_sybase_dsn,
@@ -37,6 +36,8 @@ my $tester = dbixcsl_common_tests->new(
             password    => $odbc_password,
         } : ()),
     ],
+    preserve_case_mode_is_exclusive => 1,
+    quote_char => [ qw/[ ]/ ],
     data_types => {
         # http://msdn.microsoft.com/en-us/library/ms187752.aspx
 
@@ -50,9 +51,9 @@ my $tester = dbixcsl_common_tests->new(
         money       => { data_type => 'money' },
         smallmoney  => { data_type => 'smallmoney' },
         bit         => { data_type => 'bit' },
-        real           => { data_type => 'float', size => 24 },
-        'float(14)'    => { data_type => 'float', size => 24 },
-        'float(24)'    => { data_type => 'float', size => 24 },
+        real           => { data_type => 'real' },
+        'float(14)'    => { data_type => 'real' },
+        'float(24)'    => { data_type => 'real' },
         'float(25)'    => { data_type => 'double precision' },
         'float(53)'    => { data_type => 'double precision' },
         float          => { data_type => 'double precision' },
@@ -68,8 +69,10 @@ my $tester = dbixcsl_common_tests->new(
         # datetime types
         date     => { data_type => 'date' },
         datetime => { data_type => 'datetime' },
-        'datetime DEFAULT getdate()'
-                 => { data_type => 'datetime', default_value => \'getdate()' },
+        # test rewriting getdate() to current_timestamp
+        'datetime default getdate()'
+                 => { data_type => 'datetime', default_value => \'current_timestamp',
+                      original => { default_value => \'getdate()' } },
         smalldatetime  => { data_type => 'smalldatetime' },
         time     => { data_type => 'time' },
         'time(0)'=> { data_type => 'time', size => 0 },
@@ -108,8 +111,9 @@ my $tester = dbixcsl_common_tests->new(
         'nvarchar(2)'  => { data_type => 'nvarchar', size => 2 },
 
         # binary types
-        'binary(2)'      => { data_type => 'binary', size => 2 },
-        'varbinary(2)'   => { data_type => 'varbinary', size => 2 },
+        'binary'       => { data_type => 'binary', size => 1 },
+        'binary(2)'    => { data_type => 'binary', size => 2 },
+        'varbinary(2)' => { data_type => 'varbinary', size => 2 },
 
         # blob types
         'varchar(max)'   => { data_type => 'text' },
@@ -121,6 +125,7 @@ my $tester = dbixcsl_common_tests->new(
 
         # other types
         timestamp        => { data_type => 'timestamp', inflate_datetime => 0 },
+        rowversion       => { data_type => 'rowversion' },
         uniqueidentifier => { data_type => 'uniqueidentifier' },
         hierarchyid      => { data_type => 'hierarchyid' },
         sql_variant      => { data_type => 'sql_variant' },
@@ -191,7 +196,7 @@ my $tester = dbixcsl_common_tests->new(
             ok ((my $rsrc = $schema->resultset($monikers->{mssql_loader_test5})->result_source),
                 'got result_source');
 
-            if ($schema->_loader->_is_case_sensitive) {
+            if ($schema->_loader->preserve_case) {
                 is_deeply [ $rsrc->columns ], [qw/Id FooCol BarCol/],
                     'column name case is preserved with case-sensitive collation';
 
@@ -214,11 +219,18 @@ my $tester = dbixcsl_common_tests->new(
 
             lives_and {
                 my $five_row = $schema->resultset($monikers->{mssql_loader_test5})->new_result({});
-                $five_row->foocol(1);
-                $five_row->barcol(2);
+
+                if ($schema->_loader->preserve_case) {
+                    $five_row->foo_col(1);
+                    $five_row->bar_col(2);
+                }
+                else {
+                    $five_row->foocol(1);
+                    $five_row->barcol(2);
+                }
                 $five_row->insert;
 
-                my $six_row  = $five_row->create_related('mssql_loader_test6s', {});
+                my $six_row = $five_row->create_related('mssql_loader_test6s', {});
 
                 is $six_row->five->id, 1;
             } 'relationships for mixed-case tables/columns detected';

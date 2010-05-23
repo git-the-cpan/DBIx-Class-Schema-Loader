@@ -16,6 +16,7 @@ lib/DBIx/Class/Schema/Loader/Base.pm
 lib/DBIx/Class/Schema/Loader/DBI.pm
 lib/DBIx/Class/Schema/Loader/DBI/Component/QuotedDefault.pm
 lib/DBIx/Class/Schema/Loader/DBI/DB2.pm
+lib/DBIx/Class/Schema/Loader/DBI/Informix.pm
 lib/DBIx/Class/Schema/Loader/DBI/InterBase.pm
 lib/DBIx/Class/Schema/Loader/DBI/MSSQL.pm
 lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
@@ -35,6 +36,8 @@ lib/DBIx/Class/Schema/Loader/Manual/UpgradingFromV4.pod
 lib/DBIx/Class/Schema/Loader/RelBuilder.pm
 lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_040.pm
 lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_05.pm
+lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_06.pm
+lib/DBIx/Class/Schema/Loader/Utils.pm
 Makefile.PL
 MANIFEST			This list of files
 META.yml
@@ -42,8 +45,6 @@ README
 script/dbicdump
 t/01use.t
 t/02pod.t
-t/03podcoverage.t
-t/04kwalitee.t
 t/10sqlite_common.t
 t/11mysql_common.t
 t/12pg_common.t
@@ -53,6 +54,7 @@ t/15sybase_common.t
 t/16mssql_common.t
 t/17sybase_asa_common.t
 t/18firebird_common.t
+t/19informix_common.t
 t/20invocations.t
 t/21misc_fatal.t
 t/22dump.t

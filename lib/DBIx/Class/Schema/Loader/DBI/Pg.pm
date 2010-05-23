@@ -9,7 +9,7 @@ use base qw/
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.06001';
+our $VERSION = '0.07000';
 
 =head1 NAME
 
@@ -35,9 +35,17 @@ sub _setup {
     my $self = shift;
 
     $self->next::method(@_);
-    $self->{db_schema} ||= 'public';
-}
 
+    $self->{db_schema} ||= 'public';
+
+    if (not defined $self->preserve_case) {
+        $self->preserve_case(0);
+    }
+    elsif ($self->preserve_case) {
+        $self->schema->storage->sql_maker->quote_char('"');
+        $self->schema->storage->sql_maker->name_sep('.');
+    }
+}
 
 sub _table_uniq_info {
     my ($self, $table) = @_;
@@ -133,16 +141,23 @@ sub _columns_info_for {
 
     my $result = $self->next::method(@_);
 
-    foreach my $col (keys %$result) {
-        my $data_type = $result->{$col}{data_type};
+    while (my ($col, $info) = each %$result) {
+        my $data_type = $info->{data_type};
 
         # these types are fixed size
         if ($data_type =~
-/^(?:bigint|int8|bigserial|serial8|bit|boolean|bool|box|bytea|cidr|circle|date|double precision|float8|inet|integer|int|int4|line|lseg|macaddr|money|path|point|polygon|real|float4|smallint|int2|serial|serial4|text)\z/i) {
-            delete $result->{$col}{size};
+/^(?:bigint|int8|bigserial|serial8|boolean|bool|box|bytea|cidr|circle|date|double precision|float8|inet|integer|int|int4|line|lseg|macaddr|money|path|point|polygon|real|float4|smallint|int2|serial|serial4|text)\z/i) {
+            delete $info->{size};
         }
 # for datetime types, check if it has a precision or not
         elsif ($data_type =~ /^(?:interval|time|timestamp)\b/i) {
+            if (lc($data_type) eq 'timestamp without time zone') {
+                $info->{data_type} = 'timestamp';
+            }
+            elsif (lc($data_type) eq 'time without time zone') {
+                $info->{data_type} = 'time';
+            }
+
             my ($precision) = $self->schema->storage->dbh
                 ->selectrow_array(<<EOF, {}, $table, $col);
 SELECT datetime_precision
@@ -152,7 +167,7 @@ EOF
 
             if ($data_type =~ /^time\b/i) {
                 if ((not $precision) || $precision !~ /^\d/) {
-                    delete $result->{$col}{size};
+                    delete $info->{size};
                 }
                 else {
                     my ($integer_datetimes) = $self->schema->storage->dbh
@@ -162,21 +177,23 @@ EOF
                         $integer_datetimes =~ /^on\z/i ? 6 : 10;
 
                     if ($precision == $max_precision) {
-                        delete $result->{$col}{size};
+                        delete $info->{size};
                     }
                     else {
-                        $result->{$col}{size} = $precision;
+                        $info->{size} = $precision;
                     }
                 }
             }
             elsif ((not $precision) || $precision !~ /^\d/ || $precision == 6) {
-                delete $result->{$col}{size};
+                delete $info->{size};
             }
             else {
-                $result->{$col}{size} = $precision;
+                $info->{size} = $precision;
             }
         }
-        elsif ($data_type =~ /^(?:bit varying|varbit)\z/i) {
+        elsif ($data_type =~ /^(?:bit(?: varying)?|varbit)\z/i) {
+            $info->{data_type} = 'varbit' if $data_type =~ /var/i;
+
             my ($precision) = $self->schema->storage->dbh
                 ->selectrow_array(<<EOF, {}, $table, $col);
 SELECT character_maximum_length
@@ -184,21 +201,43 @@ FROM information_schema.columns
 WHERE table_name = ? and column_name = ?
 EOF
 
-            $result->{$col}{size} = $precision;
+            $info->{size} = $precision if $precision;
+
+            $info->{size} = 1 if (not $precision) && lc($data_type) eq 'bit';
         }
-        elsif ($data_type =~ /^(?:numeric|decimal)\z/i && (my $size = $result->{$col}{size})) {
+        elsif ($data_type =~ /^(?:numeric|decimal)\z/i && (my $size = $info->{size})) {
             $size =~ s/\s*//g;
 
             my ($scale, $precision) = split /,/, $size;
 
-            $result->{$col}{size} = [ $precision, $scale ];
+            $info->{size} = [ $precision, $scale ];
+        }
+        elsif (lc($data_type) eq 'character varying') {
+            $info->{data_type} = 'varchar';
+
+            if (not $info->{size}) {
+                $info->{data_type}           = 'text';
+                $info->{original}{data_type} = 'varchar';
+            }
+        }
+        elsif (lc($data_type) eq 'character') {
+            $info->{data_type} = 'char';
         }
 
 # process SERIAL columns
-        if (ref($result->{$col}{default_value}) eq 'SCALAR' && ${ $result->{$col}{default_value} } =~ /\bnextval\(['"](\w+)/i) {
-            $result->{$col}{is_auto_increment} = 1;
-            $result->{$col}{sequence}          = $1;
-            delete $result->{$col}{default_value};
+        if (ref($info->{default_value}) eq 'SCALAR' && ${ $info->{default_value} } =~ /\bnextval\(['"](\w+)/i) {
+            $info->{is_auto_increment} = 1;
+            $info->{sequence}          = $1;
+            delete $info->{default_value};
+        }
+
+# alias now() to current_timestamp for deploying to other DBs
+        if ((eval { lc ${ $info->{default_value} } }||'') eq 'now()') {
+            # do not use a ref to a constant, that breaks Data::Dump output
+            ${$info->{default_value}} = 'current_timestamp';
+
+            my $now = 'now()';
+            $info->{original}{default_value} = \$now;
         }
     }
 

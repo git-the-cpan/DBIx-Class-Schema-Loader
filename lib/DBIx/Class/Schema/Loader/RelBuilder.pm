@@ -5,8 +5,9 @@ use warnings;
 use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
 use Lingua::EN::Inflect::Phrase ();
+use DBIx::Class::Schema::Loader::Utils 'split_name';
 
-our $VERSION = '0.06001';
+our $VERSION = '0.07000';
 
 =head1 NAME
 
@@ -14,7 +15,7 @@ DBIx::Class::Schema::Loader::RelBuilder - Builds relationships for DBIx::Class::
 
 =head1 SYNOPSIS
 
-See L<DBIx::Class::Schema::Loader>
+See L<DBIx::Class::Schema::Loader> and L<DBIx::Class::Schema::Loader::Base>.
 
 =head1 DESCRIPTION
 
@@ -163,7 +164,7 @@ sub _default_relationship_attrs { +{
     belongs_to => {
         on_delete => 'CASCADE',
         on_update => 'CASCADE',
-        is_deferrable => 1,
+#        is_deferrable => 1,
     },
 } }
 
@@ -212,6 +213,14 @@ sub _remote_attrs {
     return $attrs;
 }
 
+sub _normalize_name {
+    my ($self, $name) = @_;
+
+    my @words = split_name $name;
+
+    return join '_', map lc, @words;
+}
+
 sub _remote_relname {
     my ($self, $remote_table, $cond) = @_;
 
@@ -220,12 +229,12 @@ sub _remote_relname {
     # name, to make filter accessors work, but strip trailing _id
     if(scalar keys %{$cond} == 1) {
         my ($col) = values %{$cond};
-        $col = lc $col;
+        $col = $self->_normalize_name($col);
         $col =~ s/_id$//;
         $remote_relname = $self->_inflect_singular($col);
     }
     else {
-        $remote_relname = $self->_inflect_singular(lc $remote_table);
+        $remote_relname = $self->_inflect_singular($self->_normalize_name($remote_table));
     }
 
     return $remote_relname;
@@ -312,17 +321,17 @@ sub _relnames_and_method {
     # col names to distinguish
     my ($local_relname, $local_relname_uninflected);
     if ( $counters->{$remote_moniker} > 1) {
-        my $colnames = lc(q{_} . join(q{_}, map lc($_), @$local_cols));
+        my $colnames = q{_} . $self->_normalize_name(join '_', @$local_cols);
         $remote_relname .= $colnames if keys %$cond > 1;
 
-        $local_relname = lc($local_table) . $colnames;
+        $local_relname = $self->_normalize_name($local_table . $colnames);
         $local_relname =~ s/_id$//;
 
         $local_relname_uninflected = $local_relname;
-        $local_relname = $self->_inflect_plural( $local_relname );
+        $local_relname = $self->_inflect_plural($local_relname);
     } else {
-        $local_relname_uninflected = lc $local_table;
-        $local_relname = $self->_inflect_plural(lc $local_table);
+        $local_relname_uninflected = $self->_normalize_name($local_table);
+        $local_relname = $self->_inflect_plural($self->_normalize_name($local_table));
     }
 
     my $remote_method = 'has_many';
@@ -350,3 +359,4 @@ the same terms as Perl itself.
 =cut
 
 1;
+# vim:et sts=4 sw=4 tw=0:

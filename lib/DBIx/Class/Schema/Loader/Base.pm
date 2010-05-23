@@ -20,9 +20,10 @@ use Class::Inspector ();
 use Data::Dumper::Concise;
 use Scalar::Util 'looks_like_number';
 use File::Slurp 'slurp';
+use DBIx::Class::Schema::Loader::Utils 'split_name';
 require DBIx::Class;
 
-our $VERSION = '0.06001';
+our $VERSION = '0.07000';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -64,6 +65,7 @@ __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 datetime_locale
                                 config_file
                                 loader_class
+                                qualify_objects
 /);
 
 
@@ -79,6 +81,7 @@ __PACKAGE__->mk_group_accessors('simple', qw/
                                 generate_pod
                                 pod_comment_mode
                                 pod_comment_spillover_length
+                                preserve_case
 /);
 
 =head1 NAME
@@ -127,7 +130,7 @@ overwriting a dump made with an earlier version.
 
 The option also takes a hashref:
 
-    naming => { relationships => 'v6', monikers => 'v6' }
+    naming => { relationships => 'v7', monikers => 'v7' }
 
 The keys are:
 
@@ -140,6 +143,10 @@ How to name relationship accessors.
 =item monikers
 
 How to name Result classes.
+
+=item column_accessors
+
+How to name column accessors in Result classes.
 
 =back
 
@@ -165,10 +172,25 @@ the v5 RelBuilder.
 
 =item v6
 
-All monikers and relationships inflected using L<Lingua::EN::Inflect::Phrase>,
-more aggressive C<_id> stripping from relationships.
+All monikers and relationships are inflected using
+L<Lingua::EN::Inflect::Phrase>, and there is more aggressive C<_id> stripping
+from relationship names.
 
 In general, there is very little difference between v5 and v6 schemas.
+
+=item v7
+
+This mode is identical to C<v6> mode, except that monikerization of CamelCase
+table names is also done correctly.
+
+CamelCase column names in case-preserving mode will also be handled correctly
+for relationship name inflection. See L</preserve_case>.
+
+In this mode, CamelCase L</column_accessors> are normalized based on case
+transition instead of just being lowercased, so C<FooId> becomes C<foo_id>.
+
+If you don't have any CamelCase table or column names, you can upgrade without
+breaking any of your code.
 
 =back
 
@@ -235,15 +257,10 @@ relationship types override those set in 'all'.
 For example:
 
   relationship_attrs => {
-    all      => { cascade_delete => 0 },
-    has_many => { cascade_delete => 1 },
+    belongs_to => { is_deferrable => 1 },
   },
 
-will set the C<cascade_delete> option to 0 for all generated relationships,
-except for C<has_many>, which will have cascade_delete as 1.
-
-NOTE: this option is not supported if v4 backward-compatible naming is
-set either globally (naming => 'v4') or just for relationships.
+use this to make your foreign key constraints DEFERRABLE.
 
 =head2 debug
 
@@ -273,17 +290,17 @@ a scalar moniker.  If the hash entry does not exist, or the function
 returns a false value, the code falls back to default behavior
 for that table name.
 
-The default behavior is to singularize the table name, and: C<join '', map
-ucfirst, split /[\W_]+/, lc $table>, which is to say: lowercase everything,
-split up the table name into chunks anywhere a non-alpha-numeric character
-occurs, change the case of first letter of each chunk to upper case, and put
-the chunks back together.  Examples:
+The default behavior is to split on case transition and non-alphanumeric
+boundaries, singularize the resulting phrase, then join the titlecased words
+together. Examples:
 
-    Table Name  | Moniker Name
-    ---------------------------
-    luser       | Luser
-    luser_group | LuserGroup
-    luser-opts  | LuserOpt
+    Table Name       | Moniker Name
+    ---------------------------------
+    luser            | Luser
+    luser_group      | LuserGroup
+    luser-opts       | LuserOpt
+    stations_visited | StationVisited
+    routeChange      | RouteChange
 
 =head2 inflect_plural
 
@@ -322,7 +339,8 @@ List of additional classes which all of your table classes will use.
 =head2 components
 
 List of additional components to be loaded into all of your table
-classes.  A good example would be C<ResultSetManager>.
+classes.  A good example would be
+L<InflateColumn::DateTime|DBIx::Class::InflateColumn::DateTime>
 
 =head2 resultset_components
 
@@ -437,6 +455,23 @@ columns with the DATE/DATETIME/TIMESTAMP data_types.
 File in Perl format, which should return a HASH reference, from which to read
 loader options.
 
+=head1 preserve_case
+
+Usually column names are lowercased, to make them easier to work with in
+L<DBIx::Class>. This option lets you turn this behavior off, if the driver
+supports it.
+
+Drivers for case sensitive databases like Sybase ASE or MSSQL with a
+case-sensitive collation will turn this option on unconditionally.
+
+Currently the drivers for SQLite, mysql, MSSQL and Firebird/InterBase support
+setting this option.
+
+=head1 qualify_objects
+
+Set to true to prepend the L</db_schema> to table names for C<<
+__PACKAGE__->table >> calls, and to some other things like Oracle sequences.
+
 =head1 METHODS
 
 None of these methods are intended for direct invocation by regular
@@ -445,7 +480,7 @@ L<DBIx::Class::Schema::Loader>.
 
 =cut
 
-my $CURRENT_V = 'v6';
+my $CURRENT_V = 'v7';
 
 my @CLASS_ARGS = qw(
     schema_base_class result_base_class additional_base_classes
@@ -529,6 +564,7 @@ sub new {
         $self->{naming} = {
             relationships => $naming_ver,
             monikers => $naming_ver,
+            column_accessors => $naming_ver,
         };
     }
 
@@ -658,6 +694,8 @@ Version $real_ver static schema detected, turning on backcompat mode.
 Set the 'naming' attribute or the SCHEMA_LOADER_BACKCOMPAT environment variable
 to disable this warning.
 
+See: 'naming' in perldoc DBIx::Class::Schema::Loader::Base .
+
 See perldoc DBIx::Class::Schema::Loader::Manual::UpgradingFromV4 if upgrading
 from version 0.04006.
 EOF
@@ -667,8 +705,9 @@ EOF
                 last;
             }
 
-            $self->naming->{relationships} ||= $v;
-            $self->naming->{monikers}      ||= $v;
+            $self->naming->{relationships}    ||= $v;
+            $self->naming->{monikers}         ||= $v;
+            $self->naming->{column_accessors} ||= $v;
 
             $self->schema_version_to_dump($real_ver);
 
@@ -819,24 +858,23 @@ sub _load_external {
     }
 
     if ($old_real_inc_path) {
-        open(my $fh, '<', $old_real_inc_path)
-            or croak "Failed to open '$old_real_inc_path' for reading: $!";
+        my $code = slurp $old_real_inc_path;
+
         $self->_ext_stmt($class, <<"EOF");
 
 # These lines were loaded from '$old_real_inc_path',
-# based on the Result class name that would have been created by an 0.04006
+# based on the Result class name that would have been created by an older
 # version of the Loader. For a static schema, this happens only once during
 # upgrade. See skip_load_external to disable this feature.
 EOF
 
-        my $code = slurp $old_real_inc_path;
         $code = $self->_rewrite_old_classnames($code);
 
         if ($self->dynamic) {
             warn <<"EOF";
 
 Detected external content in '$old_real_inc_path', a class name that would have
-been used by an 0.04006 version of the Loader.
+been used by an older version of the Loader.
 
 * PLEASE RENAME THIS CLASS: from '$old_class' to '$class', as that is the
 new name of the Result.
@@ -877,14 +915,11 @@ sub load {
 
 Arguments: schema
 
-Rescan the database for newly added tables.  Does
-not process drops or changes.  Returns a list of
-the newly added table monikers.
+Rescan the database for changes. Returns a list of the newly added table
+monikers.
 
-The schema argument should be the schema class
-or object to be affected.  It should probably
-be derived from the original schema_class used
-during L</load>.
+The schema argument should be the schema class or object to be affected.  It
+should probably be derived from the original schema_class used during L</load>.
 
 =cut
 
@@ -896,15 +931,27 @@ sub rescan {
 
     my @created;
     my @current = $self->_tables_list({ constraint => $self->constraint, exclude => $self->exclude });
+
     foreach my $table (@current) {
         if(!exists $self->{_tables}->{$table}) {
             push(@created, $table);
         }
     }
 
-    my $loaded = $self->_load_tables(@created);
+    my %current;
+    @current{@current} = ();
+    foreach my $table (keys %{ $self->{_tables} }) {
+        if (not exists $current{$table}) {
+            $self->_unregister_source_for_table($table);
+        }
+    }
 
-    return map { $self->monikers->{$_} } @$loaded;
+    delete $self->{_dump_storage};
+    delete $self->{_relations_started};
+
+    my $loaded = $self->_load_tables(@current);
+
+    return map { $self->monikers->{$_} } @created;
 }
 
 sub _relbuilder {
@@ -917,12 +964,24 @@ sub _relbuilder {
         require DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_040;
         return $self->{relbuilder} ||=
             DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_040->new(
-                $self->schema, $self->inflect_plural, $self->inflect_singular
+                $self->schema,
+                $self->inflect_plural,
+                $self->inflect_singular,
+                $self->relationship_attrs,
             );
     }
     elsif ($self->naming->{relationships} eq 'v5') {
         require DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_05;
         return $self->{relbuilder} ||= DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_05->new (
+             $self->schema,
+             $self->inflect_plural,
+             $self->inflect_singular,
+             $self->relationship_attrs,
+        );
+    }
+    elsif ($self->naming->{relationships} eq 'v6') {
+        require DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_06;
+        return $self->{relbuilder} ||= DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_06->new (
              $self->schema,
              $self->inflect_plural,
              $self->inflect_singular,
@@ -1397,6 +1456,41 @@ sub _make_src_class {
     $self->_inject($table_class, @{$self->additional_base_classes});
 }
 
+sub _resolve_col_accessor_collisions {
+    my ($self, $col_info) = @_;
+
+    my $base       = $self->result_base_class || 'DBIx::Class::Core';
+    my @components = map "DBIx::Class::$_", @{ $self->components || [] };
+
+    my @methods;
+
+    for my $class ($base, @components) {
+        eval "require ${class};";
+        die $@ if $@;
+
+        push @methods, @{ Class::Inspector->methods($class) || [] };
+    }
+
+    my %methods;
+    @methods{@methods} = ();
+
+    while (my ($col, $info) = each %$col_info) {
+        my $accessor = $info->{accessor} || $col;
+
+        next if $accessor eq 'id'; # special case (very common column)
+
+        if (exists $methods{$accessor}) {
+            $info->{accessor} = undef;
+        }
+    }
+}
+
+sub _make_column_accessor_name {
+    my ($self, $column_name) = @_;
+
+    return join '_', map lc, split_name $column_name;
+}
+
 # Set up metadata (cols, pks, etc)
 sub _setup_src_meta {
     my ($self, $table) = @_;
@@ -1414,18 +1508,40 @@ sub _setup_src_meta {
         $table_name = \ $self->_quote_table_name($table_name);
     }
 
-    $self->_dbic_stmt($table_class,'table',$table_name);
+    my $full_table_name = ($self->qualify_objects ? ($self->db_schema . '.') : '') . (ref $table_name ? $$table_name : $table_name);
+
+    # be careful to not create refs Data::Dump can "optimize"
+    $full_table_name    = \do {"".$full_table_name} if ref $table_name;
+
+    $self->_dbic_stmt($table_class, 'table', $full_table_name);
 
     my $cols = $self->_table_columns($table);
     my $col_info = $self->__columns_info_for($table);
-    if ($self->_is_case_sensitive) {
-        for my $col (keys %$col_info) {
-            $col_info->{$col}{accessor} = lc $col
-                if $col ne lc($col);
+
+    while (my ($col, $info) = each %$col_info) {
+        if ($col =~ /\W/) {
+            ($info->{accessor} = $col) =~ s/\W+/_/g;
         }
-    } else {
+    }
+
+    if ($self->preserve_case) {
+        while (my ($col, $info) = each %$col_info) {
+            if ($col ne lc($col)) {
+                if ((not exists $self->naming->{column_accessors}) || (($self->naming->{column_accessors} =~ /(\d+)/)[0] >= 7)) {
+                    $info->{accessor} = $self->_make_column_accessor_name($info->{accessor} || $col);
+                }
+                else {
+                    $info->{accessor} = lc($info->{accessor} || $col);
+                }
+            }
+        }
+    }
+    else {
+        # XXX this needs to go away
         $col_info = { map { lc($_), $col_info->{$_} } keys %$col_info };
     }
+
+    $self->_resolve_col_accessor_collisions($col_info);
 
     my $fks = $self->_table_fk_info($table);
 
@@ -1496,8 +1612,16 @@ sub _default_table2moniker {
         return join '', map ucfirst, split /[\W_]+/,
             Lingua::EN::Inflect::Number::to_S(lc $table);
     }
+    elsif ($self->naming->{monikers} eq 'v6') {
+        (my $as_phrase = lc $table) =~ s/_+/ /g;
+        my $inflected = Lingua::EN::Inflect::Phrase::to_S($as_phrase);
 
-    (my $as_phrase = lc $table) =~ s/_+/ /g;
+        return join '', map ucfirst, split /\W+/, $inflected;
+    }
+
+    my @words = map lc, split_name $table;
+    my $as_phrase = join ' ', @words;
+
     my $inflected = Lingua::EN::Inflect::Phrase::to_S($as_phrase);
 
     return join '', map ucfirst, split /\W+/, $inflected;
@@ -1687,8 +1811,6 @@ sub _quote_table_name {
     return $qt . $table . $qt;
 }
 
-sub _is_case_sensitive { 0 }
-
 sub _custom_column_info {
     my ( $self, $table_name, $column_name, $column_info ) = @_;
 
@@ -1708,6 +1830,34 @@ sub _datetime_column_info {
         $result->{locale}   = $self->datetime_locale   if $self->datetime_locale;
     }
     return $result;
+}
+
+sub _lc {
+    my ($self, $name) = @_;
+
+    return $self->preserve_case ? $name : lc($name);
+}
+
+sub _uc {
+    my ($self, $name) = @_;
+
+    return $self->preserve_case ? $name : uc($name);
+}
+
+sub _unregister_source_for_table {
+    my ($self, $table) = @_;
+
+    eval {
+        local $@;
+        my $schema = $self->schema;
+        # in older DBIC it's a private method
+        my $unregister = $schema->can('unregister_source') || $schema->can('_unregister_source');
+        $schema->$unregister($self->_table2moniker($table));
+        delete $self->monikers->{$table};
+        delete $self->classes->{$table};
+        delete $self->_upgrading_classes->{$table};
+        delete $self->{_tables}{$table};
+    };
 }
 
 # remove the dump dir from @INC on destruction

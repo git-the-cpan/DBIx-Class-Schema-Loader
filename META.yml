@@ -28,73 +28,79 @@ no_index:
 provides:
   DBIx::Class::Schema::Loader:
     file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::Base:
     file: lib/DBIx/Class/Schema/Loader/Base.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI:
     file: lib/DBIx/Class/Schema/Loader/DBI.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault:
     file: lib/DBIx/Class/Schema/Loader/DBI/Component/QuotedDefault.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::DB2:
     file: lib/DBIx/Class/Schema/Loader/DBI/DB2.pm
-    version: 0.06001
+    version: 0.07000
+  DBIx::Class::Schema::Loader::DBI::Informix:
+    file: lib/DBIx/Class/Schema/Loader/DBI/Informix.pm
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::InterBase:
     file: lib/DBIx/Class/Schema/Loader/DBI/InterBase.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::MSSQL:
     file: lib/DBIx/Class/Schema/Loader/DBI/MSSQL.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::ODBC:
     file: lib/DBIx/Class/Schema/Loader/DBI/ODBC.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::ODBC::Firebird:
     file: lib/DBIx/Class/Schema/Loader/DBI/ODBC/Firebird.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::ODBC::Microsoft_SQL_Server:
     file: lib/DBIx/Class/Schema/Loader/DBI/ODBC/Microsoft_SQL_Server.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::ODBC::SQL_Anywhere:
     file: lib/DBIx/Class/Schema/Loader/DBI/ODBC/SQL_Anywhere.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::Oracle:
     file: lib/DBIx/Class/Schema/Loader/DBI/Oracle.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::Pg:
     file: lib/DBIx/Class/Schema/Loader/DBI/Pg.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::SQLAnywhere:
     file: lib/DBIx/Class/Schema/Loader/DBI/SQLAnywhere.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::SQLite:
     file: lib/DBIx/Class/Schema/Loader/DBI/SQLite.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::Sybase:
     file: lib/DBIx/Class/Schema/Loader/DBI/Sybase.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::Sybase::Common:
     file: lib/DBIx/Class/Schema/Loader/DBI/Sybase/Common.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::Sybase::Microsoft_SQL_Server:
     file: lib/DBIx/Class/Schema/Loader/DBI/Sybase/Microsoft_SQL_Server.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::Writing:
     file: lib/DBIx/Class/Schema/Loader/DBI/Writing.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::DBI::mysql:
     file: lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::RelBuilder:
     file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_040:
     file: lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_040.pm
-    version: 0.06001
+    version: 0.07000
   DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_05:
     file: lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_05.pm
-    version: 0.06001
+    version: 0.07000
+  DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_06:
+    file: lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_06.pm
+    version: 0.07000
 requires:
   Carp::Clan: 0
   Class::Accessor::Grouped: 0.09002
@@ -106,6 +112,7 @@ requires:
   Data::Dump: 1.06
   Data::Dumper::Concise: 1.200
   Digest::MD5: 2.36
+  Exporter: 5.63
   File::Slurp: 9999.13
   File::Spec: 0
   Lingua::EN::Inflect::Number: 1.1
@@ -120,4 +127,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.06001
+version: 0.07000

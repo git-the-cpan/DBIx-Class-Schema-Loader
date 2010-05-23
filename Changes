@@ -1,5 +1,30 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.07000  2010-05-22 23:40:15
+        - added qualify_objects option to prepend db_schema to table names
+        - fix for negative numeric default values
+        - sequence is detected for Oracle
+        - fix for SQLite is_auto_increment detection when table is empty (hobbs)
+        - rescan now reloads all tables
+        - minor type info improvements for all DBs
+        - fix erroneous default_value for MySQL NOT NULL columns (RT#57225)
+        - remove is_deferrable => 1 from default for belongs_to rels
+        - better type info for Oracle
+        - preliminary Informix support
+        - unregister dropped sources on rescan
+        - added 'preserve_case' option with support for all DBs where it makes
+          sense; removed the MSSQL 'case_sensitive_collation' and the
+          Firebird/InterBase 'unquoted_ddl' options in favor of it.
+        - support CamelCase table names and column names (in case-preserving
+          mode) at the v7 naming level
+        - rewrite datetime default functions as \'current_timestamp' where
+          possible (except for Sybase ASE) to ease cross-deployment
+        - use column_info instead of select to get Oracle column list (RT#42281)
+        - match quotes in MySQL parser in more places (RT#42101)
+        - fix unique detection in DB2 for multiple schemas (RT#39622)
+        - fix column name collisions with methods (RT#49443)
+        - fix loading MySQL views on older MySQL versions (RT#47399)
+
 0.06001  2010-04-10 01:31:12
         - fix type info for MSSQL
         - fix MSSQL collation detection on freetds tds version 8.0

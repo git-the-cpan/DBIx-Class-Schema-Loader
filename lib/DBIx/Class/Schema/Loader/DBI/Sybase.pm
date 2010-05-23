@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI::Sybase::Common';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.06001';
+our $VERSION = '0.07000';
 
 =head1 NAME
 
@@ -19,7 +19,15 @@ See L<DBIx::Class::Schema::Loader> and L<DBIx::Class::Schema::Loader::Base>.
 
 =cut
 
-sub _is_case_sensitive { 1 }
+sub _setup {
+    my $self = shift;
+
+    $self->next::method(@_);
+
+    if (not defined $self->preserve_case) {
+        $self->preserve_case(1);
+    }
+}
 
 sub _rebless {
     my $self = shift;

@@ -9,7 +9,7 @@ use base qw/
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.06001';
+our $VERSION = '0.07000';
 
 =head1 NAME
 
@@ -37,6 +37,14 @@ sub _setup {
 
     my $dbh = $self->schema->storage->dbh;
     $self->{db_schema} ||= $dbh->selectrow_array('VALUES(CURRENT_USER)', {});
+
+    if (not defined $self->preserve_case) {
+        $self->preserve_case(0);
+    }
+    elsif ($self->preserve_case) {
+        $self->schema->storage->sql_maker->quote_char('"');
+        $self->schema->storage->sql_maker->name_sep('.');
+    }
 }
 
 sub _table_uniq_info {
@@ -49,16 +57,17 @@ sub _table_uniq_info {
     my $sth = $self->{_cache}->{db2_uniq} ||= $dbh->prepare(
         q{SELECT kcu.COLNAME, kcu.CONSTNAME, kcu.COLSEQ
         FROM SYSCAT.TABCONST as tc
-        JOIN SYSCAT.KEYCOLUSE as kcu ON tc.CONSTNAME = kcu.CONSTNAME
+        JOIN SYSCAT.KEYCOLUSE as kcu
+        ON tc.CONSTNAME = kcu.CONSTNAME AND tc.TABSCHEMA = kcu.TABSCHEMA
         WHERE tc.TABSCHEMA = ? and tc.TABNAME = ? and tc.TYPE = 'U'}
     ) or die $DBI::errstr;
 
-    $sth->execute($self->db_schema, uc $table) or die $DBI::errstr;
+    $sth->execute($self->db_schema, $self->_uc($table)) or die $DBI::errstr;
 
     my %keydata;
     while(my $row = $sth->fetchrow_arrayref) {
         my ($col, $constname, $seq) = @$row;
-        push(@{$keydata{$constname}}, [ $seq, lc $col ]);
+        push(@{$keydata{$constname}}, [ $seq, $self->_lc($col) ]);
     }
     foreach my $keyname (keys %keydata) {
         my @ordered_cols = map { $_->[1] } sort { $a->[0] <=> $b->[0] }
@@ -76,7 +85,7 @@ sub _tables_list {
     my ($self, $opts) = @_;
     
     my $dbh = $self->schema->storage->dbh;
-    my @tables = map { lc } $dbh->tables(
+    my @tables = map $self->_lc($_), $dbh->tables(
         $self->db_schema ? { TABLE_SCHEM => $self->db_schema } : undef
     );
     s/\Q$self->{_quoter}\E//g for @tables;
@@ -87,45 +96,54 @@ sub _tables_list {
 
 sub _table_pk_info {
     my ($self, $table) = @_;
-    return $self->next::method(uc $table);
+    return $self->next::method($self->_uc($table));
 }
 
 sub _table_fk_info {
     my ($self, $table) = @_;
 
-    my $rels = $self->next::method(uc $table);
+    my $rels = $self->next::method($self->_uc($table));
 
     foreach my $rel (@$rels) {
-        $rel->{remote_table} = lc $rel->{remote_table};
+        $rel->{remote_table} = $self->_lc($rel->{remote_table});
     }
 
     return $rels;
 }
 
 sub _columns_info_for {
-    my ($self, $table) = @_;
-    return $self->next::method(uc $table);
-}
+    my $self = shift;
+    my ($table) = @_;
 
-sub _extra_column_info {
-    my ($self, $table, $column, $info, $dbi_info) = @_;
-    my %extra_info;
+    my $result = $self->next::method($self->_uc($table));
 
     my $dbh = $self->schema->storage->dbh;
-    my $sth = $dbh->prepare_cached(
-        q{
-            SELECT COUNT(*)
-            FROM syscat.columns
-            WHERE tabschema = ? AND tabname = ? AND colname = ?
-            AND identity = 'Y' AND generated != ''
-        },
-        {}, 1);
-    $sth->execute($self->db_schema, $table, $column);
-    if ($sth->fetchrow_array) {
-        $extra_info{is_auto_increment} = 1;
+
+    while (my ($col, $info) = each %$result) {
+        # check for identities
+        my $sth = $dbh->prepare_cached(
+            q{
+                SELECT COUNT(*)
+                FROM syscat.columns
+                WHERE tabschema = ? AND tabname = ? AND colname = ?
+                AND identity = 'Y' AND generated != ''
+            },
+            {}, 1);
+        $sth->execute($self->db_schema, $self->_uc($table), $self->_uc($col));
+        if ($sth->fetchrow_array) {
+            $info->{is_auto_increment} = 1;
+        }
+
+        if ((eval { lc ${ $info->{default_value} } }||'') eq 'current timestamp') {
+            ${ $info->{default_value} } = 'current_timestamp';
+            delete $info->{size};
+
+            my $orig_deflt = 'current timestamp';
+            $info->{original}{default_value} = \$orig_deflt;
+        }
     }
 
-    return \%extra_info;
+    return $result;
 }
 
 =head1 SEE ALSO
@@ -145,3 +163,4 @@ the same terms as Perl itself.
 =cut
 
 1;
+# vim:et sts=4 sw=4 tw=0:

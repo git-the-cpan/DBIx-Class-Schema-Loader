@@ -6,11 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI::Sybase::Common';
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-__PACKAGE__->mk_group_accessors('simple', qw/
-    case_sensitive_collation
-/);
-
-our $VERSION = '0.06001';
+our $VERSION = '0.07000';
 
 =head1 NAME
 
@@ -39,24 +35,23 @@ case-sensitive databases.
 
 To manually control case-sensitive mode, put:
 
-    case_sensitive_collation => 1|0
+    preserve_case => 1|0
 
 in your Loader options.
 
+See L<preserve_case|DBIx::Class::Schema::Loader::Base/preserve_case>.
+
+B<NOTE:> this option used to be called C<case_sensitive_collation>, but has
+been renamed to a more generic option.
+
 =cut
-
-sub _is_case_sensitive {
-    my $self = shift;
-
-    return $self->case_sensitive_collation ? 1 : 0;
-}
 
 sub _setup {
     my $self = shift;
 
-    $self->next::method;
+    $self->next::method(@_);
 
-    return if defined $self->case_sensitive_collation;
+    return if defined $self->preserve_case;
 
     my $dbh = $self->schema->storage->dbh;
 
@@ -75,22 +70,18 @@ sub _setup {
         warn <<'EOF';
 
 WARNING: MSSQL Collation detection failed. Defaulting to case-insensitive mode.
-Override the 'case_sensitive_collation' attribute in your Loader options if
-needed.
+Override the 'preserve_case' attribute in your Loader options if needed.
+
+See 'preserve_case' in
+perldoc DBIx::Class::Schema::Loader::Base
 EOF
-        $self->case_sensitive_collation(0);
+        $self->preserve_case(0);
         return;
     }
 
     my $case_sensitive = $collation_name =~ /_(?:CS|BIN2?)(?:_|\z)/;
 
-    $self->case_sensitive_collation($case_sensitive ? 1 : 0);
-}
-
-sub _lc {
-    my ($self, $name) = @_;
-
-    return $self->case_sensitive_collation ? $name : lc($name);
+    $self->preserve_case($case_sensitive ? 1 : 0);
 }
 
 sub _tables_list {
@@ -100,9 +91,9 @@ sub _tables_list {
     my $sth = $dbh->prepare(<<'EOF');
 SELECT t.table_name
 FROM INFORMATION_SCHEMA.TABLES t
-WHERE lower(t.table_schema) = ?
+WHERE t.table_schema = ?
 EOF
-    $sth->execute(lc $self->db_schema);
+    $sth->execute($self->db_schema);
 
     my @tables = map @$_, @{ $sth->fetchall_arrayref };
 
@@ -163,7 +154,7 @@ SELECT ccu.constraint_name, ccu.column_name
 FROM INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu
 JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc on (ccu.constraint_name = tc.constraint_name)
 JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu on (ccu.constraint_name = kcu.constraint_name and ccu.column_name = kcu.column_name)
-wHERE lower(ccu.table_name) = @{[ $dbh->quote(lc $table) ]} AND constraint_type = 'UNIQUE' ORDER BY kcu.ordinal_position
+wHERE ccu.table_name = @{[ $dbh->quote($table) ]} AND constraint_type = 'UNIQUE' ORDER BY kcu.ordinal_position
     });
     $sth->execute;
     my $constraints;
@@ -190,8 +181,8 @@ sub _columns_info_for {
         my $sth = $dbh->prepare(qq{
 SELECT column_name 
 FROM INFORMATION_SCHEMA.COLUMNS
-WHERE columnproperty(object_id(@{[ $dbh->quote(lc $table) ]}, 'U'), @{[ $dbh->quote(lc $col) ]}, 'IsIdentity') = 1
-AND lower(table_name) = @{[ $dbh->quote(lc $table) ]} AND lower(column_name) = @{[ $dbh->quote(lc $col) ]}
+WHERE columnproperty(object_id(@{[ $dbh->quote($table) ]}, 'U'), @{[ $dbh->quote($col) ]}, 'IsIdentity') = 1
+AND table_name = @{[ $dbh->quote($table) ]} AND column_name = @{[ $dbh->quote($col) ]}
         });
         if (eval { $sth->execute; $sth->fetchrow_array }) {
             $info->{is_auto_increment} = 1;
@@ -210,10 +201,6 @@ AND lower(table_name) = @{[ $dbh->quote(lc $table) ]} AND lower(column_name) = @
             if (ref($info->{size}) && $info->{size}[0] == 18 && $info->{size}[1] == 0) {
                 delete $info->{size};
             }
-        }
-        elsif ($info->{data_type} eq 'real') {
-            $info->{data_type} = 'float';
-            $info->{size}      = 24;
         }
         elsif ($info->{data_type} eq 'float') {
             $info->{data_type} = 'double precision';
@@ -275,7 +262,7 @@ AND lower(table_name) = @{[ $dbh->quote(lc $table) ]} AND lower(column_name) = @
         $sth = $dbh->prepare(qq{
 SELECT column_default
 FROM INFORMATION_SCHEMA.COLUMNS
-wHERE lower(table_name) = @{[ $dbh->quote(lc $table) ]} AND lower(column_name) = @{[ $dbh->quote(lc $col) ]}
+wHERE table_name = @{[ $dbh->quote($table) ]} AND column_name = @{[ $dbh->quote($col) ]}
         });
         my ($default) = eval { $sth->execute; $sth->fetchrow_array };
 
@@ -288,6 +275,13 @@ wHERE lower(table_name) = @{[ $dbh->quote(lc $table) ]} AND lower(column_name) =
             $info->{default_value} =
                 $default =~ /^['(] (.*) [)']\z/x ? $1 :
                     $default =~ /^\d/ ? $default : \$default;
+
+            if ((eval { lc ${ $info->{default_value} } }||'') eq 'getdate()') {
+                ${ $info->{default_value} } = 'current_timestamp';
+
+                my $getdate = 'getdate()';
+                $info->{original}{default_value} = \$getdate;
+            }
         }
     }
 

@@ -6,7 +6,7 @@ use base qw/DBIx::Class::Schema::Loader::Base/;
 use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
 
-our $VERSION = '0.06001';
+our $VERSION = '0.07000';
 
 =head1 NAME
 
@@ -132,14 +132,7 @@ sub _filter_tables {
         }
         else {
             warn "Bad table or view '$table', ignoring: $@\n";
-            local $@;
-            eval {
-                my $schema = $self->schema;
-                # in older DBIC it's a private method
-                my $unregister = $schema->can('unregister_source')
-                    || $schema->can('_unregister_source');
-                $schema->$unregister($self->_table2moniker($table));
-            };
+            $self->_unregister_source_for_table($table);
         }
     }
 
@@ -190,7 +183,7 @@ sub _table_columns {
 
     my $sth = $self->_sth_for($table, undef, \'1 = 0');
     $sth->execute;
-    my $retval = $self->_is_case_sensitive ? \@{$sth->{NAME}} : \@{$sth->{NAME_lc}};
+    my $retval = $self->preserve_case ? \@{$sth->{NAME}} : \@{$sth->{NAME_lc}};
     $sth->finish;
 
     $retval;
@@ -202,7 +195,7 @@ sub _table_pk_info {
 
     my $dbh = $self->schema->storage->dbh;
 
-    my @primary = map { lc } $dbh->primary_key('', $self->db_schema, $table);
+    my @primary = map { $self->_lc($_) } $dbh->primary_key('', $self->db_schema, $table);
     s/\Q$self->{_quoter}\E//g for @primary;
 
     return \@primary;
@@ -259,15 +252,15 @@ sub _table_fk_info {
     my $i = 1; # for unnamed rels, which hopefully have only 1 column ...
     while(my $raw_rel = $sth->fetchrow_arrayref) {
         my $uk_tbl  = $raw_rel->[2];
-        my $uk_col  = lc $raw_rel->[3];
-        my $fk_col  = lc $raw_rel->[7];
+        my $uk_col  = $self->_lc($raw_rel->[3]);
+        my $fk_col  = $self->_lc($raw_rel->[7]);
         my $relid   = ($raw_rel->[11] || ( "__dcsld__" . $i++ ));
         $uk_tbl =~ s/\Q$self->{_quoter}\E//g;
         $uk_col =~ s/\Q$self->{_quoter}\E//g;
         $fk_col =~ s/\Q$self->{_quoter}\E//g;
         $relid  =~ s/\Q$self->{_quoter}\E//g;
         $rels{$relid}->{tbl} = $uk_tbl;
-        $rels{$relid}->{cols}->{$uk_col} = $fk_col;
+        $rels{$relid}->{cols}{$uk_col} = $fk_col;
     }
     $sth->finish;
 
@@ -326,7 +319,7 @@ sub _columns_info_for {
     my %result;
     my $sth = $self->_sth_for($table, undef, \'1 = 0');
     $sth->execute;
-    my @columns = @{ $self->_is_case_sensitive ? $sth->{NAME} : $sth->{NAME_lc} };
+    my @columns = @{ $self->preserve_case ? $sth->{NAME} : $sth->{NAME_lc} };
     for my $i ( 0 .. $#columns ){
         my $column_info = {};
         $column_info->{data_type} = lc $sth->{TYPE}->[$i];

@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Exception;
 use DBIx::Class::Schema::Loader;
 use Class::Unload;
 use File::Path;
@@ -44,8 +45,8 @@ sub new {
     $self->{date_datatype} ||= 'DATE';
 
     # Not all DBS do SQL-standard CURRENT_TIMESTAMP
-    $self->{default_function} ||= "CURRENT_TIMESTAMP";
-    $self->{default_function_def} ||= "TIMESTAMP DEFAULT $self->{default_function}";
+    $self->{default_function} ||= "current_timestamp";
+    $self->{default_function_def} ||= "timestamp default $self->{default_function}";
 
     $self = bless $self, $class;
 
@@ -87,7 +88,7 @@ sub run_tests {
 
     my $extra_count = $self->{extra}{count} || 0;
 
-    plan tests => @connect_info * (174 + $extra_count + ($self->{data_type_tests}{test_count} || 0));
+    plan tests => @connect_info * (181 + $extra_count + ($self->{data_type_tests}{test_count} || 0));
 
     foreach my $info_idx (0..$#connect_info) {
         my $info = $connect_info[$info_idx];
@@ -109,6 +110,8 @@ sub run_only_extra_tests {
 
     plan tests => @$connect_info * (4 + ($self->{extra}{count} || 0) + ($self->{data_type_tests}{test_count} || 0));
 
+    rmtree $DUMP_DIR;
+
     foreach my $info_idx (0..$#$connect_info) {
         my $info = $connect_info->[$info_idx];
 
@@ -117,13 +120,22 @@ sub run_only_extra_tests {
         $self->drop_extra_tables_only;
 
         my $dbh = $self->dbconnect(1);
-        $dbh->do($_) for @{ $self->{extra}{create} || [] };
-        $dbh->do($self->{data_type_tests}{ddl}) if $self->{data_type_tests}{ddl};
+        {
+            # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
+            local $SIG{__WARN__} = sub {
+                my $msg = shift;
+                warn $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
+            };
+
+
+            $dbh->do($_) for @{ $self->{extra}{create} || [] };
+            $dbh->do($_) for @{ $self->{data_type_tests}{ddl} || []};
+        }
         $self->{_created} = 1;
 
         my $file_count = grep /CREATE (?:TABLE|VIEW)/i, @{ $self->{extra}{create} || [] };
         $file_count++; # schema
-        $file_count++ if $self->{data_type_tests}{ddl};
+        $file_count++ for @{ $self->{data_type_tests}{table_names} || [] };
 
         my $schema_class = $self->setup_schema($info, $file_count);
         my ($monikers, $classes) = $self->monikers_and_classes($schema_class);
@@ -146,7 +158,7 @@ sub drop_extra_tables_only {
     $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
     $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
 
-    if (my $data_type_table = $self->{data_type_tests}{table_name}) {
+    foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
         $dbh->do("DROP TABLE $data_type_table");
     }
 }
@@ -165,7 +177,7 @@ sub setup_schema {
 
     my %loader_opts = (
         constraint              =>
-	    qr/^(?:\S+\.)?(?:(?:$self->{vendor}|extra)_)?loader_test[0-9]+(?!.*_)/i,
+	    qr/^(?:\S+\.)?(?:(?:$self->{vendor}|extra)_?)?loader_?test[0-9]+(?!.*_)/i,
         relationships           => 1,
         additional_classes      => 'TestAdditional',
         additional_base_classes => 'TestAdditionalBase',
@@ -207,7 +219,8 @@ sub setup_schema {
         my $standard_sources = not defined $expected_count;
 
         if ($standard_sources) {
-            $expected_count = 36 + ($self->{data_type_tests}{test_count} ? 1 : 0);
+            $expected_count = 36;
+            $expected_count++ for @{ $self->{data_type_tests}{table_names} || [] };
 
             $expected_count += grep /CREATE (?:TABLE|VIEW)/i,
                 @{ $self->{extra}{create} || [] };
@@ -232,6 +245,8 @@ sub setup_schema {
         $warn_count++ for grep /renaming \S+ relation/, @loader_warnings;
  
         $warn_count++ for grep /\b(?!loader_test9)\w+ has no primary key/i, @loader_warnings;
+
+        $warn_count++ for grep { my $w = $_; grep $w =~ $_, @{ $self->{warnings} || [] } } @loader_warnings;
 
         if ($standard_sources) {
             if($self->{skip_rels}) {
@@ -302,7 +317,13 @@ sub test_schema {
     isa_ok( $rsobj35, "DBIx::Class::ResultSet" );
 
     my @columns_lt2 = $class2->columns;
-    is_deeply( \@columns_lt2, [ qw/id dat dat2/ ], "Column Ordering" );
+    is_deeply( \@columns_lt2, [ qw/id dat dat2 set_primary_key dbix_class_testcomponent/ ], "Column Ordering" );
+
+    is $class2->column_info('set_primary_key')->{accessor}, undef,
+        'accessor for column name that conflicts with a result base class method removed';
+
+    is $class2->column_info('dbix_class_testcomponent')->{accessor}, undef,
+        'accessor for column name that conflicts with a component class method removed';
 
     my %uniq1 = $class1->unique_constraints;
     my $uniq1_test = 0;
@@ -414,8 +435,18 @@ sub test_schema {
     );
 
     is(
-        $class35->column_info('a_double')->{default_value}, 10.555,
+        $class35->column_info('a_negative_int')->{default_value}, -42,
+        'constant negative integer default',
+    );
+
+    cmp_ok(
+        $class35->column_info('a_double')->{default_value}, '==', 10.555,
         'constant numeric default',
+    );
+
+    cmp_ok(
+        $class35->column_info('a_negative_double')->{default_value}, '==', -10.555,
+        'constant negative numeric default',
     );
 
     my $function_default = $class35->column_info('a_function')->{default_value};
@@ -589,8 +620,8 @@ sub test_schema {
         is $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{on_update}, 'CASCADE',
             "on_update => 'CASCADE' on belongs_to by default";
 
-        is $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{is_deferrable}, 1,
-            "is_deferrable => 1 on belongs_to by default";
+        ok ((not exists $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{is_deferrable}),
+            "is_deferrable => 1 not on belongs_to by default");
 
         ok ((not exists $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{cascade_delete}),
             'belongs_to does not have cascade_delete');
@@ -614,12 +645,14 @@ sub test_schema {
             'might_have does not have is_deferrable');
 
         # find on multi-col pk
-        my $obj5 = 
-	    eval { $rsobj5->find({id1 => 1, iD2 => 1}) } ||
-	    eval { $rsobj5->find({id1 => 1, id2 => 1}) };
-	die $@ if $@;
-
-        is( $obj5->id2, 1, "Find on multi-col PK" );
+        if ($conn->_loader->preserve_case) {
+            my $obj5 = $rsobj5->find({id1 => 1, iD2 => 1});
+            is $obj5->i_d2, 1, 'Find on multi-col PK';
+        }
+        else {
+	    my $obj5 = $rsobj5->find({id1 => 1, id2 => 1});
+            is $obj5->id2, 1, 'Find on multi-col PK';
+        }
 
         # mulit-col fk def
         my $obj6 = $rsobj6->find(1);
@@ -846,7 +879,7 @@ sub test_schema {
     }
 
     # rescan and norewrite test
-    SKIP: {
+    {
         my @statements_rescan = (
             qq{
                 CREATE TABLE loader_test30 (
@@ -864,7 +897,7 @@ sub test_schema {
 
         my $find_cb = sub {
             return if -d;
-            return if $_ eq 'LoaderTest30.pm';
+            return if /^(?:LoaderTest30|LoaderTest1|LoaderTest2X)\.pm\z/;
 
             open my $fh, '<', $_ or die "Could not open $_ for reading: $!";
             binmode $fh;
@@ -873,22 +906,25 @@ sub test_schema {
 
         find $find_cb, $DUMP_DIR;
 
-        my $before_digest = $digest->digest;
+#        system "rm -f /tmp/before_rescan/* /tmp/after_rescan/*";
+#        system "cp t/_common_dump/DBIXCSL_Test/Schema/*.pm /tmp/before_rescan";
 
+        my $before_digest = $digest->b64digest;
+
+        $conn->storage->disconnect; # needed for Firebird and Informix
         my $dbh = $self->dbconnect(1);
 
         {
             # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
             local $SIG{__WARN__} = sub {
                 my $msg = shift;
-                print STDERR $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
+                warn $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
             };
 
             $dbh->do($_) for @statements_rescan;
         }
 
         $dbh->disconnect;
-        $conn->storage->disconnect; # needed for Firebird
 
         sleep 1;
 
@@ -899,9 +935,11 @@ sub test_schema {
         };
         is_deeply(\@new, [ qw/LoaderTest30/ ], "Rescan");
 
+#        system "cp t/_common_dump/DBIXCSL_Test/Schema/*.pm /tmp/after_rescan";
+
         $digest = Digest::MD5->new;
         find $find_cb, $DUMP_DIR;
-        my $after_digest = $digest->digest;
+        my $after_digest = $digest->b64digest;
 
         is $before_digest, $after_digest,
             'dumped files are not rewritten when there is no modification';
@@ -909,19 +947,36 @@ sub test_schema {
         my $rsobj30   = $conn->resultset('LoaderTest30');
         isa_ok($rsobj30, 'DBIx::Class::ResultSet');
 
-        skip 'no rels', 2 if $self->{skip_rels};
+        SKIP: {
+            skip 'no rels', 2 if $self->{skip_rels};
 
-        my $obj30 = $rsobj30->find(123);
-        isa_ok( $obj30->loader_test2, $class2);
+            my $obj30 = $rsobj30->find(123);
+            isa_ok( $obj30->loader_test2, $class2);
 
-        ok($rsobj30->result_source->column_info('loader_test2')->{is_foreign_key},
-           'Foreign key detected');
+            ok($rsobj30->result_source->column_info('loader_test2')->{is_foreign_key},
+               'Foreign key detected');
+        }
+
+        $conn->storage->disconnect; # for Firebird
+        $conn->storage->dbh->do("DROP TABLE loader_test30");
+
+        @new = do {
+            local $SIG{__WARN__} = sub {};
+            $conn->rescan;
+        };
+        is_deeply(\@new, [], 'no new tables on rescan');
+
+        throws_ok { $conn->resultset('LoaderTest30') }
+            qr/Can't find source/,
+            'source unregistered for dropped table after rescan';
     }
 
     $self->test_data_types($conn);
 
     # run extra tests
     $self->{extra}{run}->($conn, $monikers, $classes) if $self->{extra}{run};
+
+    $self->test_preserve_case($conn);
 
     $self->drop_tables unless $ENV{SCHEMA_LOADER_TESTS_NOCLEANUP};
 
@@ -933,31 +988,86 @@ sub test_data_types {
 
     if ($self->{data_type_tests}{test_count}) {
         my $data_type_tests = $self->{data_type_tests};
-        my $columns = $data_type_tests->{columns};
 
-        my $rsrc = $conn->resultset($data_type_tests->{table_moniker})->result_source;
+        foreach my $moniker (@{ $data_type_tests->{table_monikers} }) {
+            my $columns = $data_type_tests->{columns}{$moniker};
 
-        while (my ($col_name, $expected_info) = each %$columns) {
-            my %info = %{ $rsrc->column_info($col_name) };
-            delete @info{qw/is_nullable timezone locale sequence/};
+            my $rsrc = $conn->resultset($moniker)->result_source;
 
-            my $text_col_def = do {
-                my $dd = Dumper;
-                $dd->Indent(0);
-                $dd->Values([\%info]);
-                $dd->Dump;
-            };
+            while (my ($col_name, $expected_info) = each %$columns) {
+                my %info = %{ $rsrc->column_info($col_name) };
+                delete @info{qw/is_nullable timezone locale sequence/};
 
-            my $text_expected_info = do {
-                my $dd = Dumper;
-                $dd->Indent(0);
-                $dd->Values([$expected_info]);
-                $dd->Dump;
-            };
+                my $text_col_def = do {
+                    my $dd = Dumper;
+                    $dd->Indent(0);
+                    $dd->Values([\%info]);
+                    $dd->Dump;
+                };
 
-            is_deeply \%info, $expected_info,
-                "test column $col_name has definition: $text_col_def expecting: $text_expected_info";
+                my $text_expected_info = do {
+                    my $dd = Dumper;
+                    $dd->Indent(0);
+                    $dd->Values([$expected_info]);
+                    $dd->Dump;
+                };
+
+                is_deeply \%info, $expected_info,
+                    "test column $col_name has definition: $text_col_def expecting: $text_expected_info";
+            }
         }
+    }
+}
+
+sub test_preserve_case {
+    my ($self, $conn) = @_;
+
+    my ($oqt, $cqt) = $self->get_oqt_cqt(always => 1); # open quote, close quote
+
+    my $dbh = $conn->storage->dbh;
+
+    {
+        # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
+        local $SIG{__WARN__} = sub {
+            my $msg = shift;
+            warn $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
+        };
+
+        $dbh->do($_) for (
+qq|
+    CREATE TABLE ${oqt}LoaderTest40${cqt} (
+        ${oqt}Id${cqt} INTEGER NOT NULL PRIMARY KEY,
+        ${oqt}Foo3Bar${cqt} VARCHAR(100) NOT NULL
+    ) $self->{innodb}
+|,
+qq|
+    CREATE TABLE ${oqt}LoaderTest41${cqt} (
+        ${oqt}Id${cqt} INTEGER NOT NULL PRIMARY KEY,
+        ${oqt}LoaderTest40Id${cqt} INTEGER,
+        FOREIGN KEY (${oqt}LoaderTest40Id${cqt}) REFERENCES ${oqt}LoaderTest40${cqt} (${oqt}Id${cqt})
+    ) $self->{innodb}
+|,
+qq| INSERT INTO ${oqt}LoaderTest40${cqt} VALUES (1, 'foo') |,
+qq| INSERT INTO ${oqt}LoaderTest41${cqt} VALUES (1, 1) |,
+        );
+    }
+    $conn->storage->disconnect;
+
+    local $conn->_loader->{preserve_case} = 1;
+    $conn->_loader->_setup;
+
+    {
+        local $SIG{__WARN__} = sub {};
+        $conn->rescan;
+    }
+
+    if (not $self->{skip_rels}) {
+        is $conn->resultset('LoaderTest41')->find(1)->loader_test40->foo3_bar, 'foo',
+            'rel and accessor for mixed-case column name in mixed case table';
+    }
+    else {
+        is $conn->resultset('LoaderTest40')->find(1)->foo3_bar, 'foo',
+            'accessor for mixed-case column name in mixed case table';
     }
 }
 
@@ -1021,6 +1131,26 @@ sub dbconnect {
     return $dbh;
 }
 
+sub get_oqt_cqt {
+    my $self = shift;
+    my %opts = @_;
+
+    if ((not $opts{always}) && $self->{preserve_case_mode_is_exclusive}) {
+        return ('', '');
+    }
+
+    # XXX should get quote_char from the storage of an initialized loader.
+    my ($oqt, $cqt); # open quote, close quote
+    if (ref $self->{quote_char}) {
+        ($oqt, $cqt) = @{ $self->{quote_char} };
+    }
+    else {
+        $oqt = $cqt = $self->{quote_char} || '';
+    }
+
+    return ($oqt, $cqt);
+}
+
 sub create {
     my $self = shift;
 
@@ -1040,11 +1170,14 @@ sub create {
         q{ INSERT INTO loader_test1s (dat) VALUES('bar') }, 
         q{ INSERT INTO loader_test1s (dat) VALUES('baz') }, 
 
+        # also test method collision
         qq{ 
             CREATE TABLE loader_test2 (
                 id $self->{auto_inc_pk},
                 dat VARCHAR(32) NOT NULL,
                 dat2 VARCHAR(32) NOT NULL,
+                set_primary_key INTEGER $self->{null},
+                dbix_class_testcomponent INTEGER $self->{null},
                 UNIQUE (dat2, dat)
             ) $self->{innodb}
         },
@@ -1074,7 +1207,9 @@ sub create {
                 id INTEGER NOT NULL PRIMARY KEY,
                 a_varchar VARCHAR(100) DEFAULT 'foo',
                 an_int INTEGER DEFAULT 42,
+                a_negative_int INTEGER DEFAULT -42,
                 a_double DOUBLE PRECISION DEFAULT 10.555,
+                a_negative_double DOUBLE PRECISION DEFAULT -10.555,
                 a_function $self->{default_function_def}
             ) $self->{innodb}
         },
@@ -1088,6 +1223,9 @@ sub create {
             ) $self->{innodb}
         },
     );
+
+    # some DBs require mixed case identifiers to be quoted
+    my ($oqt, $cqt) = $self->get_oqt_cqt;
 
     @statements_reltests = (
         qq{
@@ -1116,33 +1254,33 @@ sub create {
         q{ INSERT INTO loader_test4 (id,fkid,dat) VALUES(125,3,'ccc') },
         q{ INSERT INTO loader_test4 (id,fkid,dat) VALUES(126,4,'ddd') },
 
-        qq{
+        qq|
             CREATE TABLE loader_test5 (
                 id1 INTEGER NOT NULL,
-                iD2 INTEGER NOT NULL,
+                ${oqt}iD2${cqt} INTEGER NOT NULL,
                 dat VARCHAR(8),
                 from_id INTEGER $self->{null},
                 to_id INTEGER $self->{null},
-                PRIMARY KEY (id1,iD2),
+                PRIMARY KEY (id1,${oqt}iD2${cqt}),
                 FOREIGN KEY (from_id) REFERENCES loader_test4 (id),
                 FOREIGN KEY (to_id) REFERENCES loader_test4 (id)
             ) $self->{innodb}
-        },
+        |,
 
-        q{ INSERT INTO loader_test5 (id1,iD2,dat) VALUES (1,1,'aaa') },
+        qq| INSERT INTO loader_test5 (id1,${oqt}iD2${cqt},dat) VALUES (1,1,'aaa') |,
 
-        qq{
+        qq|
             CREATE TABLE loader_test6 (
                 id INTEGER NOT NULL PRIMARY KEY,
-                Id2 INTEGER,
+                ${oqt}Id2${cqt} INTEGER,
                 loader_test2_id INTEGER,
                 dat VARCHAR(8),
                 FOREIGN KEY (loader_test2_id)  REFERENCES loader_test2 (id),
-                FOREIGN KEY(id,Id2) REFERENCES loader_test5 (id1,iD2)
+                FOREIGN KEY(id,${oqt}Id2${cqt}) REFERENCES loader_test5 (id1,${oqt}iD2${cqt})
             ) $self->{innodb}
-        },
+        |,
 
-        (q{ INSERT INTO loader_test6 (id, Id2,loader_test2_id,dat) } .
+        (qq| INSERT INTO loader_test6 (id, ${oqt}Id2${cqt},loader_test2_id,dat) | .
          q{ VALUES (1, 1,1,'aaa') }),
 
         qq{
@@ -1372,9 +1510,16 @@ sub create {
         },
         $make_auto_inc->(qw/loader_test11 id11/),
 
-        (q{ ALTER TABLE loader_test10 ADD CONSTRAINT } .
-         q{ loader_test11_fk FOREIGN KEY (loader_test11) } .
-         q{ REFERENCES loader_test11 (id11) }),
+        (lc($self->{vendor}) ne 'informix' ?
+            (q{ ALTER TABLE loader_test10 ADD CONSTRAINT loader_test11_fk } .
+             q{ FOREIGN KEY (loader_test11) } .
+             q{ REFERENCES loader_test11 (id11) })
+        :
+            (q{ ALTER TABLE loader_test10 ADD CONSTRAINT } .
+             q{ FOREIGN KEY (loader_test11) } .
+             q{ REFERENCES loader_test11 (id11) } .
+             q{ CONSTRAINT loader_test11_fk })
+        ),
     );
 
     @statements_advanced_sqlite = (
@@ -1453,12 +1598,12 @@ sub create {
     # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
     local $SIG{__WARN__} = sub {
         my $msg = shift;
-        print STDERR $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
+        warn $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
     };
 
-    $dbh->do($_) for (@statements);
+    $dbh->do($_) foreach (@statements);
 
-    $dbh->do($self->{data_type_tests}{ddl}) if $self->{data_type_tests}{ddl};
+    $dbh->do($_) foreach (@{ $self->{data_type_tests}{ddl} || [] });
 
     unless($self->{skip_rels}) {
         # hack for now, since DB2 doesn't like inline comments, and we need
@@ -1548,6 +1693,8 @@ sub drop_tables {
 
     my @tables_rescan = qw/ loader_test30 /;
 
+    my @tables_preserve_case_tests = qw/ LoaderTest41 LoaderTest40 /;
+
     my $drop_fk_mysql =
         q{ALTER TABLE loader_test10 DROP FOREIGN KEY loader_test11_fk};
 
@@ -1562,6 +1709,7 @@ sub drop_tables {
     my $drop_auto_inc = $self->{auto_inc_drop_cb} || sub {};
 
     unless($self->{skip_rels}) {
+        $dbh->do("DROP TABLE $_") for (@tables_reltests);
         $dbh->do("DROP TABLE $_") for (@tables_reltests);
         if($self->{vendor} =~ /mysql/i) {
             $dbh->do($drop_fk_mysql);
@@ -1582,9 +1730,13 @@ sub drop_tables {
     $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_auto_inc;
     $dbh->do("DROP TABLE $_") for (@tables, @tables_rescan);
 
-    if (my $data_type_table = $self->{data_type_tests}{table_name}) {
+    foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
         $dbh->do("DROP TABLE $data_type_table");
     }
+
+    my ($oqt, $cqt) = $self->get_oqt_cqt(always => 1);
+
+    $dbh->do("DROP TABLE ${oqt}${_}${cqt}") for @tables_preserve_case_tests;
 
     $dbh->disconnect;
 
@@ -1617,63 +1769,94 @@ sub _custom_column_info {
     return;
 }
 
+my %DATA_TYPE_MULTI_TABLE_OVERRIDES = (
+    oracle => qr/\blong\b/,
+    mssql  => qr/\b(?:timestamp|rowversion)\b/,
+);
+
 sub setup_data_type_tests {
     my $self = shift;
 
     return unless my $types = $self->{data_types};
 
     my $tests = $self->{data_type_tests} = {};
-    my $cols  = $tests->{columns}        = {};
 
-    $tests->{table_name}    = 'loader_test9999';
-    $tests->{table_moniker} = 'LoaderTest9999';
+    # split types into tables based on overrides
+    my (@types, @split_off_types, @first_table_types);
+    {
+        no warnings 'uninitialized';
 
-    my $ddl = "CREATE TABLE loader_test9999 (\n    id INTEGER NOT NULL PRIMARY KEY,\n";
-
-    my $test_count = 0;
-
-    my %seen_col_names;
-
-    while (my ($col_def, $expected_info) = each %$types) {
-        (my $type_alias = lc($col_def)) =~ s/\( ([^)]+) \)//xg;
-
-        my $size = $1;
-        $size = '' unless defined $size;
-        $size =~ s/\s+//g;
-        my @size = split /,/, $size;
-
-        # some DBs don't like very long column names
-        if ($self->{vendor} =~ /^firebird|sqlanywhere\z/i) {
-            my ($col_def, $default) = $type_alias =~ /^(.*)(default.*)?\z/i;
-
-            $type_alias = substr $col_def, 0, 15;
-
-            $type_alias .= '_with_dflt' if $default;
-        }
-
-        $type_alias =~ s/\s/_/g;
-        $type_alias =~ s/\W//g;
-
-        my $col_name = 'col_' . $type_alias;
-        
-        if (@size) {
-            my $size_name = join '_', apply { s/\W//g } @size;
-
-            $col_name .= "_sz_$size_name";
-        }
-
-        $col_name .= "_$seen_col_names{$col_name}" if $seen_col_names{$col_name}++;
-
-        $ddl .= "    $col_name $col_def,\n";
-
-        $cols->{$col_name} = $expected_info;
-
-        $test_count++;
+        @types = keys %$types;
+        @split_off_types   = grep  /$DATA_TYPE_MULTI_TABLE_OVERRIDES{lc($self->{vendor})}/i, @types;
+        @first_table_types = grep !/$DATA_TYPE_MULTI_TABLE_OVERRIDES{lc($self->{vendor})}/i, @types;
     }
 
-    $ddl =~ s/,\n\z/\n)/;
+    @types = +{ map +($_, $types->{$_}), @first_table_types },
+        map +{ $_, $types->{$_} }, @split_off_types;
 
-    $tests->{ddl}        = $ddl;
+    my $test_count = 0;
+    my $table_num  = 10000;
+
+    foreach my $types (@types) {
+        my $table_name    = "loader_test$table_num";
+        push @{ $tests->{table_names} }, $table_name;
+
+        my $table_moniker = "LoaderTest$table_num";
+        push @{ $tests->{table_monikers} }, $table_moniker;
+
+        $table_num++;
+
+        my $cols = $tests->{columns}{$table_moniker} = {};
+
+        my $ddl = "CREATE TABLE $table_name (\n    id INTEGER NOT NULL PRIMARY KEY,\n";
+
+        my %seen_col_names;
+
+        while (my ($col_def, $expected_info) = each %$types) {
+            (my $type_alias = $col_def) =~ s/\( ([^)]+) \)//xg;
+
+            my $size = $1;
+            $size = '' unless defined $size;
+            $size =~ s/\s+//g;
+            my @size = split /,/, $size;
+
+            # some DBs don't like very long column names
+            if ($self->{vendor} =~ /^(?:firebird|sqlanywhere|oracle)\z/i) {
+                my ($col_def, $default) = $type_alias =~ /^(.*)(default.*)?\z/i;
+
+                $type_alias = substr $col_def, 0, 15;
+
+                $type_alias .= '_with_dflt' if $default;
+            }
+
+            $type_alias =~ s/\s/_/g;
+            $type_alias =~ s/\W//g;
+
+            my $col_name = 'col_' . $type_alias;
+            
+            if (@size) {
+                my $size_name = join '_', apply { s/\W//g } @size;
+
+                $col_name .= "_sz_$size_name";
+            }
+
+            # XXX would be better to check _loader->preserve_case
+            $col_name = lc $col_name;
+
+            $col_name .= '_' . $seen_col_names{$col_name} if $seen_col_names{$col_name}++;
+
+            $ddl .= "    $col_name $col_def,\n";
+
+            $cols->{$col_name} = $expected_info;
+
+            $test_count++;
+        }
+
+        $ddl =~ s/,\n\z/\n)/;
+
+        push @{ $tests->{ddl} }, $ddl;
+    }
+
     $tests->{test_count} = $test_count;
 
     return $test_count;

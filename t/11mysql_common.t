@@ -18,6 +18,7 @@ my $tester = dbixcsl_common_tests->new(
     user             => $user,
     password         => $password,
     connect_info_opts=> { on_connect_call => 'set_strict_mode' },
+    loader_options   => { preserve_case => 1 },
     skip_rels        => $test_innodb ? 0 : $skip_rels_msg,
     no_inline_rels   => 1,
     no_implicit_rels => 1,
@@ -44,6 +45,8 @@ my $tester = dbixcsl_common_tests->new(
         'integer'     => { data_type => 'integer' },
         'integer unsigned'
                       => { data_type => 'integer',   extra => { unsigned => 1 } },
+        'integer not null'
+                      => { data_type => 'integer' },
         'bigint'      => { data_type => 'bigint' },
         'bigint unsigned'
                       => { data_type => 'bigint',    extra => { unsigned => 1 } },
@@ -89,8 +92,8 @@ my $tester = dbixcsl_common_tests->new(
         # Date and Time Types
         'date'        => { data_type => 'date' },
         'datetime'    => { data_type => 'datetime' },
-        'timestamp DEFAULT current_timestamp'
-                      => { data_type => 'timestamp', default_value => \"CURRENT_TIMESTAMP" },
+        'timestamp default current_timestamp'
+                      => { data_type => 'timestamp', default_value => \'current_timestamp' },
         'time'        => { data_type => 'time' },
         'year'        => { data_type => 'year' },
         'year(4)'     => { data_type => 'year' },
@@ -116,10 +119,34 @@ my $tester = dbixcsl_common_tests->new(
         'longblob'    => { data_type => 'longblob' },
         'longtext'    => { data_type => 'longtext' },
 
-        "enum('foo', 'bar', 'baz')"
+        "enum('foo','bar','baz')"
                       => { data_type => 'enum', extra => { list => [qw/foo bar baz/] } },
-        "set('foo', 'bar', 'baz')"
+        "set('foo','bar','baz')"
                       => { data_type => 'set',  extra => { list => [qw/foo bar baz/] } },
+    },
+    extra => {
+        create => [
+            q{
+                CREATE TABLE mysql_loader_test1 (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    value varchar(100)
+                )
+            },
+            q{
+                CREATE VIEW mysql_loader_test2 AS SELECT * FROM mysql_loader_test1
+            },
+        ],
+        pre_drop_ddl => [ 'DROP VIEW mysql_loader_test2', ],
+        drop => [ 'mysql_loader_test1', ],
+        count => 1,
+        run => sub {
+            my ($schema, $monikers, $classes) = @_;
+
+            my $rsrc = $schema->resultset($monikers->{mysql_loader_test2})->result_source;
+
+            is $rsrc->column_info('value')->{data_type}, 'varchar',
+                'view introspected successfully';
+        },
     },
 );
 

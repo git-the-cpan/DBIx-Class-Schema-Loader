@@ -41,7 +41,9 @@ my $tester = dbixcsl_common_tests->new(
         );
     },
     null        => '',
-    loader_options => { unquoted_ddl => 1 },
+    preserve_case_mode_is_exclusive => 1,
+    quote_char                      => '"',
+    warnings => [ qr/'preserve_case' option/ ],
     connect_info => [ ($dbd_interbase_dsn ? {
             dsn         => $dbd_interbase_dsn,
             user        => $dbd_interbase_user,
@@ -63,13 +65,13 @@ my $tester = dbixcsl_common_tests->new(
         'int'         => { data_type => 'integer' },
         'integer'     => { data_type => 'integer' },
         'bigint'      => { data_type => 'bigint' },
-        'float'       => { data_type => 'float' },
+        'float'       => { data_type => 'real' },
         'double precision' =>
                          { data_type => 'double precision' },
-        'real'        => { data_type => 'float' },
+        'real'        => { data_type => 'real' },
 
-        'float(2)'    => { data_type => 'float' },
-        'float(7)'    => { data_type => 'float' },
+        'float(2)'    => { data_type => 'real' },
+        'float(7)'    => { data_type => 'real' },
         'float(8)'    => { data_type => 'double precision' },
 
         'decimal'     => { data_type => 'decimal' },
@@ -94,8 +96,8 @@ my $tester = dbixcsl_common_tests->new(
 
         # Date and Time Types
         'date'        => { data_type => 'date' },
-        'timestamp DEFAULT CURRENT_TIMESTAMP'
-                      => { data_type => 'timestamp', default_value => \"CURRENT_TIMESTAMP" },
+        'timestamp default current_timestamp'
+                      => { data_type => 'timestamp', default_value => \'current_timestamp' },
         'time'        => { data_type => 'time' },
 
         # String Types
@@ -109,7 +111,7 @@ my $tester = dbixcsl_common_tests->new(
                       => { data_type => 'blob sub_type text' },
     },
     extra => {
-        count  => 7,
+        count  => 6,
         run    => sub {
             $schema = shift;
 
@@ -141,15 +143,8 @@ q{
 
             my $guard = Scope::Guard->new(\&cleanup_extra);
 
-            delete $schema->_loader->{unquoted_ddl};
-
-            my $warning;
-            {
-                local $SIG{__WARN__} = sub { $warning = shift };
-                $schema->_loader->_setup;
-            }
-            like $warning, qr/unquoted_ddl option/,
-                'warning mentions unquoted_ddl option';
+            local $schema->_loader->{preserve_case} = 1;
+            $schema->_loader->_setup;
 
             {
                 local $SIG{__WARN__} = sub {};

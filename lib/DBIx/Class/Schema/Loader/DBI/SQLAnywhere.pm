@@ -9,7 +9,7 @@ use base qw/
 /;
 use Carp::Clan qw/^DBIx::Class/;
 
-our $VERSION = '0.06001';
+our $VERSION = '0.07000';
 
 =head1 NAME
 
@@ -18,12 +18,14 @@ SQL Anywhere Implementation.
 
 =head1 DESCRIPTION
 
-See L<DBIx::Class::Schema::Loader::Base>.
+See L<DBIx::Class::Schema::Loader> and L<DBIx::Class::Schema::Loader::Base>.
 
 =cut
 
 sub _setup {
     my $self = shift;
+
+    $self->next::method(@_);
 
     $self->{db_schema} ||=
         ($self->schema->storage->dbh->selectrow_array('select user'))[0];
@@ -53,14 +55,14 @@ sub _columns_info_for {
 
     my $dbh = $self->schema->storage->dbh;
 
-    while (my ($column, $info) = each %$result) {
+    while (my ($col, $info) = each %$result) {
         my $def = $info->{default_value};
         if (ref $def eq 'SCALAR' && $$def eq 'autoincrement') {
             delete $info->{default_value};
             $info->{is_auto_increment} = 1;
         }
 
-        my ($user_type) = $dbh->selectrow_array(<<'EOF', {}, $table, lc $column);
+        my ($user_type) = $dbh->selectrow_array(<<'EOF', {}, $table, $col);
 SELECT ut.type_name
 FROM systabcol tc
 JOIN systab t ON tc.table_id = t.table_id
@@ -84,9 +86,9 @@ EOF
 SELECT tc.width, tc.scale
 FROM systabcol tc
 JOIN systab t ON t.table_id = tc.table_id
-WHERE t.table_name = ? AND lower(tc.column_name) = ?
+WHERE t.table_name = ? AND tc.column_name = ?
 EOF
-        $sth->execute($table, lc $column);
+        $sth->execute($table, $col);
         my ($width, $scale) = $sth->fetchrow_array;
         $sth->finish;
 
@@ -97,8 +99,18 @@ EOF
         elsif ($info->{data_type} =~ /^(?:n(?:varchar|char) | varbit)\z/x) {
             $info->{size} = $width;
         }
+        elsif ($info->{data_type} eq 'float') {
+            $info->{data_type} = 'real';
+        }
 
         delete $info->{default_value} if ref($info->{default_value}) eq 'SCALAR' && ${ $info->{default_value} } eq 'NULL';
+
+        if ((eval { lc ${ $info->{default_value} } }||'') eq 'current timestamp') {
+            ${ $info->{default_value} } = 'current_timestamp';
+
+            my $orig_deflt = 'current timestamp';
+            $info->{original}{default_value} = \$orig_deflt;
+        }
     }
 
     return $result;
@@ -114,7 +126,7 @@ sub _table_pk_info {
     my @keydata;
 
     while (my $row = $sth->fetchrow_hashref) {
-        push @keydata, lc $row->{column_name};
+        push @keydata, $self->_lc($row->{column_name});
     }
 
     return \@keydata;
@@ -140,9 +152,9 @@ EOF
     $sth->execute($table);
 
     while (my ($fk, $local_col, $remote_tab, $remote_col) = $sth->fetchrow_array) {
-        push @{$local_cols->{$fk}},  lc $local_col;
-        push @{$remote_cols->{$fk}}, lc $remote_col;
-        $remote_table->{$fk} = lc $remote_tab;
+        push @{$local_cols->{$fk}},  $self->_lc($local_col);
+        push @{$remote_cols->{$fk}}, $self->_lc($remote_col);
+        $remote_table->{$fk} = $remote_tab;
     }
 
     foreach my $fk (keys %$remote_table) {
@@ -172,7 +184,7 @@ EOF
 
     my $constraints;
     while (my ($constraint_name, $column) = $sth->fetchrow_array) {
-        push @{$constraints->{$constraint_name}}, lc $column;
+        push @{$constraints->{$constraint_name}}, $self->_lc($column);
     }
 
     my @uniqs = map { [ $_ => $constraints->{$_} ] } keys %$constraints;

@@ -9,27 +9,16 @@ use base qw/
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.06001';
+our $VERSION = '0.07000';
 
 =head1 NAME
 
 DBIx::Class::Schema::Loader::DBI::Oracle - DBIx::Class::Schema::Loader::DBI 
 Oracle Implementation.
 
-=head1 SYNOPSIS
-
-  package My::Schema;
-  use base qw/DBIx::Class::Schema::Loader/;
-
-  __PACKAGE__->loader_options( debug => 1 );
-
-  1;
-
 =head1 DESCRIPTION
 
 See L<DBIx::Class::Schema::Loader::Base>.
-
-This module is considered experimental and not well tested yet.
 
 =cut
 
@@ -46,6 +35,14 @@ sub _setup {
 
     if (lc($self->db_schema) ne lc($current_schema)) {
         $dbh->do('ALTER SESSION SET current_schema=' . $self->db_schema);
+    }
+
+    if (not defined $self->preserve_case) {
+        $self->preserve_case(0);
+    }
+    elsif ($self->preserve_case) {
+        $self->schema->storage->sql_maker->quote_char('"');
+        $self->schema->storage->sql_maker->name_sep('.');
     }
 }
 
@@ -69,12 +66,22 @@ sub _tables_list {
         $table =~ s/\w+\.//;
 
         next if $table eq 'PLAN_TABLE';
-        $table = lc $table;
+        $table = $self->_lc($table);
         push @tables, $1
           if $table =~ /\A(\w+)\z/;
     }
 
     return $self->_filter_tables(\@tables, $opts);
+}
+
+sub _table_columns {
+    my ($self, $table) = @_;
+
+    my $dbh = $self->schema->storage->dbh;
+
+    my $sth = $dbh->column_info(undef, $self->db_schema, $self->_uc($table), '%');
+
+    return [ map $self->_lc($_->{COLUMN_NAME}), @{ $sth->fetchall_arrayref({ COLUMN_NAME => 1 }) || [] } ];
 }
 
 sub _table_uniq_info {
@@ -91,14 +98,14 @@ sub _table_uniq_info {
         },
         {}, 1);
 
-    $sth->execute(uc $table,$self->{db_schema} );
+    $sth->execute($self->_uc($table),$self->{db_schema} );
     my %constr_names;
     while(my $constr = $sth->fetchrow_arrayref) {
-        my $constr_name = lc $constr->[0];
-        my $constr_def  = lc $constr->[1];
+        my $constr_name = $self->_lc($constr->[0]);
+        my $constr_col  = $self->_lc($constr->[1]);
         $constr_name =~ s/\Q$self->{_quoter}\E//;
-        $constr_def =~ s/\Q$self->{_quoter}\E//;
-        push @{$constr_names{$constr_name}}, $constr_def;
+        $constr_col  =~ s/\Q$self->{_quoter}\E//;
+        push @{$constr_names{$constr_name}}, $constr_col;
     }
     
     my @uniqs = map { [ $_ => $constr_names{$_} ] } keys %constr_names;
@@ -106,48 +113,146 @@ sub _table_uniq_info {
 }
 
 sub _table_pk_info {
-    my ($self, $table) = @_;
-    return $self->next::method(uc $table);
+    my ($self, $table) = (shift, shift);
+
+    return $self->next::method($self->_uc($table), @_);
 }
 
 sub _table_fk_info {
-    my ($self, $table) = @_;
+    my ($self, $table) = (shift, shift);
 
-    my $rels = $self->next::method(uc $table);
+    my $rels = $self->next::method($self->_uc($table), @_);
 
     foreach my $rel (@$rels) {
-        $rel->{remote_table} = lc $rel->{remote_table};
+        $rel->{remote_table} = $self->_lc($rel->{remote_table});
     }
 
     return $rels;
 }
 
 sub _columns_info_for {
-    my ($self, $table) = @_;
-    return $self->next::method(uc $table);
-}
+    my ($self, $table) = (shift, shift);
 
-sub _extra_column_info {
-    my ($self, $table, $column, $info, $dbi_info) = @_;
-    my %extra_info;
+    my $result = $self->next::method($self->_uc($table), @_);
 
     my $dbh = $self->schema->storage->dbh;
-    my $sth = $dbh->prepare_cached(
-        q{
-            SELECT COUNT(*)
-            FROM all_triggers ut JOIN all_trigger_cols atc USING (trigger_name)
-            WHERE atc.table_name = ? AND atc.column_name = ?
-            AND column_usage LIKE '%NEW%' AND column_usage LIKE '%OUT%'
-            AND trigger_type = 'BEFORE EACH ROW' AND triggering_event LIKE '%INSERT%'
-        },
-        {}, 1);
 
-    $sth->execute($table, $column);
-    if ($sth->fetchrow_array) {
-        $extra_info{is_auto_increment} = 1;
+    local $dbh->{LongReadLen} = 100000;
+    local $dbh->{LongTruncOk} = 1;
+
+    my $sth = $dbh->prepare_cached(q{
+SELECT atc.column_name, ut.trigger_body
+FROM all_triggers ut
+JOIN all_trigger_cols atc USING (trigger_name)
+WHERE atc.table_name = ?
+AND lower(column_usage) LIKE '%new%' AND lower(column_usage) LIKE '%out%'
+AND upper(trigger_type) LIKE '%BEFORE EACH ROW%' AND lower(triggering_event) LIKE '%insert%'
+    }, {}, 1);
+
+    $sth->execute($self->_uc($table));
+
+    while (my ($col_name, $trigger_body) = $sth->fetchrow_array) {
+        $col_name = $self->_lc($col_name);
+
+        $result->{$col_name}{is_auto_increment} = 1;
+
+        if (my ($seq_schema, $seq_name) = $trigger_body =~ /(?:\."?(\w+)"?)?"?(\w+)"?\.nextval/i) {
+            $seq_schema = $self->_lc($seq_schema) || $self->db_schema;
+            $seq_name   = $self->_lc($seq_name);
+
+            $result->{$col_name}{sequence} = ($self->qualify_objects ? ($seq_schema . '.') : '') . $seq_name;
+        }
     }
 
-    return \%extra_info;
+    while (my ($col, $info) = each %$result) {
+        no warnings 'uninitialized';
+
+        if ($info->{data_type} =~ /^(?:n?[cb]lob|long(?: raw)?|bfile|date|binary_(?:float|double)|rowid)\z/i) {
+            delete $info->{size};
+        }
+
+        if ($info->{data_type} =~ /^n(?:var)?char2?\z/i) {
+            $info->{size} = $info->{size} / 2;
+        }
+        elsif (lc($info->{data_type}) eq 'number') {
+            $info->{original}{data_type} = 'number';
+            $info->{data_type}           = 'numeric';
+
+            if (eval { $info->{size}[0] == 38 && $info->{size}[1] == 0 }) {
+                $info->{original}{size} = $info->{size};
+
+                $info->{data_type} = 'integer';
+                delete $info->{size};
+            }
+        }
+        elsif (my ($precision) = $info->{data_type} =~ /^timestamp\((\d+)\)(?: with (?:local )?time zone)?\z/i) {
+            $info->{data_type} = join ' ', $info->{data_type} =~ /[a-z]+/ig;
+
+            if ($precision == 6) {
+                delete $info->{size};
+            }
+            else {
+                $info->{size} = $precision;
+            }
+        }
+        elsif (($precision) = $info->{data_type} =~ /^interval year\((\d+)\) to month\z/i) {
+            $info->{data_type} = join ' ', $info->{data_type} =~ /[a-z]+/ig;
+
+            if ($precision == 2) {
+                delete $info->{size};
+            }
+            else {
+                $info->{size} = $precision;
+            }
+        }
+        elsif (my ($day_precision, $second_precision) = $info->{data_type} =~ /^interval day\((\d+)\) to second\((\d+)\)\z/i) {
+            $info->{data_type} = join ' ', $info->{data_type} =~ /[a-z]+/ig;
+
+            if ($day_precision == 2 && $second_precision == 6) {
+                delete $info->{size};
+            }
+            else {
+                $info->{size} = [ $day_precision, $second_precision ];
+            }
+        }
+        elsif (lc($info->{data_type}) eq 'float') {
+            $info->{original}{data_type} = 'float';
+            $info->{original}{size}      = $info->{size};
+
+            if ($info->{size} <= 63) {
+                $info->{data_type} = 'real';
+            }
+            else {
+                $info->{data_type} = 'double precision';
+            }
+            delete $info->{size};
+        }
+        elsif (lc($info->{data_type}) eq 'urowid' && $info->{size} == 4000) {
+            delete $info->{size};
+        }
+        elsif (lc($info->{data_type}) eq 'date') {
+            $info->{data_type}           = 'datetime';
+            $info->{original}{data_type} = 'date';
+        }
+        elsif (lc($info->{data_type}) eq 'binary_float') {
+            $info->{data_type}           = 'real';
+            $info->{original}{data_type} = 'binary_float';
+        } 
+        elsif (lc($info->{data_type}) eq 'binary_double') {
+            $info->{data_type}           = 'double precision';
+            $info->{original}{data_type} = 'binary_double';
+        } 
+
+        if ((eval { lc(${ $info->{default_value} }) }||'') eq 'sysdate') {
+            my $current_timestamp  = 'current_timestamp';
+            $info->{default_value} = \$current_timestamp;
+
+            my $sysdate = 'sysdate';
+            $info->{original}{default_value} = \$sysdate;
+        }
+    }
+
+    return $result;
 }
 
 =head1 SEE ALSO
@@ -167,3 +272,4 @@ the same terms as Perl itself.
 =cut
 
 1;
+# vim:et sts=4 sw=4 tw=0:

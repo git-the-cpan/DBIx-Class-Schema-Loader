@@ -260,7 +260,7 @@ do_dump_test(
 qr/package DBICTest::DumpMore::1::Foo;/,
 qr/=head1 NAME\n\nDBICTest::DumpMore::1::Foo\n\n=cut\n\n/,
 qr/=head1 ACCESSORS\n\n/,
-qr/=head2 fooid\n\n  data_type: 'integer'\n  is_nullable: 1\n\n/,
+qr/=head2 fooid\n\n  data_type: 'integer'\n  is_auto_increment: 1\n  is_nullable: 1\n\n/,
 qr/=head2 footext\n\n  data_type: 'text'\n  default_value: 'footext'\n  extra: {is_footext => 1}\n  is_nullable: 1\n\n/,
 qr/->set_primary_key/,
 qr/=head1 RELATIONS\n\n/,
@@ -271,7 +271,7 @@ qr/1;\n$/,
 qr/package DBICTest::DumpMore::1::Bar;/,
 qr/=head1 NAME\n\nDBICTest::DumpMore::1::Bar\n\n=cut\n\n/,
 qr/=head1 ACCESSORS\n\n/,
-qr/=head2 barid\n\n  data_type: 'integer'\n  is_nullable: 1\n\n/,
+qr/=head2 barid\n\n  data_type: 'integer'\n  is_auto_increment: 1\n  is_nullable: 1\n\n/,
 qr/=head2 fooref\n\n  data_type: 'integer'\n  is_foreign_key: 1\n  is_nullable: 1\n\n/,
 qr/->set_primary_key/,
 qr/=head1 RELATIONS\n\n/,
@@ -352,6 +352,22 @@ do_dump_test(
     neg_regexes => {
         'Result/Foo' => [
             qr/^=/m,
+        ],
+    },
+);
+
+rmtree($DUMP_PATH, 1, 1);
+
+do_dump_test(
+    classname => 'DBICTest::DumpMore::1',
+    options => { db_schema => 'foo_schema', qualify_objects => 1, use_namespaces => 1 },
+    warnings => [
+        qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
+        qr/Schema dump completed/,
+    ],
+    regexes => {
+        'Result/Foo' => [
+            qr/^\Q__PACKAGE__->table("foo_schema.foo");\E/m,
         ],
     },
 );
@@ -470,3 +486,4 @@ do_dump_test(
 done_testing;
 
 END { rmtree($DUMP_PATH, 1, 1) unless $ENV{SCHEMA_LOADER_TESTS_NOCLEANUP} }
+# vim:et sts=4 sw=4 tw=0:
