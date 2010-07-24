@@ -2,13 +2,13 @@ package DBIx::Class::Schema::Loader::DBI::InterBase;
 
 use strict;
 use warnings;
-use namespace::autoclean;
 use Class::C3;
 use base qw/DBIx::Class::Schema::Loader::DBI/;
 use Carp::Clan qw/^DBIx::Class/;
 use List::Util 'first';
+use namespace::clean;
 
-our $VERSION = '0.07000';
+our $VERSION = '0.07001';
 
 =head1 NAME
 
@@ -253,6 +253,9 @@ EOF
         }
         elsif ($info->{data_type} eq 'character') {
             $info->{data_type} = 'char';
+        }
+        elsif ($info->{data_type} eq 'float') {
+            $info->{data_type} = 'real';
         }
         elsif ($info->{data_type} eq 'int64' || $info->{data_type} eq '-9581') {
             # the constant is just in case, the query should pick up the type

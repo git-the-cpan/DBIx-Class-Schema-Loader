@@ -3,7 +3,6 @@ package DBIx::Class::Schema::Loader::Base;
 use strict;
 use warnings;
 use base qw/Class::Accessor::Grouped Class::C3::Componentised/;
-use namespace::autoclean;
 use Class::C3;
 use Carp::Clan qw/^DBIx::Class/;
 use DBIx::Class::Schema::Loader::RelBuilder;
@@ -17,13 +16,15 @@ use Lingua::EN::Inflect::Phrase qw//;
 use File::Temp qw//;
 use Class::Unload;
 use Class::Inspector ();
-use Data::Dumper::Concise;
 use Scalar::Util 'looks_like_number';
 use File::Slurp 'slurp';
-use DBIx::Class::Schema::Loader::Utils 'split_name';
-require DBIx::Class;
+use DBIx::Class::Schema::Loader::Utils qw/split_name dumper_squashed/;
+use DBIx::Class::Schema::Loader::Optional::Dependencies ();
+use Try::Tiny;
+use DBIx::Class ();
+use namespace::clean;
 
-our $VERSION = '0.07000';
+our $VERSION = '0.07001';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -50,6 +51,7 @@ __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 default_resultset_class
                                 schema_base_class
                                 result_base_class
+                                use_moose
 				overwrite_modifications
 
                                 relationship_attrs
@@ -200,10 +202,10 @@ and singularization put this in your C<Schema.pm> file:
 
     __PACKAGE__->naming('current');
 
-Or if you prefer to use 0.05XXX features but insure that nothing breaks in the
+Or if you prefer to use 0.07XXX features but insure that nothing breaks in the
 next major version upgrade:
 
-    __PACKAGE__->naming('v5');
+    __PACKAGE__->naming('v7');
 
 =head2 generate_pod
 
@@ -257,10 +259,10 @@ relationship types override those set in 'all'.
 For example:
 
   relationship_attrs => {
-    belongs_to => { is_deferrable => 1 },
+    belongs_to => { is_deferrable => 0 },
   },
 
-use this to make your foreign key constraints DEFERRABLE.
+use this to turn off DEFERRABLE on your foreign key constraints.
 
 =head2 debug
 
@@ -450,12 +452,12 @@ columns with the DATE/DATETIME/TIMESTAMP data_types.
 Sets the locale attribute for L<DBIx::Class::InflateColumn::DateTime> for all
 columns with the DATE/DATETIME/TIMESTAMP data_types.
 
-=head1 config_file
+=head2 config_file
 
 File in Perl format, which should return a HASH reference, from which to read
 loader options.
 
-=head1 preserve_case
+=head2 preserve_case
 
 Usually column names are lowercased, to make them easier to work with in
 L<DBIx::Class>. This option lets you turn this behavior off, if the driver
@@ -467,10 +469,18 @@ case-sensitive collation will turn this option on unconditionally.
 Currently the drivers for SQLite, mysql, MSSQL and Firebird/InterBase support
 setting this option.
 
-=head1 qualify_objects
+=head2 qualify_objects
 
 Set to true to prepend the L</db_schema> to table names for C<<
 __PACKAGE__->table >> calls, and to some other things like Oracle sequences.
+
+=head2 use_moose
+
+Creates Schema and Result classes that use L<Moose>, L<MooseX::NonMoose> and
+L<namespace::autoclean>. The default content after the md5 sum also makes the
+classes immutable.
+
+It is safe to upgrade your existing Schema to this option.
 
 =head1 METHODS
 
@@ -533,6 +543,14 @@ sub new {
                               /);
 
     $self->_validate_class_args;
+
+    if ($self->use_moose) {
+        if (not DBIx::Class::Schema::Loader::Optional::Dependencies->req_ok_for('use_moose')) {
+            die sprintf "You must install the following CPAN modules to enable the use_moose option: %s.\nYou are missing: %s.\n",
+                "Moose, MooseX::NonMoose and namespace::autoclean",
+                DBIx::Class::Schema::Loader::Optional::Dependencies->req_missing_for('use_moose');
+        }
+    }
 
     push(@{$self->{components}}, 'ResultSetManager')
         if @{$self->{resultset_components}};
@@ -1086,6 +1104,9 @@ sub _reload_classes {
             local *Class::C3::reinitialize = sub {};
             use warnings;
 
+            if ($class->can('meta') && try { $class->meta->isa('Moose::Meta::Class') }) {
+                $class->meta->make_mutable;
+            }
             Class::Unload->unload($class) if $unload;
             my ($source, $resultset_class);
             if (
@@ -1094,6 +1115,9 @@ sub _reload_classes {
                 && ($resultset_class ne 'DBIx::Class::ResultSet')
             ) {
                 my $has_file = Class::Inspector->loaded_filename($resultset_class);
+                if ($resultset_class->can('meta') && try { $resultset_class->meta->isa('Moose::Meta::Class') }) {
+                    $resultset_class->meta->make_mutable;
+                }
                 Class::Unload->unload($resultset_class) if $unload;
                 $self->_reload_class($resultset_class) if $has_file;
             }
@@ -1123,6 +1147,7 @@ sub _reload_class {
             unless $_[0] =~ /^Subroutine \S+ redefined/;
     };
     eval "require $class;";
+    die "Failed to reload class $class: $@" if $@;
 }
 
 sub _get_dump_filename {
@@ -1163,8 +1188,13 @@ sub _dump_to_dir {
           qq|package $schema_class;\n\n|
         . qq|# Created by DBIx::Class::Schema::Loader\n|
         . qq|# DO NOT MODIFY THE FIRST PART OF THIS FILE\n\n|
-        . qq|use strict;\nuse warnings;\n\n|
-        . qq|use base '$schema_base_class';\n\n|;
+        . qq|use strict;\nuse warnings;\n\n|;
+    if ($self->use_moose) {
+        $schema_text.= qq|use Moose;\nuse MooseX::NonMoose;\nuse namespace::autoclean;\nextends '$schema_base_class';\n\n|;
+    }
+    else {
+        $schema_text .= qq|use base '$schema_base_class';\n\n|;
+    }
 
     if ($self->use_namespaces) {
         $schema_text .= qq|__PACKAGE__->load_namespaces|;
@@ -1198,9 +1228,21 @@ sub _dump_to_dir {
               qq|package $src_class;\n\n|
             . qq|# Created by DBIx::Class::Schema::Loader\n|
             . qq|# DO NOT MODIFY THE FIRST PART OF THIS FILE\n\n|
-            . qq|use strict;\nuse warnings;\n\n|
-            . qq|use base '$result_base_class';\n\n|;
+            . qq|use strict;\nuse warnings;\n\n|;
+        if ($self->use_moose) {
+            $src_text.= qq|use Moose;\nuse MooseX::NonMoose;\nuse namespace::autoclean;|;
 
+            # these options 'use base' which is compile time
+            if (@{ $self->left_base_classes } || @{ $self->additional_base_classes }) {
+                $src_text .= qq|\nBEGIN { extends '$result_base_class' }\n\n|;
+            }
+            else {
+                $src_text .= qq|\nextends '$result_base_class';\n\n|;
+            }
+        }
+        else {
+             $src_text .= qq|use base '$result_base_class';\n\n|;
+        }
         $self->_write_classfile($src_class, $src_text);
     }
 
@@ -1246,6 +1288,25 @@ sub _write_classfile {
     }    
 
     my ($custom_content, $old_md5, $old_ver, $old_ts) = $self->_get_custom_content($class, $filename);
+
+    # If upgrading to use_moose=1 replace default custom content with default Moose custom content.
+    # If there is already custom content, which does not have the Moose content, add it.
+    if ($self->use_moose) {
+        local $self->{use_moose} = 0;
+
+        if ($custom_content eq $self->_default_custom_content) {
+            local $self->{use_moose} = 1;
+
+            $custom_content = $self->_default_custom_content;
+        }
+        else {
+            local $self->{use_moose} = 1;
+
+            if ($custom_content !~ /\Q@{[$self->_default_moose_custom_content]}\E/) {
+                $custom_content .= $self->_default_custom_content;
+            }
+        }
+    }
 
     if (my $old_class = $self->_upgrading_classes->{$class}) {
         my $old_filename = $self->_get_dump_filename($old_class);
@@ -1303,10 +1364,19 @@ sub _write_classfile {
         or croak "Error closing '$filename': $!";
 }
 
+sub _default_moose_custom_content {
+    return qq|\n__PACKAGE__->meta->make_immutable;|;
+}
+
 sub _default_custom_content {
-    return qq|\n\n# You can replace this text with custom|
-         . qq| content, and it will be preserved on regeneration|
-         . qq|\n1;\n|;
+    my $self = shift;
+    my $default = qq|\n\n# You can replace this text with custom|
+         . qq| content, and it will be preserved on regeneration|;
+    if ($self->use_moose) {
+        $default .= $self->_default_moose_custom_content;
+    }
+    $default .= qq|\n1;\n|;
+    return $default;
 }
 
 sub _get_custom_content {
@@ -1366,11 +1436,13 @@ sub _use {
 sub _inject {
     my $self = shift;
     my $target = shift;
-    my $schema_class = $self->schema_class;
 
     my $blist = join(q{ }, @_);
-    warn "$target: use base qw/ $blist /;" if $self->debug && @_;
-    $self->_raw_stmt($target, "use base qw/ $blist /;") if @_;
+
+    return unless $blist;
+
+    warn "$target: use base qw/$blist/;" if $self->debug;
+    $self->_raw_stmt($target, "use base qw/$blist/;");
 }
 
 sub _result_namespace {
@@ -1464,7 +1536,7 @@ sub _resolve_col_accessor_collisions {
 
     my @methods;
 
-    for my $class ($base, @components) {
+    for my $class ($base, @components, $self->use_moose ? 'Moose::Object' : ()) {
         eval "require ${class};";
         die $@ if $@;
 
@@ -1473,6 +1545,9 @@ sub _resolve_col_accessor_collisions {
 
     my %methods;
     @methods{@methods} = ();
+
+    # futureproof meta
+    $methods{meta} = undef;
 
     while (my ($col, $info) = each %$col_info) {
         my $accessor = $info->{accessor} || $col;
@@ -1545,11 +1620,18 @@ sub _setup_src_meta {
 
     my $fks = $self->_table_fk_info($table);
 
-    for my $fkdef (@$fks) {
+    foreach my $fkdef (@$fks) {
         for my $col (@{ $fkdef->{local_columns} }) {
             $col_info->{$col}{is_foreign_key} = 1;
         }
     }
+
+    my $pks = $self->_table_pk_info($table) || [];
+
+    foreach my $pkcol (@$pks) {
+        $col_info->{$pkcol}{is_nullable} = 0;
+    }
+
     $self->_dbic_stmt(
         $table_class,
         'add_columns',
@@ -1558,7 +1640,6 @@ sub _setup_src_meta {
 
     my %uniq_tag; # used to eliminate duplicate uniqs
 
-    my $pks = $self->_table_pk_info($table) || [];
     @$pks ? $self->_dbic_stmt($table_class,'set_primary_key',@$pks)
           : carp("$table has no primary key");
     $uniq_tag{ join("\0", @$pks) }++ if @$pks; # pk is a uniq
@@ -1713,12 +1794,10 @@ sub _make_pod {
         my ($table) = @_;
         my $pcm = $self->pod_comment_mode;
         my ($comment, $comment_overflows, $comment_in_name, $comment_in_desc);
-        if ( $self->can('_table_comment') ) {
-            $comment = $self->_table_comment($table);
-            $comment_overflows = ($comment and length $comment > $self->pod_comment_spillover_length);
-            $comment_in_name   = ($pcm eq 'name' or ($pcm eq 'auto' and !$comment_overflows));
-            $comment_in_desc   = ($pcm eq 'description' or ($pcm eq 'auto' and $comment_overflows));
-        }
+        $comment = $self->__table_comment($table);
+        $comment_overflows = ($comment and length $comment > $self->pod_comment_spillover_length);
+        $comment_in_name   = ($pcm eq 'name' or ($pcm eq 'auto' and !$comment_overflows));
+        $comment_in_desc   = ($pcm eq 'description' or ($pcm eq 'auto' and $comment_overflows));
         $self->_pod( $class, "=head1 NAME" );
         my $table_descr = $class;
         $table_descr .= " - " . $comment if $comment and $comment_in_name;
@@ -1742,12 +1821,7 @@ sub _make_pod {
 			     $s = !defined $s         ? 'undef'          :
                                   length($s) == 0     ? '(empty string)' :
                                   ref($s) eq 'SCALAR' ? $$s :
-                                  ref($s)             ? do {
-                                                        my $dd = Dumper;
-                                                        $dd->Indent(0);
-                                                        $dd->Values([$s]);
-                                                        $dd->Dump;
-                                                      } :
+                                  ref($s)             ? dumper_squashed $s :
                                   looks_like_number($s) ? $s :
                                                         qq{'$s'}
                                   ;
@@ -1756,9 +1830,7 @@ sub _make_pod {
 			 } sort keys %$attrs,
 		       );
 
-	    if( $self->can('_column_comment')
-		and my $comment = $self->_column_comment( $self->{_class2table}{$class}, $col_counter)
-	      ) {
+	    if (my $comment = $self->__column_comment($self->{_class2table}{$class}, $col_counter)) {
 		$self->_pod( $class, $comment );
 	    }
         }
@@ -1772,6 +1844,36 @@ sub _make_pod {
         $self->_pod_cut( $class );
         $self->{_relations_started} { $class } = 1;
     }
+}
+
+sub _filter_comment {
+    my ($self, $txt) = @_;
+
+    $txt = '' if not defined $txt;
+
+    $txt =~ s/(?:\015?\012|\015\012?)/\n/g;
+
+    return $txt;
+}
+
+sub __table_comment {
+    my $self = shift;
+
+    if (my $code = $self->can('_table_comment')) {
+        return $self->_filter_comment($self->$code(@_));
+    }
+    
+    return '';
+}
+
+sub __column_comment {
+    my $self = shift;
+
+    if (my $code = $self->can('_column_comment')) {
+        return $self->_filter_comment($self->$code(@_));
+    }
+
+    return '';
 }
 
 # Stores a POD documentation

@@ -113,16 +113,22 @@ my $tester = dbixcsl_common_tests->new(
     extra       => {
         create => [
             q{
+                CREATE SCHEMA dbicsl_test
+            },
+            q{
+                CREATE SEQUENCE dbicsl_test.myseq
+            },
+            q{
                 CREATE TABLE pg_loader_test1 (
-                    id SERIAL NOT NULL PRIMARY KEY,
+                    id INTEGER NOT NULL DEFAULT nextval('dbicsl_test.myseq') PRIMARY KEY,
                     value VARCHAR(100)
                 )
             },
-            q{
-                COMMENT ON TABLE pg_loader_test1 IS 'The Table'
+            qq{
+                COMMENT ON TABLE pg_loader_test1 IS 'The\15\12Table'
             },
-            q{
-                COMMENT ON COLUMN pg_loader_test1.value IS 'The Column'
+            qq{
+                COMMENT ON COLUMN pg_loader_test1.value IS 'The\15\12Column'
             },
             q{
                 CREATE TABLE pg_loader_test2 (
@@ -134,20 +140,27 @@ my $tester = dbixcsl_common_tests->new(
                 COMMENT ON TABLE pg_loader_test2 IS 'very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very long comment'
             },
         ],
+        pre_drop_ddl => [
+            'DROP SCHEMA dbicsl_test CASCADE',
+        ],
         drop  => [ qw/ pg_loader_test1 pg_loader_test2 / ],
-        count => 3,
+        count => 4,
         run   => sub {
             my ($schema, $monikers, $classes) = @_;
+
+            is $schema->source($monikers->{pg_loader_test1})->column_info('id')->{sequence},
+                'dbicsl_test.myseq',
+                'qualified sequence detected';
 
             my $class    = $classes->{pg_loader_test1};
             my $filename = $schema->_loader->_get_dump_filename($class);
 
             my $code = slurp $filename;
 
-            like $code, qr/^=head1 NAME\n\n^$class - The Table\n\n^=cut\n/m,
+            like $code, qr/^=head1 NAME\n\n^$class - The\nTable\n\n^=cut\n/m,
                 'table comment';
 
-            like $code, qr/^=head2 value\n\n(.+:.+\n)+\nThe Column\n\n/m,
+            like $code, qr/^=head2 value\n\n(.+:.+\n)+\nThe\nColumn\n\n/m,
                 'column comment and attrs';
 
             $class    = $classes->{pg_loader_test2};

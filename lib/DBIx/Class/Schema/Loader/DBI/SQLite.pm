@@ -10,7 +10,7 @@ use Carp::Clan qw/^DBIx::Class/;
 use Text::Balanced qw( extract_bracketed );
 use Class::C3;
 
-our $VERSION = '0.07000';
+our $VERSION = '0.07001';
 
 =head1 NAME
 
@@ -80,15 +80,26 @@ sub _columns_info_for {
     $sth->execute;
     my $cols = $sth->fetchall_hashref('name');
 
+    my ($num_pk, $pk_col) = (0);
+    # SQLite doesn't give us the info we need to do this nicely :(
+    # If there is exactly one column marked PK, and its type is integer,
+    # set it is_auto_increment. This isn't 100%, but it's better than the
+    # alternatives.
     while (my ($col_name, $info) = each %$result) {
-      if ($cols->{$col_name}{pk} && lc($cols->{$col_name}{type}) eq 'integer') {
-        $info->{is_auto_increment} = 1;
+      if ($cols->{$col_name}{pk}) {
+        $num_pk ++;
+        if (lc($cols->{$col_name}{type}) eq 'integer') {
+          $pk_col = $col_name;
+        }
       }
     }
 
     while (my ($col, $info) = each %$result) {
         if ((eval { ${ $info->{default_value} } }||'') eq 'CURRENT_TIMESTAMP') {
             ${ $info->{default_value} } = 'current_timestamp';
+        }
+        if ($num_pk == 1 and defined $pk_col and $pk_col eq $col) {
+          $info->{is_auto_increment} = 1;
         }
     }
 
@@ -134,6 +145,7 @@ sub _table_uniq_info {
     my @uniqs;
     while (my $idx = $sth->fetchrow_hashref) {
         next unless $idx->{unique};
+
         my $name = $idx->{name};
 
         my $get_idx_sth = $dbh->prepare("pragma index_info(" . $dbh->quote($name) . ")");
@@ -143,6 +155,11 @@ sub _table_uniq_info {
             push @cols, $self->_lc($idx_row->{name});
         }
         $get_idx_sth->finish;
+
+        # Rename because SQLite complains about sqlite_ prefixes on identifiers
+        # and ignores constraint names in DDL.
+        $name = (join '_', @cols) . '_unique';
+
         push @uniqs, [ $name => \@cols ];
     }
     $sth->finish;

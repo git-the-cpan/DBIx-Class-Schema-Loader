@@ -4,11 +4,11 @@ use strict;
 use warnings;
 use Class::C3;
 use base qw/DBIx::Class::Schema::Loader::DBI/;
-use namespace::autoclean;
 use Carp::Clan qw/^DBIx::Class/;
 use Scalar::Util 'looks_like_number';
+use namespace::clean;
 
-our $VERSION = '0.07000';
+our $VERSION = '0.07001';
 
 =head1 NAME
 
@@ -154,6 +154,31 @@ EOF
     return \@rels;
 }
 
+# This is directly from http://www.ibm.com/developerworks/data/zones/informix/library/techarticle/0305parker/0305parker.html
+# it doesn't work at all
+sub _informix_datetime_precision {
+    my @date_type = qw/DUMMY year  month day   hour   minute  second  fraction(1) fraction(2) fraction(3) fraction(4) fraction(5)/;
+    my @start_end = (  [],   [1,5],[5,7],[7,9],[9,11],[11,13],[13,15],[15,16],    [16,17],    [17,18],    [18,19],    [19,20]    );
+
+    my ($self, $collength) = @_;
+
+    my $i = ($collength % 16) + 1;
+    my $j = int(($collength % 256) / 16) + 1;
+    my $k = int($collength / 256);
+
+    my $len = $start_end[$i][1] - $start_end[$j][0];
+    $len = $k - $len;
+
+    if ($len == 0 || $j > 11) {
+        return $date_type[$j] . ' to ' . $date_type[$i];
+    }
+
+    $k  = $start_end[$j][1] - $start_end[$j][0];
+    $k += $len;
+
+    return $date_type[$j] . "($k) to " . $date_type[$i];
+}
+
 sub _columns_info_for {
     my $self = shift;
     my ($table) = @_;
@@ -164,7 +189,7 @@ sub _columns_info_for {
     local $dbh->{FetchHashKeyName} = 'NAME_lc';
 
     my $sth = $dbh->prepare(<<'EOF');
-select c.colname, c.coltype, d.type deflt_type, d.default deflt
+select c.colname, c.coltype, c.collength, c.colmin, d.type deflt_type, d.default deflt
 from syscolumns c
 join systables t on c.tabid = t.tabid
 left join sysdefaults d on t.tabid = d.tabid and c.colno = d.colno
@@ -175,31 +200,80 @@ EOF
     $sth->finish;
 
     while (my ($col, $info) = each %$cols) {
+        $col = $self->_lc($col);
+
         my $type = $info->{coltype} % 256;
 
         if ($type == 6) { # SERIAL
             $result->{$col}{is_auto_increment} = 1;
         }
 
-        if (looks_like_number $result->{$col}{data_type}) {
+        my $data_type = $result->{$col}{data_type};
+
+        if (looks_like_number $data_type) {
             if ($type == 7) {
                 $result->{$col}{data_type} = 'date';
             }
             elsif ($type == 10) {
                 $result->{$col}{data_type} = 'datetime year to fraction(5)';
+                # this doesn't work yet
+#                $result->{$col}{data_type} = 'datetime ' . $self->_informix_datetime_precision($info->{collength});
+            }
+            elsif ($type == 17 || $type == 52) {
+                $result->{$col}{data_type} = 'bigint';
+            }
+            elsif ($type == 40) {
+                $result->{$col}{data_type} = 'lvarchar';
+                $result->{$col}{size}      = $info->{collength};
+            }
+            elsif ($type == 12) {
+                $result->{$col}{data_type} = 'text';
+            }
+            elsif ($type == 11) {
+                $result->{$col}{data_type}           = 'bytea';
+                $result->{$col}{original}{data_type} = 'byte';
+            }
+            elsif ($type == 41) {
+                # XXX no way to distinguish opaque types boolean, blob and clob
+                $result->{$col}{data_type} = 'blob';
+            }
+            elsif ($type == 21) {
+                $result->{$col}{data_type} = 'list';
+            }
+            elsif ($type == 20) {
+                $result->{$col}{data_type} = 'multiset';
+            }
+            elsif ($type == 19) {
+                $result->{$col}{data_type} = 'set';
             }
         }
 
+        if ($type == 15) {
+            $result->{$col}{data_type} = 'nchar';
+        }
+        elsif ($type == 16) {
+            $result->{$col}{data_type} = 'nvarchar';
+        }
+        # XXX untested!
+        elsif ($info->{coltype} == 2061) {
+            $result->{$col}{data_type} = 'idssecuritylabel';
+        }
+
+        # XXX colmin doesn't work for min size of varchar columns, it's NULL
+#        if (lc($data_type) eq 'varchar') {
+#            $result->{$col}{size}[1] = $info->{colmin};
+#        }
+       
         my ($default_type, $default) = @{$info}{qw/deflt_type deflt/};
 
         next unless $default_type;
 
         if ($default_type eq 'C') {
-            my $current = 'CURRENT YEAR TO FRACTION(5)';
+            my $current = 'current year to fraction(5)';
             $result->{$col}{default_value} = \$current;
         }
         elsif ($default_type eq 'T') {
-            my $today = 'TODAY';
+            my $today = 'today';
             $result->{$col}{default_value} = \$today;
         }
         else {
@@ -212,6 +286,40 @@ EOF
             #$default =~ s/0+\z// if $default =~ /^\d+\.\d+\z/;
 
             $result->{$col}{default_value} = $default;
+        }
+    }
+
+    # fix up data_types some more
+    while (my ($col, $info) = each %$result) {
+        my $data_type = $info->{data_type};
+
+        if ($data_type !~ /^(?:[nl]?(?:var)?char|decimal)\z/i) {
+            delete $info->{size};
+        }
+
+        if (lc($data_type) eq 'decimal') {
+            no warnings 'uninitialized';
+
+            $info->{data_type} = 'numeric';
+
+            my @size = @{ $info->{size} || [] };
+
+            if ($size[0] == 16 && $size[1] == -4) {
+                delete $info->{size};
+            }
+            elsif ($size[0] == 16 && $size[1] == 2) {
+                $info->{data_type} = 'money';
+                delete $info->{size};
+            }
+        }
+        elsif (lc($data_type) eq 'smallfloat') {
+            $info->{data_type} = 'real';
+        }
+        elsif (lc($data_type) eq 'float') {
+            $info->{data_type} = 'double precision';
+        }
+        elsif ($data_type =~ /^n?(?:var)?char\z/i) {
+            $info->{size} = $info->{size}[0];
         }
     }
 

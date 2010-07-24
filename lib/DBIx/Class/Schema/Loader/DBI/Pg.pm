@@ -9,7 +9,7 @@ use base qw/
 use Carp::Clan qw/^DBIx::Class/;
 use Class::C3;
 
-our $VERSION = '0.07000';
+our $VERSION = '0.07001';
 
 =head1 NAME
 
@@ -145,6 +145,7 @@ sub _columns_info_for {
         my $data_type = $info->{data_type};
 
         # these types are fixed size
+        # XXX should this be a negative match?
         if ($data_type =~
 /^(?:bigint|int8|bigserial|serial8|boolean|bool|box|bytea|cidr|circle|date|double precision|float8|inet|integer|int|int4|line|lseg|macaddr|money|path|point|polygon|real|float4|smallint|int2|serial|serial4|text)\z/i) {
             delete $info->{size};
@@ -225,7 +226,7 @@ EOF
         }
 
 # process SERIAL columns
-        if (ref($info->{default_value}) eq 'SCALAR' && ${ $info->{default_value} } =~ /\bnextval\(['"](\w+)/i) {
+        if (ref($info->{default_value}) eq 'SCALAR' && ${ $info->{default_value} } =~ /\bnextval\(['"]([.\w]+)/i) {
             $info->{is_auto_increment} = 1;
             $info->{sequence}          = $1;
             delete $info->{default_value};

@@ -7,7 +7,7 @@ use Carp::Clan qw/^DBIx::Class/;
 use Lingua::EN::Inflect::Phrase ();
 use DBIx::Class::Schema::Loader::Utils 'split_name';
 
-our $VERSION = '0.07000';
+our $VERSION = '0.07001';
 
 =head1 NAME
 
@@ -164,7 +164,7 @@ sub _default_relationship_attrs { +{
     belongs_to => {
         on_delete => 'CASCADE',
         on_update => 'CASCADE',
-#        is_deferrable => 1,
+        is_deferrable => 1,
     },
 } }
 
@@ -213,8 +213,25 @@ sub _remote_attrs {
     return $attrs;
 }
 
+sub _sanitize_name {
+    my ($self, $name) = @_;
+
+    if (ref $name) {
+        # scalar ref for weird table name (like one containing a '.')
+        ($name = $$name) =~ s/\W+/_/g;
+    }
+    else {
+        # remove 'schema.' prefix if any
+        $name =~ s/^[^.]+\.//;
+    }
+
+    return $name;
+}
+
 sub _normalize_name {
     my ($self, $name) = @_;
+
+    $name = $self->_sanitize_name($name);
 
     my @words = split_name $name;
 

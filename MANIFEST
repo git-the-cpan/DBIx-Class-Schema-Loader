@@ -8,6 +8,7 @@ inc/Module/Install/Fetch.pm
 inc/Module/Install/Include.pm
 inc/Module/Install/Makefile.pm
 inc/Module/Install/Metadata.pm
+inc/Module/Install/ReadmeFromPod.pm
 inc/Module/Install/Scripts.pm
 inc/Module/Install/Win32.pm
 inc/Module/Install/WriteAll.pm
@@ -33,6 +34,8 @@ lib/DBIx/Class/Schema/Loader/DBI/Sybase/Common.pm
 lib/DBIx/Class/Schema/Loader/DBI/Sybase/Microsoft_SQL_Server.pm
 lib/DBIx/Class/Schema/Loader/DBI/Writing.pm
 lib/DBIx/Class/Schema/Loader/Manual/UpgradingFromV4.pod
+lib/DBIx/Class/Schema/Loader/Optional/Dependencies.pm
+lib/DBIx/Class/Schema/Loader/Optional/Dependencies.pod
 lib/DBIx/Class/Schema/Loader/RelBuilder.pm
 lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_040.pm
 lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_05.pm

@@ -12,8 +12,10 @@ use DBI;
 use Digest::MD5;
 use File::Find 'find';
 use Class::Unload ();
-use Data::Dumper::Concise;
+use DBIx::Class::Schema::Loader::Utils 'dumper_squashed';
 use List::MoreUtils 'apply';
+use DBIx::Class::Schema::Loader::Optional::Dependencies ();
+use namespace::clean;
 
 my $DUMP_DIR = './t/_common_dump';
 rmtree $DUMP_DIR;
@@ -88,7 +90,7 @@ sub run_tests {
 
     my $extra_count = $self->{extra}{count} || 0;
 
-    plan tests => @connect_info * (181 + $extra_count + ($self->{data_type_tests}{test_count} || 0));
+    plan tests => @connect_info * (182 + $extra_count + ($self->{data_type_tests}{test_count} || 0));
 
     foreach my $info_idx (0..$#connect_info) {
         my $info = $connect_info[$info_idx];
@@ -155,7 +157,12 @@ sub drop_extra_tables_only {
     my $self = shift;
 
     my $dbh = $self->dbconnect(0);
-    $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
+
+    {
+        local $SIG{__WARN__} = sub {}; # postgres notices
+        $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
+    }
+
     $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
 
     foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
@@ -175,6 +182,8 @@ sub setup_schema {
 
     my $debug = ($self->{verbose} > 1) ? 1 : 0;
 
+    my $use_moose = DBIx::Class::Schema::Loader::Optional::Dependencies->req_ok_for('use_moose');
+
     my %loader_opts = (
         constraint              =>
 	    qr/^(?:\S+\.)?(?:(?:$self->{vendor}|extra)_?)?loader_?test[0-9]+(?!.*_)/i,
@@ -193,6 +202,7 @@ sub setup_schema {
         dump_directory          => $DUMP_DIR,
         datetime_timezone       => 'Europe/Berlin',
         datetime_locale         => 'de_DE',
+        use_moose               => $use_moose,
         %{ $self->{loader_options} || {} },
     );
 
@@ -317,13 +327,16 @@ sub test_schema {
     isa_ok( $rsobj35, "DBIx::Class::ResultSet" );
 
     my @columns_lt2 = $class2->columns;
-    is_deeply( \@columns_lt2, [ qw/id dat dat2 set_primary_key dbix_class_testcomponent/ ], "Column Ordering" );
+    is_deeply( \@columns_lt2, [ qw/id dat dat2 set_primary_key dbix_class_testcomponent meta/ ], "Column Ordering" );
 
     is $class2->column_info('set_primary_key')->{accessor}, undef,
         'accessor for column name that conflicts with a result base class method removed';
 
     is $class2->column_info('dbix_class_testcomponent')->{accessor}, undef,
         'accessor for column name that conflicts with a component class method removed';
+
+    is $class2->column_info('meta')->{accessor}, undef,
+        'accessor for column name that conflicts with Moose removed';
 
     my %uniq1 = $class1->unique_constraints;
     my $uniq1_test = 0;
@@ -620,8 +633,8 @@ sub test_schema {
         is $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{on_update}, 'CASCADE',
             "on_update => 'CASCADE' on belongs_to by default";
 
-        ok ((not exists $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{is_deferrable}),
-            "is_deferrable => 1 not on belongs_to by default");
+        is $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{is_deferrable}, 1,
+            "is_deferrable => 1 on belongs_to by default";
 
         ok ((not exists $rsobj4->result_source->relationship_info('fkid_singular')->{attrs}{cascade_delete}),
             'belongs_to does not have cascade_delete');
@@ -998,19 +1011,9 @@ sub test_data_types {
                 my %info = %{ $rsrc->column_info($col_name) };
                 delete @info{qw/is_nullable timezone locale sequence/};
 
-                my $text_col_def = do {
-                    my $dd = Dumper;
-                    $dd->Indent(0);
-                    $dd->Values([\%info]);
-                    $dd->Dump;
-                };
+                my $text_col_def = dumper_squashed \%info;
 
-                my $text_expected_info = do {
-                    my $dd = Dumper;
-                    $dd->Indent(0);
-                    $dd->Values([$expected_info]);
-                    $dd->Dump;
-                };
+                my $text_expected_info = dumper_squashed $expected_info;
 
                 is_deeply \%info, $expected_info,
                     "test column $col_name has definition: $text_col_def expecting: $text_expected_info";
@@ -1178,6 +1181,7 @@ sub create {
                 dat2 VARCHAR(32) NOT NULL,
                 set_primary_key INTEGER $self->{null},
                 dbix_class_testcomponent INTEGER $self->{null},
+                meta INTEGER $self->{null},
                 UNIQUE (dat2, dat)
             ) $self->{innodb}
         },
@@ -1703,7 +1707,11 @@ sub drop_tables {
 
     my $dbh = $self->dbconnect(0);
 
-    $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
+    {
+        local $SIG{__WARN__} = sub {}; # postgres notices
+        $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
+    }
+
     $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
 
     my $drop_auto_inc = $self->{auto_inc_drop_cb} || sub {};
@@ -1770,8 +1778,9 @@ sub _custom_column_info {
 }
 
 my %DATA_TYPE_MULTI_TABLE_OVERRIDES = (
-    oracle => qr/\blong\b/,
-    mssql  => qr/\b(?:timestamp|rowversion)\b/,
+    oracle => qr/\blong\b/i,
+    mssql  => qr/\b(?:timestamp|rowversion)\b/i,
+    informix => qr/\b(?:bigserial|serial8)\b/i,
 );
 
 sub setup_data_type_tests {
@@ -1784,11 +1793,11 @@ sub setup_data_type_tests {
     # split types into tables based on overrides
     my (@types, @split_off_types, @first_table_types);
     {
-        no warnings 'uninitialized';
+        my $split_off_re = $DATA_TYPE_MULTI_TABLE_OVERRIDES{lc($self->{vendor})} || qr/(?!)/;
 
         @types = keys %$types;
-        @split_off_types   = grep  /$DATA_TYPE_MULTI_TABLE_OVERRIDES{lc($self->{vendor})}/i, @types;
-        @first_table_types = grep !/$DATA_TYPE_MULTI_TABLE_OVERRIDES{lc($self->{vendor})}/i, @types;
+        @split_off_types   = grep  /$split_off_re/, @types;
+        @first_table_types = grep !/$split_off_re/, @types;
     }
 
     @types = +{ map +($_, $types->{$_}), @first_table_types },
