@@ -1,7 +1,7 @@
 package DBIx::Class::Schema::Loader::DBI::Writing;
 use strict;
 
-our $VERSION = '0.07001';
+our $VERSION = '0.07002';
 
 # Empty. POD only.
 
@@ -19,7 +19,7 @@ DBIx::Class::Schema::Loader::DBI::Writing - Loader subclass writing guide for DB
   use warnings;
   use base 'DBIx::Class::Schema::Loader::DBI';
   use Carp::Clan qw/^DBIx::Class/;
-  use Class::C3;
+  use mro 'c3';
 
   sub _table_uniq_info {
       my ($self, $table) = @_;

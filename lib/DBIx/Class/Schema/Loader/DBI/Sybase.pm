@@ -4,9 +4,9 @@ use strict;
 use warnings;
 use base 'DBIx::Class::Schema::Loader::DBI::Sybase::Common';
 use Carp::Clan qw/^DBIx::Class/;
-use Class::C3;
+use mro 'c3';
 
-our $VERSION = '0.07001';
+our $VERSION = '0.07002';
 
 =head1 NAME
 
@@ -189,6 +189,7 @@ sub _table_fk_info_builder {
 sub _table_uniq_info {
     my ($self, $table) = @_;
 
+    # FIXME - remove blind mask (can't test sybase yet)
     local $SIG{__WARN__} = sub {};
 
     my $dbh = $self->schema->storage->dbh;

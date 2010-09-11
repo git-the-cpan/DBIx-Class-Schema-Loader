@@ -4,13 +4,13 @@ use strict;
 use warnings;
 use base qw/DBIx::Class::Schema Class::Accessor::Grouped/;
 use Carp::Clan qw/^DBIx::Class/;
-use Class::C3;
+use mro 'c3';
 use Scalar::Util qw/ weaken /;
 
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.07001';
+our $VERSION = '0.07002';
 
 __PACKAGE__->mk_group_accessors('inherited', qw/
                                 _loader_args

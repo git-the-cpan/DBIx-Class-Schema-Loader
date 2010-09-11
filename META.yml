@@ -10,11 +10,12 @@ build_requires:
   File::Path: 2.07
   File::Temp: 0.16
   IPC::Open3: 0
-  Moose: 0
-  MooseX::NonMoose: 0
+  Moose: 1.12
+  MooseX::NonMoose: 0.15
   Test::Exception: 0
   Test::More: 0.94
-  namespace::autoclean: 0
+  Test::Warn: 0.21
+  namespace::autoclean: 0.09
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
@@ -28,88 +29,9 @@ no_index:
   directory:
     - inc
     - t
-provides:
-  DBIx::Class::Schema::Loader:
-    file: lib/DBIx/Class/Schema/Loader.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::Base:
-    file: lib/DBIx/Class/Schema/Loader/Base.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI:
-    file: lib/DBIx/Class/Schema/Loader/DBI.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Component/QuotedDefault.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::DB2:
-    file: lib/DBIx/Class/Schema/Loader/DBI/DB2.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::Informix:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Informix.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::InterBase:
-    file: lib/DBIx/Class/Schema/Loader/DBI/InterBase.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::MSSQL:
-    file: lib/DBIx/Class/Schema/Loader/DBI/MSSQL.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::ODBC:
-    file: lib/DBIx/Class/Schema/Loader/DBI/ODBC.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::ODBC::Firebird:
-    file: lib/DBIx/Class/Schema/Loader/DBI/ODBC/Firebird.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::ODBC::Microsoft_SQL_Server:
-    file: lib/DBIx/Class/Schema/Loader/DBI/ODBC/Microsoft_SQL_Server.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::ODBC::SQL_Anywhere:
-    file: lib/DBIx/Class/Schema/Loader/DBI/ODBC/SQL_Anywhere.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::Oracle:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Oracle.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::Pg:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Pg.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::SQLAnywhere:
-    file: lib/DBIx/Class/Schema/Loader/DBI/SQLAnywhere.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::SQLite:
-    file: lib/DBIx/Class/Schema/Loader/DBI/SQLite.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::Sybase:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Sybase.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::Sybase::Common:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Sybase/Common.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::Sybase::Microsoft_SQL_Server:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Sybase/Microsoft_SQL_Server.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::Writing:
-    file: lib/DBIx/Class/Schema/Loader/DBI/Writing.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::DBI::mysql:
-    file: lib/DBIx/Class/Schema/Loader/DBI/mysql.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::Optional::Dependencies:
-    file: lib/DBIx/Class/Schema/Loader/Optional/Dependencies.pm
-  DBIx::Class::Schema::Loader::RelBuilder:
-    file: lib/DBIx/Class/Schema/Loader/RelBuilder.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_040:
-    file: lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_040.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_05:
-    file: lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_05.pm
-    version: 0.07001
-  DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_06:
-    file: lib/DBIx/Class/Schema/Loader/RelBuilder/Compat/v0_06.pm
-    version: 0.07001
 requires:
   Carp::Clan: 0
-  Class::Accessor::Grouped: 0.09002
-  Class::C3: 0.18
+  Class::Accessor::Grouped: 0.09006
   Class::C3::Componentised: 1.0005
   Class::Inspector: 0
   Class::Unload: 0
@@ -122,14 +44,15 @@ requires:
   Lingua::EN::Inflect::Number: 1.1
   Lingua::EN::Inflect::Phrase: 0.02
   List::MoreUtils: 0
+  MRO::Compat: 0.09
   Scalar::Util: 0
   Scope::Guard: 0
-  Text::Balanced: 0
   Try::Tiny: 0
   namespace::clean: 0
+  perl: 5.8.1
 resources:
   IRC: irc://irc.perl.org/#dbix-class
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.07001
+version: 0.07002

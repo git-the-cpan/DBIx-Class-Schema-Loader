@@ -3,15 +3,17 @@ package make_dbictest_db;
 use strict;
 use warnings;
 use DBI;
+use dbixcsl_test_dir qw/$tdir/;
 
 eval { require DBD::SQLite };
 my $class = $@ ? 'SQLite2' : 'SQLite';
 
-my $fn = './t/dbictest.db';
+my $fn = "$tdir/dbictest.db";
 
 unlink($fn);
 our $dsn = "dbi:$class:dbname=$fn";
 my $dbh = DBI->connect($dsn);
+$dbh->do('PRAGMA SYNCHRONOUS = OFF');
 
 $dbh->do($_) for (
     q|CREATE TABLE foo (

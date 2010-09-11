@@ -2,14 +2,14 @@ package DBIx::Class::Schema::Loader::DBI::SQLAnywhere;
 
 use strict;
 use warnings;
-use Class::C3;
+use mro 'c3';
 use base qw/
     DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault
     DBIx::Class::Schema::Loader::DBI
 /;
 use Carp::Clan qw/^DBIx::Class/;
 
-our $VERSION = '0.07001';
+our $VERSION = '0.07002';
 
 =head1 NAME
 

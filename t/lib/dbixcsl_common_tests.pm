@@ -17,7 +17,9 @@ use List::MoreUtils 'apply';
 use DBIx::Class::Schema::Loader::Optional::Dependencies ();
 use namespace::clean;
 
-my $DUMP_DIR = './t/_common_dump';
+use dbixcsl_test_dir qw/$tdir/;
+
+my $DUMP_DIR = "$tdir/common_dump";
 rmtree $DUMP_DIR;
 
 sub new {
@@ -44,7 +46,7 @@ sub new {
     # Optional extra tables and tests
     $self->{extra} ||= {};
 
-    $self->{date_datatype} ||= 'DATE';
+    $self->{basic_date_datatype} ||= 'DATE';
 
     # Not all DBS do SQL-standard CURRENT_TIMESTAMP
     $self->{default_function} ||= "current_timestamp";
@@ -122,17 +124,8 @@ sub run_only_extra_tests {
         $self->drop_extra_tables_only;
 
         my $dbh = $self->dbconnect(1);
-        {
-            # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
-            local $SIG{__WARN__} = sub {
-                my $msg = shift;
-                warn $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
-            };
-
-
-            $dbh->do($_) for @{ $self->{extra}{create} || [] };
-            $dbh->do($_) for @{ $self->{data_type_tests}{ddl} || []};
-        }
+        $dbh->do($_) for @{ $self->{extra}{create} || [] };
+        $dbh->do($_) for @{ $self->{data_type_tests}{ddl} || []};
         $self->{_created} = 1;
 
         my $file_count = grep /CREATE (?:TABLE|VIEW)/i, @{ $self->{extra}{create} || [] };
@@ -158,11 +151,7 @@ sub drop_extra_tables_only {
 
     my $dbh = $self->dbconnect(0);
 
-    {
-        local $SIG{__WARN__} = sub {}; # postgres notices
-        $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
-    }
-
+    $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
     $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
 
     foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
@@ -182,11 +171,19 @@ sub setup_schema {
 
     my $debug = ($self->{verbose} > 1) ? 1 : 0;
 
-    my $use_moose = DBIx::Class::Schema::Loader::Optional::Dependencies->req_ok_for('use_moose');
+    if (
+      $ENV{SCHEMA_LOADER_TESTS_USE_MOOSE}
+        &&
+      ! DBIx::Class::Schema::Loader::Optional::Dependencies->req_ok_for('use_moose')
+    ) {
+      die sprintf ("Missing dependencies for SCHEMA_LOADER_TESTS_USE_MOOSE: %s\n",
+        DBIx::Class::Schema::Loader::Optional::Dependencies->req_missing_for('use_moose')
+      );
+    }
 
     my %loader_opts = (
         constraint              =>
-	    qr/^(?:\S+\.)?(?:(?:$self->{vendor}|extra)_?)?loader_?test[0-9]+(?!.*_)/i,
+          qr/^(?:\S+\.)?(?:(?:$self->{vendor}|extra)_?)?loader_?test[0-9]+(?!.*_)/i,
         relationships           => 1,
         additional_classes      => 'TestAdditional',
         additional_base_classes => 'TestAdditionalBase',
@@ -202,7 +199,7 @@ sub setup_schema {
         dump_directory          => $DUMP_DIR,
         datetime_timezone       => 'Europe/Berlin',
         datetime_locale         => 'de_DE',
-        use_moose               => $use_moose,
+        use_moose               => $ENV{SCHEMA_LOADER_TESTS_USE_MOOSE},
         %{ $self->{loader_options} || {} },
     );
 
@@ -213,7 +210,7 @@ sub setup_schema {
     my $file_count;
     {
         my @loader_warnings;
-        local $SIG{__WARN__} = sub { push(@loader_warnings, $_[0]); };
+        local $SIG{__WARN__} = sub { push(@loader_warnings, @_); };
          eval qq{
              package $schema_class;
              use base qw/DBIx::Class::Schema::Loader/;
@@ -920,30 +917,21 @@ sub test_schema {
         find $find_cb, $DUMP_DIR;
 
 #        system "rm -f /tmp/before_rescan/* /tmp/after_rescan/*";
-#        system "cp t/_common_dump/DBIXCSL_Test/Schema/*.pm /tmp/before_rescan";
+#        system "cp $tdir/common_dump/DBIXCSL_Test/Schema/*.pm /tmp/before_rescan";
 
         my $before_digest = $digest->b64digest;
 
         $conn->storage->disconnect; # needed for Firebird and Informix
         my $dbh = $self->dbconnect(1);
-
-        {
-            # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
-            local $SIG{__WARN__} = sub {
-                my $msg = shift;
-                warn $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
-            };
-
-            $dbh->do($_) for @statements_rescan;
-        }
-
+        $dbh->do($_) for @statements_rescan;
         $dbh->disconnect;
 
         sleep 1;
 
         my @new = do {
-            # kill the 'Dumping manual schema' warnings
-            local $SIG{__WARN__} = sub {};
+            local $SIG{__WARN__} = sub { warn @_
+                unless $_[0] =~ /(?i:loader_test)\d+ has no primary key|^Dumping manual schema|^Schema dump completed/
+            };
             $conn->rescan;
         };
         is_deeply(\@new, [ qw/LoaderTest30/ ], "Rescan");
@@ -974,7 +962,9 @@ sub test_schema {
         $conn->storage->dbh->do("DROP TABLE loader_test30");
 
         @new = do {
-            local $SIG{__WARN__} = sub {};
+            local $SIG{__WARN__} = sub { warn @_
+                unless $_[0] =~ /(?i:loader_test)\d+ has no primary key|^Dumping manual schema|^Schema dump completed/
+            };
             $conn->rescan;
         };
         is_deeply(\@new, [], 'no new tables on rescan');
@@ -1027,16 +1017,9 @@ sub test_preserve_case {
 
     my ($oqt, $cqt) = $self->get_oqt_cqt(always => 1); # open quote, close quote
 
-    my $dbh = $conn->storage->dbh;
+    my $dbh = $self->dbconnect;
 
-    {
-        # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
-        local $SIG{__WARN__} = sub {
-            my $msg = shift;
-            warn $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
-        };
-
-        $dbh->do($_) for (
+    $dbh->do($_) for (
 qq|
     CREATE TABLE ${oqt}LoaderTest40${cqt} (
         ${oqt}Id${cqt} INTEGER NOT NULL PRIMARY KEY,
@@ -1052,17 +1035,19 @@ qq|
 |,
 qq| INSERT INTO ${oqt}LoaderTest40${cqt} VALUES (1, 'foo') |,
 qq| INSERT INTO ${oqt}LoaderTest41${cqt} VALUES (1, 1) |,
-        );
-    }
+    );
     $conn->storage->disconnect;
 
     local $conn->_loader->{preserve_case} = 1;
     $conn->_loader->_setup;
 
+
     {
-        local $SIG{__WARN__} = sub {};
+        local $SIG{__WARN__} = sub { warn @_
+            unless $_[0] =~ /(?i:loader_test)\d+ has no primary key|^Dumping manual schema|^Schema dump completed/
+        };
         $conn->rescan;
-    }
+    };
 
     if (not $self->{skip_rels}) {
         is $conn->resultset('LoaderTest41')->find(1)->loader_test40->foo3_bar, 'foo',
@@ -1159,6 +1144,8 @@ sub create {
 
     $self->{_created} = 1;
 
+    $self->drop_tables;
+
     my $make_auto_inc = $self->{auto_inc_cb} || sub {};
     @statements = (
         qq{
@@ -1221,7 +1208,7 @@ sub create {
         qq{
             CREATE TABLE loader_test36 (
                 id INTEGER NOT NULL PRIMARY KEY,
-                a_date $self->{date_datatype},
+                a_date $self->{basic_date_datatype},
                 b_char_as_data VARCHAR(100),
                 c_char_as_data VARCHAR(100)
             ) $self->{innodb}
@@ -1595,15 +1582,8 @@ sub create {
     );
 
     $self->drop_tables;
-    $self->drop_tables; # twice for good measure
 
     my $dbh = $self->dbconnect(1);
-
-    # Silence annoying but harmless postgres "NOTICE:  CREATE TABLE..."
-    local $SIG{__WARN__} = sub {
-        my $msg = shift;
-        warn $msg unless $msg =~ m{^NOTICE:\s+CREATE TABLE};
-    };
 
     $dbh->do($_) foreach (@statements);
 
@@ -1636,6 +1616,7 @@ sub drop_tables {
     my $self = shift;
 
     my @tables = qw/
+        loader_test1
         loader_test1s
         loader_test2
         LOADER_test23
@@ -1705,18 +1686,18 @@ sub drop_tables {
     my $drop_fk =
         q{ALTER TABLE loader_test10 DROP CONSTRAINT loader_test11_fk};
 
-    my $dbh = $self->dbconnect(0);
+    # For some reason some tests do this twice (I guess dependency issues?)
+    # do it twice for all drops
+    for (1,2) {
+      my $dbh = $self->dbconnect(0);
 
-    {
-        local $SIG{__WARN__} = sub {}; # postgres notices
-        $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
-    }
+      $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
 
-    $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
+      $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
 
-    my $drop_auto_inc = $self->{auto_inc_drop_cb} || sub {};
+      my $drop_auto_inc = $self->{auto_inc_drop_cb} || sub {};
 
-    unless($self->{skip_rels}) {
+      unless($self->{skip_rels}) {
         $dbh->do("DROP TABLE $_") for (@tables_reltests);
         $dbh->do("DROP TABLE $_") for (@tables_reltests);
         if($self->{vendor} =~ /mysql/i) {
@@ -1734,24 +1715,20 @@ sub drop_tables {
         unless($self->{no_implicit_rels}) {
             $dbh->do("DROP TABLE $_") for (@tables_implicit_rels);
         }
-    }
-    $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_auto_inc;
-    $dbh->do("DROP TABLE $_") for (@tables, @tables_rescan);
+      }
+      $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_auto_inc;
+      $dbh->do("DROP TABLE $_") for (@tables, @tables_rescan);
 
-    foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
+      foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
         $dbh->do("DROP TABLE $data_type_table");
+      }
+
+      my ($oqt, $cqt) = $self->get_oqt_cqt(always => 1);
+
+      $dbh->do("DROP TABLE ${oqt}${_}${cqt}") for @tables_preserve_case_tests;
+
+      $dbh->disconnect;
     }
-
-    my ($oqt, $cqt) = $self->get_oqt_cqt(always => 1);
-
-    $dbh->do("DROP TABLE ${oqt}${_}${cqt}") for @tables_preserve_case_tests;
-
-    $dbh->disconnect;
-
-# fixup for Firebird
-    $dbh = $self->dbconnect(0);
-    $dbh->do('DROP TABLE loader_test2');
-    $dbh->disconnect;
 }
 
 sub _custom_column_info {
@@ -1830,7 +1807,7 @@ sub setup_data_type_tests {
             my @size = split /,/, $size;
 
             # some DBs don't like very long column names
-            if ($self->{vendor} =~ /^(?:firebird|sqlanywhere|oracle)\z/i) {
+            if ($self->{vendor} =~ /^(?:firebird|sqlanywhere|oracle|db2)\z/i) {
                 my ($col_def, $default) = $type_alias =~ /^(.*)(default.*)?\z/i;
 
                 $type_alias = substr $col_def, 0, 15;
@@ -1874,8 +1851,8 @@ sub setup_data_type_tests {
 sub DESTROY {
     my $self = shift;
     unless ($ENV{SCHEMA_LOADER_TESTS_NOCLEANUP}) {
-	$self->drop_tables if $self->{_created};
-	rmtree $DUMP_DIR
+      $self->drop_tables if $self->{_created};
+      rmtree $DUMP_DIR
     }
 }
 

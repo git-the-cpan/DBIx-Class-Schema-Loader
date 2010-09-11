@@ -2,12 +2,14 @@ package DBIx::Class::Schema::Loader::RelBuilder;
 
 use strict;
 use warnings;
-use Class::C3;
+use mro 'c3';
 use Carp::Clan qw/^DBIx::Class/;
+use Scalar::Util ();
+
 use Lingua::EN::Inflect::Phrase ();
 use DBIx::Class::Schema::Loader::Utils 'split_name';
 
-our $VERSION = '0.07001';
+our $VERSION = '0.07002';
 
 =head1 NAME
 
@@ -26,15 +28,7 @@ is module is not (yet) for external use.
 
 =head2 new
 
-Arguments: schema_class (scalar), inflect_plural, inflect_singular
-
-C<$schema_class> should be a schema class name, where the source
-classes have already been set up and registered.  Column info, primary
-key, and unique constraints will be drawn from this schema for all
-of the existing source monikers.
-
-Options inflect_plural and inflect_singular are optional, and are better documented
-in L<DBIx::Class::Schema::Loader::Base>.
+Arguments: $base object
 
 =head2 generate_code
 
@@ -76,19 +70,32 @@ arguments, like so:
 
 =cut
 
+
 sub new {
-    my ( $class, $schema, $inflect_pl, $inflect_singular, $rel_attrs ) = @_;
+    my ( $class, $base ) = @_;
+
+    # from old POD about this constructor:
+    # C<$schema_class> should be a schema class name, where the source
+    # classes have already been set up and registered.  Column info,
+    # primary key, and unique constraints will be drawn from this
+    # schema for all of the existing source monikers.
+
+    # Options inflect_plural and inflect_singular are optional, and
+    # are better documented in L<DBIx::Class::Schema::Loader::Base>.
 
     my $self = {
-        schema => $schema,
-        inflect_plural => $inflect_pl,
-        inflect_singular => $inflect_singular,
-        relationship_attrs => $rel_attrs,
+        base               => $base,
+        schema             => $base->schema,
+        inflect_plural     => $base->inflect_plural,
+        inflect_singular   => $base->inflect_singular,
+        relationship_attrs => $base->relationship_attrs,
     };
+
+    Scalar::Util::weaken $self->{base}; #< don't leak
 
     # validate the relationship_attrs arg
     if( defined $self->{relationship_attrs} ) {
-	ref($self->{relationship_attrs}) eq 'HASH'
+	ref $self->{relationship_attrs} eq 'HASH'
 	    or croak "relationship_attrs must be a hashref";
     }
 

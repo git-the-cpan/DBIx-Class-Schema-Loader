@@ -3,15 +3,17 @@ package make_dbictest_db_clashing_monikers;
 use strict;
 use warnings;
 use DBI;
+use dbixcsl_test_dir qw/$tdir/;
 
 eval { require DBD::SQLite };
 my $class = $@ ? 'SQLite2' : 'SQLite';
 
-my $fn = './t/dbictest_clashing_tables.db';
+my $fn = "$tdir/dbictest_clashing_tables.db";
 
 unlink($fn);
 our $dsn = "dbi:$class:dbname=$fn";
 my $dbh = DBI->connect($dsn);
+$dbh->do('PRAGMA SYNCHRONOUS = OFF');
 
 $dbh->do($_) for (
     q|CREATE TABLE foo (

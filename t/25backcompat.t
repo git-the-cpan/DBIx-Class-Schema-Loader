@@ -11,8 +11,9 @@ use DBIx::Class::Schema::Loader ();
 use Lingua::EN::Inflect::Number ();
 use lib qw(t/lib);
 use make_dbictest_db_with_unique;
+use dbixcsl_test_dir qw/$tdir/;
 
-my $DUMP_DIR = './t/_common_dump';
+my $DUMP_DIR = "$tdir/common_dump";
 rmtree $DUMP_DIR;
 my $SCHEMA_CLASS = 'DBIXCSL_Test::Schema';
 
@@ -891,7 +892,7 @@ sub run_loader {
 
     my @connect_info = $make_dbictest_db_with_unique::dsn;
     my @loader_warnings;
-    local $SIG{__WARN__} = sub { push(@loader_warnings, $_[0]); };
+    local $SIG{__WARN__} = sub { push(@loader_warnings, @_); };
     eval qq{
         package $SCHEMA_CLASS;
         use base qw/DBIx::Class::Schema::Loader/;

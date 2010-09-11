@@ -2,12 +2,12 @@ package DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_05;
 
 use strict;
 use warnings;
-use Class::C3;
+use mro 'c3';
 use base 'DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_06';
 use Carp::Clan qw/^DBIx::Class/;
 use Lingua::EN::Inflect::Number ();
 
-our $VERSION = '0.07001';
+our $VERSION = '0.07002';
 
 sub _to_PL {
     my ($self, $name) = @_;

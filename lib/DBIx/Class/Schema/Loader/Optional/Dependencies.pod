@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class::Schema::Loader' => '0.07001';
+  configure_requires 'DBIx::Class::Schema::Loader' => '0.07002';
 
   require DBIx::Class::Schema::Loader::Optional::Dependencies;
 
@@ -57,11 +57,11 @@ Modules required for the use_moose option
 
 =over
 
-=item * Moose
+=item * Moose >= 1.12
 
-=item * MooseX::NonMoose
+=item * MooseX::NonMoose >= 0.15
 
-=item * namespace::autoclean
+=item * namespace::autoclean >= 0.09
 
 =back
 
