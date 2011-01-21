@@ -76,6 +76,25 @@ my $tester = dbixcsl_common_tests->new(
         'binary(2)'    => { data_type => 'binary', size => 2 },
         'varbinary(2)' => { data_type => 'varbinary', size => 2 },
     },
+    # test that named constraints aren't picked up as tables (I can't reproduce this on my machine)
+    failtrigger_warnings => [ qr/^Bad table or view 'sybase_loader_test2_ref_slt1'/ ],
+    extra => {
+        create => [
+            q{
+                CREATE TABLE sybase_loader_test1 (
+                    id int identity primary key
+                )
+            },
+            q{
+                CREATE TABLE sybase_loader_test2 (
+                    id int identity primary key,
+                    sybase_loader_test1_id int,
+                    CONSTRAINT sybase_loader_test2_ref_slt1 FOREIGN KEY (sybase_loader_test1_id) REFERENCES sybase_loader_test1 (id)
+                )
+            },
+        ],
+        drop => [ qw/sybase_loader_test1 sybase_loader_test2/ ],
+    },
 );
 
 if( !$dsn || !$user ) {
@@ -84,3 +103,5 @@ if( !$dsn || !$user ) {
 else {
     $tester->run_tests();
 }
+
+# vim:et sts=4 sw=4 tw=0:

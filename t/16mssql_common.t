@@ -2,7 +2,8 @@ use strict;
 use warnings;
 use Test::More;
 use Test::Exception;
-use Test::Warn;
+use DBIx::Class::Schema::Loader::Utils 'warnings_exist_silent';
+use namespace::clean;
 
 # use this if you keep a copy of DBD::Sybase linked to FreeTDS somewhere else
 BEGIN {
@@ -125,6 +126,7 @@ my $tester = dbixcsl_common_tests->new(
         character      => { data_type => 'char', size => 1 },
         'character(2)' => { data_type => 'char', size => 2 },
         'varchar(2)'   => { data_type => 'varchar', size => 2 },
+
         nchar          => { data_type => 'nchar', size => 1 },
         'nchar(2)'     => { data_type => 'nchar', size => 2 },
         'nvarchar(2)'  => { data_type => 'nvarchar', size => 2 },
@@ -137,8 +139,10 @@ my $tester = dbixcsl_common_tests->new(
         # blob types
         'varchar(max)'   => { data_type => 'text' },
         text             => { data_type => 'text' },
+
         'nvarchar(max)'  => { data_type => 'ntext' },
         ntext            => { data_type => 'ntext' },
+
         'varbinary(max)' => { data_type => 'image' },
         image            => { data_type => 'image' },
 
@@ -257,7 +261,7 @@ my $tester = dbixcsl_common_tests->new(
             my $dbh = $schema->storage->dbh;
             $dbh->do("DROP TABLE mssql_loader_test3");
 
-            warnings_exist { $schema->rescan }
+            warnings_exist_silent { $schema->rescan }
               qr/^Bad table or view 'mssql_loader_test4'/, 'bad view ignored';
 
             throws_ok {

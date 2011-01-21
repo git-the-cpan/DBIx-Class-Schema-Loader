@@ -1,5 +1,28 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.07003  2011-01-21 06:43:05
+        - fix relname/method collisions (RT#62648)
+        - fix fully qualified component classes (RT#62624)
+        - improve sybase/mssql db_schema detection
+        - remove MooseX::NonMoose from Schema files under use_moose=1
+        - better _tables_list for Sybase ASE
+        - add datetime_undef_if_invalid => 1 for MySQL datetime data types
+          (RT#64820) This behavior can be turned off by passing
+          datetime_undef_if_invalid=0 as a loader option
+        - added column_accessor_map option
+        - Preserve relationship names when redumping and another FK is added
+          (RT#62424)
+        - Remove resultset_components as ResultSetManager is deprecated
+        - Fix a fail when very old Moose/CMOP is installed
+        - Added warning for column-accessor collisions, doc section in ::Base
+          ("COLUMN ACCESSOR COLLISIONS") and the col_collision_map option.
+        - Handle column accessor collisions with UNIVERSAL methods
+        - Generate custom_type_name hint for PostgreSQL enums, as used
+          by very recent SQL::Translator
+        - Added support for PostgreSQL enum types
+        - Added table/column comment support for Oracle
+        - Fix missing require (RT#62072)
+
 0.07002  2010-09-11 01:48:00
         - Properly detect a schema loaded with use_moose on subsequent
           reloads

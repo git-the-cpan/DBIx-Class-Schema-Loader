@@ -8,7 +8,7 @@ use Carp::Clan qw/^DBIx::Class/;
 use Scalar::Util 'looks_like_number';
 use namespace::clean;
 
-our $VERSION = '0.07002';
+our $VERSION = '0.07003';
 
 =head1 NAME
 
@@ -186,7 +186,6 @@ sub _columns_info_for {
     my $result = $self->next::method(@_);
 
     my $dbh = $self->schema->storage->dbh;
-    local $dbh->{FetchHashKeyName} = 'NAME_lc';
 
     my $sth = $dbh->prepare(<<'EOF');
 select c.colname, c.coltype, c.collength, c.colmin, d.type deflt_type, d.default deflt

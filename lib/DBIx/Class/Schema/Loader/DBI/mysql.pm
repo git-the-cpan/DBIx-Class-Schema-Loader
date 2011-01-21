@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI';
 use Carp::Clan qw/^DBIx::Class/;
 use mro 'c3';
 
-our $VERSION = '0.07002';
+our $VERSION = '0.07003';
 
 =head1 NAME
 
@@ -176,6 +176,11 @@ EOF
                 delete $info->{size};
             }
         }
+        elsif ($info->{data_type} =~ /^(?:date(?:time)?|timestamp)\z/) {
+            if (not (defined $self->datetime_undef_if_invalid && $self->datetime_undef_if_invalid == 0)) {
+                $info->{datetime_undef_if_invalid} = 1;
+            }
+        }
 
         # Sometimes apparently there's a bug where default_value gets set to ''
         # for things that don't actually have or support that default (like ints.)
@@ -216,6 +221,15 @@ sub _extra_column_info {
     }
 
     return \%extra_info;
+}
+
+sub _dbh_column_info {
+    my $self = shift;
+
+    local $SIG{__WARN__} = sub { warn @_
+        unless $_[0] =~ /^column_info: unrecognized column type/ };
+
+    $self->next::method(@_);
 }
 
 =head1 SEE ALSO

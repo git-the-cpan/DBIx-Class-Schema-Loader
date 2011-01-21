@@ -112,7 +112,18 @@ my $tester = dbixcsl_common_tests->new(
 
         # Blob Types
 	bytea => { data_type => 'bytea' },
+
+        # Enum Types
+        pg_loader_test_enum => { data_type => 'enum', extra => { custom_type_name => 'pg_loader_test_enum',
+                                                                 list => [ qw/foo bar baz/] } },
     },
+    pre_create => [
+        q{
+            CREATE TYPE pg_loader_test_enum AS ENUM (
+                'foo', 'bar', 'baz'
+            )
+        },
+    ],
     extra       => {
         create => [
             q{
@@ -145,6 +156,7 @@ my $tester = dbixcsl_common_tests->new(
         ],
         pre_drop_ddl => [
             'DROP SCHEMA dbicsl_test CASCADE',
+            'DROP TYPE pg_loader_test_enum',
         ],
         drop  => [ qw/ pg_loader_test1 pg_loader_test2 / ],
         count => 4,
@@ -156,7 +168,7 @@ my $tester = dbixcsl_common_tests->new(
                 'qualified sequence detected';
 
             my $class    = $classes->{pg_loader_test1};
-            my $filename = $schema->_loader->_get_dump_filename($class);
+            my $filename = $schema->_loader->get_dump_filename($class);
 
             my $code = slurp $filename;
 
@@ -167,7 +179,7 @@ my $tester = dbixcsl_common_tests->new(
                 'column comment and attrs';
 
             $class    = $classes->{pg_loader_test2};
-            $filename = $schema->_loader->_get_dump_filename($class);
+            $filename = $schema->_loader->get_dump_filename($class);
 
             $code = slurp $filename;
 

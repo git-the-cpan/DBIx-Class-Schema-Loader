@@ -3,6 +3,7 @@ use lib qw(t/lib);
 use dbixcsl_common_tests;
 use Test::More;
 use Test::Exception;
+use File::Slurp ();
 
 my $dsn      = $ENV{DBICTEST_ORA_DSN} || '';
 my $user     = $ENV{DBICTEST_ORA_USER} || '';
@@ -45,10 +46,16 @@ my $tester = dbixcsl_common_tests->new(
         'char'         => { data_type => 'char',      size => 1  },
         'char(11)'     => { data_type => 'char',      size => 11 },
         'nchar'        => { data_type => 'nchar',     size => 1  },
+        'national character'
+                       => { data_type => 'nchar',     size => 1  },
         'nchar(11)'    => { data_type => 'nchar',     size => 11 },
+        'national character(11)'
+                       => { data_type => 'nchar',     size => 11 },
         'varchar(20)'  => { data_type => 'varchar2',  size => 20 },
         'varchar2(20)' => { data_type => 'varchar2',  size => 20 },
         'nvarchar2(20)'=> { data_type => 'nvarchar2', size => 20 },
+        'national character varying(20)'
+                       => { data_type => 'nvarchar2', size => 20 },
 
         # Numeric Types
         #
@@ -74,7 +81,7 @@ my $tester = dbixcsl_common_tests->new(
         'binary_double' => { data_type => 'double precision', original => { data_type => 'binary_double' } },
 
         # these are not mentioned in the summary chart, must be aliased
-	real            => { data_type => 'real',             original => { data_type => 'float', size => 63  } },
+        real            => { data_type => 'real',             original => { data_type => 'float', size => 63  } },
         'float(63)'     => { data_type => 'real',             original => { data_type => 'float', size => 63  } },
         'float(64)'     => { data_type => 'double precision', original => { data_type => 'float', size => 64  } },
         'float(126)'    => { data_type => 'double precision', original => { data_type => 'float', size => 126 } },
@@ -125,7 +132,18 @@ my $tester = dbixcsl_common_tests->new(
         'urowid(3333)' => { data_type => 'urowid', size => 3333 },
     },
     extra => {
-        count => 1,
+        create => [
+            q{ 
+                CREATE TABLE oracle_loader_test1 (
+                    id NUMBER(11),
+                    value VARCHAR2(100)
+                )
+            },
+            q{ COMMENT ON TABLE oracle_loader_test1 IS 'oracle_loader_test1 table comment' },
+            q{ COMMENT ON COLUMN oracle_loader_test1.value IS 'oracle_loader_test1.value column comment' },
+        ],
+        drop  => [qw/oracle_loader_test1/],
+        count => 3,
         run   => sub {
             my ($schema, $monikers, $classes) = @_;
 
@@ -139,6 +157,16 @@ my $tester = dbixcsl_common_tests->new(
                     skip 'not running common tests', 1;
                 }
             }
+
+            my $class = $classes->{oracle_loader_test1};
+            my $filename = $schema->_loader->get_dump_filename($class);
+            my $code = File::Slurp::slurp $filename;
+
+            like $code, qr/^=head1 NAME\n\n^$class - oracle_loader_test1 table comment\n\n^=cut\n/m,
+                'table comment';
+
+            like $code, qr/^=head2 value\n\n(.+:.+\n)+\noracle_loader_test1\.value column comment\n\n/m,
+                'column comment and attrs';
         },
     },
 );

@@ -55,7 +55,7 @@ t/13db2_common.t
 t/14ora_common.t
 t/15sybase_common.t
 t/16mssql_common.t
-t/17sybase_asa_common.t
+t/17sqlanywhere_common.t
 t/18firebird_common.t
 t/19informix_common.t
 t/20invocations.t
@@ -77,7 +77,6 @@ t/backcompat/0.04006/21misc_fatal.t
 t/backcompat/0.04006/22dump.t
 t/backcompat/0.04006/23dumpmore.t
 t/backcompat/0.04006/lib/DBIx/Class/TestComponent.pm
-t/backcompat/0.04006/lib/DBIx/Class/TestRSComponent.pm
 t/backcompat/0.04006/lib/dbixcsl_common_tests.pm
 t/backcompat/0.04006/lib/DBIXCSL_Test/Schema/LoaderTest1.pm
 t/backcompat/0.04006/lib/dbixcsl_test_dir.pm
@@ -90,7 +89,6 @@ t/backcompat/0.04006/lib/TestLeftBase.pm
 t/lib/DBICTest/Schema/_no_skip_load_external/Foo.pm
 t/lib/DBICTest/Schema/_skip_load_external/Foo.pm
 t/lib/DBIx/Class/TestComponent.pm
-t/lib/DBIx/Class/TestRSComponent.pm
 t/lib/dbixcsl_common_tests.pm
 t/lib/dbixcsl_dumper_tests.pm
 t/lib/DBIXCSL_Test/Schema/LoaderTest1.pm
@@ -102,6 +100,7 @@ t/lib/My/ResultBaseClass.pm
 t/lib/My/SchemaBaseClass.pm
 t/lib/TestAdditional.pm
 t/lib/TestAdditionalBase.pm
+t/lib/TestComponentFQN.pm
 t/lib/TestLeftBase.pm
 t/lib/TestLoaderSubclass.pm
 t/lib/TestLoaderSubclass_NoRebless.pm

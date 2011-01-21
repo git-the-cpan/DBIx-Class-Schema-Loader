@@ -5,8 +5,10 @@ use warnings;
 use base qw/DBIx::Class::Schema::Loader::Base/;
 use mro 'c3';
 use Carp::Clan qw/^DBIx::Class/;
+use Try::Tiny;
+use namespace::clean;
 
-our $VERSION = '0.07002';
+our $VERSION = '0.07003';
 
 =head1 NAME
 
@@ -122,18 +124,19 @@ sub _filter_tables {
     @tables = grep { /$constraint/ } @$tables if defined $constraint;
     @tables = grep { ! /$exclude/  } @$tables if defined $exclude;
 
-    for my $table (@tables) {
-        eval {
+    LOOP: for my $table (@tables) {
+        try {
             my $sth = $self->_sth_for($table, undef, \'1 = 0');
             $sth->execute;
-        };
-        if (not $@) {
-            push @filtered_tables, $table;
         }
-        else {
-            warn "Bad table or view '$table', ignoring: $@\n";
+        catch {
+            warn "Bad table or view '$table', ignoring: $_\n";
             $self->_unregister_source_for_table($table);
-        }
+            no warnings 'exiting';
+            next LOOP;
+        };
+
+        push @filtered_tables, $table;
     }
 
     return @filtered_tables;
@@ -282,53 +285,50 @@ sub _columns_info_for {
 
     my $dbh = $self->schema->storage->dbh;
 
+    my %result;
+
     if ($dbh->can('column_info')) {
-        my %result;
-        eval {
-            my $sth = do {
-                # FIXME - seems to only warn on MySQL, and even then the output is valuable
-                # need to figure out how no to mask it away (and still have tests pass)
-                local $SIG{__WARN__} = sub {};
-                $dbh->column_info( undef, $self->db_schema, $table, '%' );
-            };
-            while ( my $info = $sth->fetchrow_hashref() ){
-                my $column_info = {};
-                $column_info->{data_type}     = lc $info->{TYPE_NAME};
+        my $sth = $self->_dbh_column_info($dbh, undef, $self->db_schema, $table, '%' );
+        while ( my $info = $sth->fetchrow_hashref() ){
+            my $column_info = {};
+            $column_info->{data_type}     = lc $info->{TYPE_NAME};
 
-                my $size = $info->{COLUMN_SIZE};
+            my $size = $info->{COLUMN_SIZE};
 
-                if (defined $size && defined $info->{DECIMAL_DIGITS}) {
-                    $column_info->{size} = [$size, $info->{DECIMAL_DIGITS}];
-                }
-                elsif (defined $size) {
-                    $column_info->{size} = $size;
-                }
-
-                $column_info->{is_nullable}   = $info->{NULLABLE} ? 1 : 0;
-                $column_info->{default_value} = $info->{COLUMN_DEF} if defined $info->{COLUMN_DEF};
-                my $col_name = $info->{COLUMN_NAME};
-                $col_name =~ s/^\"(.*)\"$/$1/;
-
-                my $extra_info = $self->_extra_column_info(
-                    $table, $col_name, $column_info, $info
-                ) || {};
-                $column_info = { %$column_info, %$extra_info };
-
-                $result{$col_name} = $column_info;
+            if (defined $size && defined $info->{DECIMAL_DIGITS}) {
+                $column_info->{size} = [$size, $info->{DECIMAL_DIGITS}];
             }
-            $sth->finish;
-        };
+            elsif (defined $size) {
+                $column_info->{size} = $size;
+            }
 
-        return \%result if !$@ && scalar keys %result;
+            $column_info->{is_nullable}   = $info->{NULLABLE} ? 1 : 0;
+            $column_info->{default_value} = $info->{COLUMN_DEF} if defined $info->{COLUMN_DEF};
+            my $col_name = $info->{COLUMN_NAME};
+            $col_name =~ s/^\"(.*)\"$/$1/;
+
+            $col_name = $self->_lc($col_name);
+
+            my $extra_info = $self->_extra_column_info(
+                $table, $col_name, $column_info, $info
+            ) || {};
+            $column_info = { %$column_info, %$extra_info };
+
+            $result{$col_name} = $column_info;
+        }
+        $sth->finish;
+
+        return \%result if %result;
     }
 
-    my %result;
     my $sth = $self->_sth_for($table, undef, \'1 = 0');
     $sth->execute;
-    my @columns = @{ $self->preserve_case ? $sth->{NAME} : $sth->{NAME_lc} };
-    for my $i ( 0 .. $#columns ){
+
+    my @columns = @{ $sth->{NAME} };
+
+    for my $i (0 .. $#columns) {
         my $column_info = {};
-        $column_info->{data_type} = lc $sth->{TYPE}->[$i];
+        $column_info->{data_type} = lc $sth->{TYPE}[$i];
 
         my $size = $sth->{PRECISION}[$i];
 
@@ -339,7 +339,7 @@ sub _columns_info_for {
             $column_info->{size} = $size;
         }
 
-        $column_info->{is_nullable} = $sth->{NULLABLE}->[$i] ? 1 : 0;
+        $column_info->{is_nullable} = $sth->{NULLABLE}[$i] ? 1 : 0;
 
         if ($column_info->{data_type} =~ m/^(.*?)\((.*?)\)$/) {
             $column_info->{data_type} = $1;
@@ -349,7 +349,7 @@ sub _columns_info_for {
         my $extra_info = $self->_extra_column_info($table, $columns[$i], $column_info) || {};
         $column_info = { %$column_info, %$extra_info };
 
-        $result{$columns[$i]} = $column_info;
+        $result{ $self->_lc($columns[$i]) } = $column_info;
     }
     $sth->finish;
 
@@ -357,7 +357,7 @@ sub _columns_info_for {
         my $colinfo = $result{$col};
         my $type_num = $colinfo->{data_type};
         my $type_name;
-        if(defined $type_num && $type_num =~ /^\d+\z/ && $dbh->can('type_info')) {
+        if (defined $type_num && $type_num =~ /^\d+\z/ && $dbh->can('type_info')) {
             my $type_info = $dbh->type_info($type_num);
             $type_name = $type_info->{TYPE_NAME} if $type_info;
             $colinfo->{data_type} = lc $type_name if $type_name;
@@ -367,9 +367,15 @@ sub _columns_info_for {
     return \%result;
 }
 
-# Override this in vendor class to return any additional column
-# attributes
+# do not use this, override _columns_info_for instead
 sub _extra_column_info {}
+
+# override to mask warnings if needed (see mysql)
+sub _dbh_column_info {
+    my ($self, $dbh) = (shift, shift);
+
+    return $dbh->column_info(@_);
+}
 
 =head1 SEE ALSO
 

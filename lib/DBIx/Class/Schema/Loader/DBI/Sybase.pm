@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI::Sybase::Common';
 use Carp::Clan qw/^DBIx::Class/;
 use mro 'c3';
 
-our $VERSION = '0.07002';
+our $VERSION = '0.07003';
 
 =head1 NAME
 
@@ -42,6 +42,19 @@ sub _rebless {
             $self->_rebless;
       }
     }
+}
+
+sub _tables_list {
+    my ($self, $opts) = @_;
+
+    my $dbh = $self->schema->storage->dbh;
+
+    my $sth = $dbh->table_info(undef, $self->db_schema, undef, "'TABLE','VIEW'");
+
+    my @tables = grep $_ ne 'sysquerymetrics',
+              map $_->{table_name}, @{ $sth->fetchall_arrayref({ table_name => 1 }) };
+
+    return $self->_filter_tables(\@tables, $opts);
 }
 
 sub _table_columns {
@@ -187,10 +200,11 @@ sub _table_fk_info_builder {
 }
 
 sub _table_uniq_info {
+    no warnings 'uninitialized'; # for presumably XS weirdness with null operations
     my ($self, $table) = @_;
 
-    # FIXME - remove blind mask (can't test sybase yet)
-    local $SIG{__WARN__} = sub {};
+    local $SIG{__WARN__} = sub { warn @_
+        unless $_[0] =~ /^Formula for Calculation:|^(?:--?|\+|=) Number of (?:self )?references|^Total Number of Referential Constraints|^Details:|^\s*$/ };
 
     my $dbh = $self->schema->storage->dbh;
     local $dbh->{FetchHashKeyName} = 'NAME_lc';
@@ -335,3 +349,4 @@ the same terms as Perl itself.
 =cut
 
 1;
+# vim:et sts=4 sw=4 tw=0:

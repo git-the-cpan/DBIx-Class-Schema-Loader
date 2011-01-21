@@ -9,7 +9,7 @@ use base qw/
 use Carp::Clan qw/^DBIx::Class/;
 use mro 'c3';
 
-our $VERSION = '0.07002';
+our $VERSION = '0.07003';
 
 =head1 NAME
 
@@ -223,6 +223,34 @@ EOF
         }
         elsif (lc($data_type) eq 'character') {
             $info->{data_type} = 'char';
+        }
+        else {
+            my ($typetype) = $self->schema->storage->dbh
+                ->selectrow_array(<<EOF, {}, $data_type);
+SELECT typtype
+FROM pg_catalog.pg_type
+WHERE typname = ?
+EOF
+            if ($typetype eq 'e') {
+                # The following will extract a list of allowed values for the
+                # enum.
+                my $typevalues = $self->schema->storage->dbh
+                    ->selectall_arrayref(<<EOF, {}, $info->{data_type});
+SELECT e.enumlabel
+FROM pg_catalog.pg_enum e
+JOIN pg_catalog.pg_type t ON t.oid = e.enumtypid
+WHERE t.typname = ?
+EOF
+
+                $info->{extra}{list} = [ map { $_->[0] } @$typevalues ];
+
+                # Store its original name in extra for SQLT to pick up.
+                $info->{extra}{custom_type_name} = $info->{data_type};
+
+                $info->{data_type} = 'enum';
+                
+                delete $info->{size};
+            }
         }
 
 # process SERIAL columns

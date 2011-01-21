@@ -31,9 +31,10 @@ no_index:
     - t
 requires:
   Carp::Clan: 0
-  Class::Accessor::Grouped: 0.09006
+  Class::Accessor::Grouped: 0.10002
   Class::C3::Componentised: 1.0005
   Class::Inspector: 0
+  Class::Load: 0
   Class::Unload: 0
   DBIx::Class: 0.08114
   Data::Dump: 1.06
@@ -55,4 +56,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.07002
+version: 0.07003

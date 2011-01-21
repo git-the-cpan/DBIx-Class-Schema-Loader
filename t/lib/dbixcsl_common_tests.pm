@@ -15,12 +15,15 @@ use Class::Unload ();
 use DBIx::Class::Schema::Loader::Utils 'dumper_squashed';
 use List::MoreUtils 'apply';
 use DBIx::Class::Schema::Loader::Optional::Dependencies ();
+use Try::Tiny;
 use namespace::clean;
 
 use dbixcsl_test_dir qw/$tdir/;
 
 my $DUMP_DIR = "$tdir/common_dump";
 rmtree $DUMP_DIR;
+
+use constant RESCAN_WARNINGS => qr/(?i:loader_test)\d+ has no primary key|^Dumping manual schema|^Schema dump completed|collides with an inherited method|invalidates \d+ active statement|^Bad table or view/;
 
 sub new {
     my $class = shift;
@@ -92,7 +95,14 @@ sub run_tests {
 
     my $extra_count = $self->{extra}{count} || 0;
 
-    plan tests => @connect_info * (182 + $extra_count + ($self->{data_type_tests}{test_count} || 0));
+    my $column_accessor_map_tests = 5;
+    my $num_rescans = 5;
+    $num_rescans-- if $self->{vendor} =~ /^(?:sybase|mysql)\z/i;
+    $num_rescans++ if $self->{vendor} eq 'mssql';
+    $num_rescans++ if $self->{vendor} eq 'Firebird';
+
+    plan tests => @connect_info *
+        (188 + $num_rescans * $column_accessor_map_tests + $extra_count + ($self->{data_type_tests}{test_count} || 0));
 
     foreach my $info_idx (0..$#connect_info) {
         my $info = $connect_info[$info_idx];
@@ -124,20 +134,28 @@ sub run_only_extra_tests {
         $self->drop_extra_tables_only;
 
         my $dbh = $self->dbconnect(1);
+        $dbh->do($_) for @{ $self->{pre_create} || [] };
         $dbh->do($_) for @{ $self->{extra}{create} || [] };
-        $dbh->do($_) for @{ $self->{data_type_tests}{ddl} || []};
+
+        if (not ($self->{vendor} eq 'mssql' && $dbh->{Driver}{Name} eq 'Sybase')) {
+            $dbh->do($_) for @{ $self->{data_type_tests}{ddl} || []};
+        }
+
         $self->{_created} = 1;
 
         my $file_count = grep /CREATE (?:TABLE|VIEW)/i, @{ $self->{extra}{create} || [] };
         $file_count++; # schema
-        $file_count++ for @{ $self->{data_type_tests}{table_names} || [] };
+        
+        if (not ($self->{vendor} eq 'mssql' && $dbh->{Driver}{Name} eq 'Sybase')) {
+            $file_count++ for @{ $self->{data_type_tests}{table_names} || [] };
+        }
 
         my $schema_class = $self->setup_schema($info, $file_count);
         my ($monikers, $classes) = $self->monikers_and_classes($schema_class);
         my $conn = $schema_class->clone;
 
         $self->test_data_types($conn);
-        $self->{extra}{run}->($conn, $monikers, $classes) if $self->{extra}{run};
+        $self->{extra}{run}->($conn, $monikers, $classes, $self) if $self->{extra}{run};
 
         if (not ($ENV{SCHEMA_LOADER_TESTS_NOCLEANUP} && $info_idx == $#$connect_info)) {
             $self->drop_extra_tables_only;
@@ -154,8 +172,10 @@ sub drop_extra_tables_only {
     $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
     $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
 
-    foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
-        $dbh->do("DROP TABLE $data_type_table");
+    if (not ($self->{vendor} eq 'mssql' && $dbh->{Driver}{Name} eq 'Sybase')) {
+        foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
+            $dbh->do("DROP TABLE $data_type_table");
+        }
     }
 }
 
@@ -188,9 +208,8 @@ sub setup_schema {
         additional_classes      => 'TestAdditional',
         additional_base_classes => 'TestAdditionalBase',
         left_base_classes       => [ qw/TestLeftBase/ ],
-        components              => [ qw/TestComponent/ ],
-        resultset_components    => [ qw/TestRSComponent/ ],
-        inflect_plural          => { loader_test4 => 'loader_test4zes' },
+        components              => [ qw/TestComponent +TestComponentFQN/ ],
+        inflect_plural          => { loader_test4_fkid => 'loader_test4zes' },
         inflect_singular        => { fkid => 'fkid_singular' },
         moniker_map             => \&_monikerize,
         custom_column_info      => \&_custom_column_info,
@@ -200,6 +219,9 @@ sub setup_schema {
         datetime_timezone       => 'Europe/Berlin',
         datetime_locale         => 'de_DE',
         use_moose               => $ENV{SCHEMA_LOADER_TESTS_USE_MOOSE},
+        col_collision_map       => { '^(can)\z' => 'caught_collision_%s' },
+        rel_collision_map       => { '^(set_primary_key)\z' => 'caught_rel_collision_%s' },
+        column_accessor_map     => \&test_column_accessor_map,
         %{ $self->{loader_options} || {} },
     );
 
@@ -227,7 +249,10 @@ sub setup_schema {
 
         if ($standard_sources) {
             $expected_count = 36;
-            $expected_count++ for @{ $self->{data_type_tests}{table_names} || [] };
+
+            if (not ($self->{vendor} eq 'mssql' && $connect_info->[0] =~ /Sybase/)) {
+                $expected_count++ for @{ $self->{data_type_tests}{table_names} || [] };
+            }
 
             $expected_count += grep /CREATE (?:TABLE|VIEW)/i,
                 @{ $self->{extra}{create} || [] };
@@ -245,7 +270,6 @@ sub setup_schema {
         is $file_count, $expected_count, 'correct number of files generated';
  
         my $warn_count = 2;
-        $warn_count++ if grep /ResultSetManager/, @loader_warnings;
  
         $warn_count++ for grep /^Bad table or view/, @loader_warnings;
  
@@ -253,7 +277,13 @@ sub setup_schema {
  
         $warn_count++ for grep /\b(?!loader_test9)\w+ has no primary key/i, @loader_warnings;
 
+        $warn_count++ for grep /^Column '\w+' in table '\w+' collides with an inherited method\./, @loader_warnings;
+
+        $warn_count++ for grep /^Relationship '\w+' in source '\w+' for columns '[^']+' collides with an inherited method\./, @loader_warnings;
+
         $warn_count++ for grep { my $w = $_; grep $w =~ $_, @{ $self->{warnings} || [] } } @loader_warnings;
+
+        $warn_count-- for grep { my $w = $_; grep $w =~ $_, @{ $self->{failtrigger_warnings} || [] } } @loader_warnings;
 
         if ($standard_sources) {
             if($self->{skip_rels}) {
@@ -280,7 +310,7 @@ sub setup_schema {
         }
     }
 
-    exit if $file_count != $expected_count;
+    exit if ($file_count||0) != $expected_count;
    
     return $schema_class;
 }
@@ -324,13 +354,19 @@ sub test_schema {
     isa_ok( $rsobj35, "DBIx::Class::ResultSet" );
 
     my @columns_lt2 = $class2->columns;
-    is_deeply( \@columns_lt2, [ qw/id dat dat2 set_primary_key dbix_class_testcomponent meta/ ], "Column Ordering" );
+    is_deeply( \@columns_lt2, [ qw/id dat dat2 set_primary_key can dbix_class_testcomponent testcomponent_fqn meta/ ], "Column Ordering" );
+
+    is $class2->column_info('can')->{accessor}, 'caught_collision_can',
+        'accessor for column name that conflicts with a UNIVERSAL method renamed based on col_collision_map';
 
     is $class2->column_info('set_primary_key')->{accessor}, undef,
         'accessor for column name that conflicts with a result base class method removed';
 
     is $class2->column_info('dbix_class_testcomponent')->{accessor}, undef,
         'accessor for column name that conflicts with a component class method removed';
+
+    is $class2->column_info('testcomponent_fqn')->{accessor}, undef,
+        'accessor for column name that conflicts with a fully qualified component class method removed';
 
     is $class2->column_info('meta')->{accessor}, undef,
         'accessor for column name that conflicts with Moose removed';
@@ -393,13 +429,8 @@ sub test_schema {
             'Additional Component' );
     }
 
-    SKIP: {
-        can_ok($rsobj1, 'dbix_class_testrscomponent')
-            or skip "Pre-requisite test failed", 1;
-        is( $rsobj1->dbix_class_testrscomponent,
-            'dbix_class_testrscomponent works',
-            'ResultSet component' );
-    }
+    is ((try { $class1->testcomponent_fqn }), 'TestComponentFQN works',
+        'fully qualified component class');
 
     SKIP: {
         can_ok( $class1, 'loader_test1_classmeth' )
@@ -407,12 +438,6 @@ sub test_schema {
         is( $class1->loader_test1_classmeth, 'all is well', 'Class method' );
     }
 
-    SKIP: {
-        can_ok( $rsobj1, 'loader_test1_rsmeth' )
-            or skip "Pre-requisite test failed";
-        is( $rsobj1->loader_test1_rsmeth, 'all is still well', 'Result set method' );
-    }
-    
     ok( $class1->column_info('id')->{is_auto_increment}, 'is_auto_increment detection' );
 
     my $obj    = $rsobj1->find(1);
@@ -468,7 +493,7 @@ sub test_schema {
     );
 
     SKIP: {
-        skip $self->{skip_rels}, 116 if $self->{skip_rels};
+        skip $self->{skip_rels}, 120 if $self->{skip_rels};
 
         my $moniker3 = $monikers->{loader_test3};
         my $class3   = $classes->{loader_test3};
@@ -595,11 +620,22 @@ sub test_schema {
         my $obj4 = $rsobj4->find(123);
         isa_ok( $obj4->fkid_singular, $class3);
 
+        # test renaming rel that conflicts with a class method
+        ok ($obj4->has_relationship('belongs_to_rel'), 'relationship name that conflicts with a method renamed');
+        isa_ok( $obj4->belongs_to_rel, $class3);
+
+        ok ($obj4->has_relationship('caught_rel_collision_set_primary_key'),
+            'relationship name that conflicts with a method renamed based on rel_collision_map');
+        isa_ok( $obj4->caught_rel_collision_set_primary_key, $class3);
+
         ok($class4->column_info('fkid')->{is_foreign_key}, 'Foreign key detected');
 
         my $obj3 = $rsobj3->find(1);
         my $rs_rel4 = $obj3->search_related('loader_test4zes');
         isa_ok( $rs_rel4->first, $class4);
+
+        is( $class4->column_info('crumb_crisp_coating')->{accessor},  'trivet',
+            'column_accessor_map is being run' );
 
         # check rel naming with prepositions
         ok ($rsobj4->result_source->has_relationship('loader_test5s_to'),
@@ -821,7 +857,7 @@ sub test_schema {
         }
 
         SKIP: {
-            skip 'This vendor cannot do inline relationship definitions', 9
+            skip 'This vendor cannot do inline relationship definitions', 11
                 if $self->{no_inline_rels};
 
             my $moniker12 = $monikers->{loader_test12};
@@ -846,6 +882,27 @@ sub test_schema {
 
             my $obj12 = $rsobj12->find(1);
             isa_ok( $obj12->loader_test13, $class13 );
+
+            # relname is preserved when another fk is added
+
+            skip 'Sybase cannot add FKs via ALTER TABLE', 2
+                if $self->{vendor} eq 'sybase';
+
+            {
+                local $SIG{__WARN__} = sub { warn @_ unless $_[0] =~ /invalidates \d+ active statement/ };
+                $conn->storage->disconnect; # for mssql
+            }
+
+            isa_ok $rsobj3->find(1)->loader_test4zes, 'DBIx::Class::ResultSet';
+
+            $conn->storage->dbh->do('ALTER TABLE loader_test4 ADD fkid2 INTEGER REFERENCES loader_test3 (id)');
+
+            $conn->storage->disconnect; # for firebird
+
+            $self->rescan_without_warnings($conn);
+
+            isa_ok eval { $rsobj3->find(1)->loader_test4zes }, 'DBIx::Class::ResultSet',
+                'relationship name preserved when another foreign key is added in remote table';
         }
 
         SKIP: {
@@ -928,12 +985,8 @@ sub test_schema {
 
         sleep 1;
 
-        my @new = do {
-            local $SIG{__WARN__} = sub { warn @_
-                unless $_[0] =~ /(?i:loader_test)\d+ has no primary key|^Dumping manual schema|^Schema dump completed/
-            };
-            $conn->rescan;
-        };
+        my @new = $self->rescan_without_warnings($conn);
+
         is_deeply(\@new, [ qw/LoaderTest30/ ], "Rescan");
 
 #        system "cp t/_common_dump/DBIXCSL_Test/Schema/*.pm /tmp/after_rescan";
@@ -961,12 +1014,8 @@ sub test_schema {
         $conn->storage->disconnect; # for Firebird
         $conn->storage->dbh->do("DROP TABLE loader_test30");
 
-        @new = do {
-            local $SIG{__WARN__} = sub { warn @_
-                unless $_[0] =~ /(?i:loader_test)\d+ has no primary key|^Dumping manual schema|^Schema dump completed/
-            };
-            $conn->rescan;
-        };
+        @new = $self->rescan_without_warnings($conn);
+
         is_deeply(\@new, [], 'no new tables on rescan');
 
         throws_ok { $conn->resultset('LoaderTest30') }
@@ -977,7 +1026,7 @@ sub test_schema {
     $self->test_data_types($conn);
 
     # run extra tests
-    $self->{extra}{run}->($conn, $monikers, $classes) if $self->{extra}{run};
+    $self->{extra}{run}->($conn, $monikers, $classes, $self) if $self->{extra}{run};
 
     $self->test_preserve_case($conn);
 
@@ -989,24 +1038,30 @@ sub test_schema {
 sub test_data_types {
     my ($self, $conn) = @_;
 
-    if ($self->{data_type_tests}{test_count}) {
-        my $data_type_tests = $self->{data_type_tests};
+    SKIP: {
+        if (my $test_count = $self->{data_type_tests}{test_count}) {
+            if ($self->{vendor} eq 'mssql' && $conn->storage->dbh->{Driver}{Name} eq 'Sybase') {
+                skip 'DBD::Sybase does not work with the data_type tests on latest SQL Server', $test_count;
+            }
 
-        foreach my $moniker (@{ $data_type_tests->{table_monikers} }) {
-            my $columns = $data_type_tests->{columns}{$moniker};
+            my $data_type_tests = $self->{data_type_tests};
 
-            my $rsrc = $conn->resultset($moniker)->result_source;
+            foreach my $moniker (@{ $data_type_tests->{table_monikers} }) {
+                my $columns = $data_type_tests->{columns}{$moniker};
 
-            while (my ($col_name, $expected_info) = each %$columns) {
-                my %info = %{ $rsrc->column_info($col_name) };
-                delete @info{qw/is_nullable timezone locale sequence/};
+                my $rsrc = $conn->resultset($moniker)->result_source;
 
-                my $text_col_def = dumper_squashed \%info;
+                while (my ($col_name, $expected_info) = each %$columns) {
+                    my %info = %{ $rsrc->column_info($col_name) };
+                    delete @info{qw/is_nullable timezone locale sequence/};
 
-                my $text_expected_info = dumper_squashed $expected_info;
+                    my $text_col_def = dumper_squashed \%info;
 
-                is_deeply \%info, $expected_info,
-                    "test column $col_name has definition: $text_col_def expecting: $text_expected_info";
+                    my $text_expected_info = dumper_squashed $expected_info;
+
+                    is_deeply \%info, $expected_info,
+                        "test column $col_name has definition: $text_col_def expecting: $text_expected_info";
+                }
             }
         }
     }
@@ -1041,13 +1096,7 @@ qq| INSERT INTO ${oqt}LoaderTest41${cqt} VALUES (1, 1) |,
     local $conn->_loader->{preserve_case} = 1;
     $conn->_loader->_setup;
 
-
-    {
-        local $SIG{__WARN__} = sub { warn @_
-            unless $_[0] =~ /(?i:loader_test)\d+ has no primary key|^Dumping manual schema|^Schema dump completed/
-        };
-        $conn->rescan;
-    };
+    $self->rescan_without_warnings($conn);
 
     if (not $self->{skip_rels}) {
         is $conn->resultset('LoaderTest41')->find(1)->loader_test40->foo3_bar, 'foo',
@@ -1167,7 +1216,9 @@ sub create {
                 dat VARCHAR(32) NOT NULL,
                 dat2 VARCHAR(32) NOT NULL,
                 set_primary_key INTEGER $self->{null},
+                can INTEGER $self->{null},
                 dbix_class_testcomponent INTEGER $self->{null},
+                testcomponent_fqn INTEGER $self->{null},
                 meta INTEGER $self->{null},
                 UNIQUE (dat2, dat)
             ) $self->{innodb}
@@ -1236,14 +1287,19 @@ sub create {
                 id INTEGER NOT NULL PRIMARY KEY,
                 fkid INTEGER NOT NULL,
                 dat VARCHAR(32),
-                FOREIGN KEY( fkid ) REFERENCES loader_test3 (id)
+                crumb_crisp_coating VARCHAR(32) $self->{null},
+                belongs_to INTEGER $self->{null},
+                set_primary_key INTEGER $self->{null},
+                FOREIGN KEY( fkid ) REFERENCES loader_test3 (id),
+                FOREIGN KEY( belongs_to ) REFERENCES loader_test3 (id),
+                FOREIGN KEY( set_primary_key ) REFERENCES loader_test3 (id)
             ) $self->{innodb}
         },
 
-        q{ INSERT INTO loader_test4 (id,fkid,dat) VALUES(123,1,'aaa') },
-        q{ INSERT INTO loader_test4 (id,fkid,dat) VALUES(124,2,'bbb') }, 
-        q{ INSERT INTO loader_test4 (id,fkid,dat) VALUES(125,3,'ccc') },
-        q{ INSERT INTO loader_test4 (id,fkid,dat) VALUES(126,4,'ddd') },
+        q{ INSERT INTO loader_test4 (id,fkid,dat,belongs_to,set_primary_key) VALUES(123,1,'aaa',1,1) },
+        q{ INSERT INTO loader_test4 (id,fkid,dat,belongs_to,set_primary_key) VALUES(124,2,'bbb',2,2) }, 
+        q{ INSERT INTO loader_test4 (id,fkid,dat,belongs_to,set_primary_key) VALUES(125,3,'ccc',3,3) },
+        q{ INSERT INTO loader_test4 (id,fkid,dat,belongs_to,set_primary_key) VALUES(126,4,'ddd',4,4) },
 
         qq|
             CREATE TABLE loader_test5 (
@@ -1585,9 +1641,13 @@ sub create {
 
     my $dbh = $self->dbconnect(1);
 
+    $dbh->do($_) for @{ $self->{pre_create} || [] };
+
     $dbh->do($_) foreach (@statements);
 
-    $dbh->do($_) foreach (@{ $self->{data_type_tests}{ddl} || [] });
+    if (not ($self->{vendor} eq 'mssql' && $dbh->{Driver}{Name} eq 'Sybase')) {
+        $dbh->do($_) foreach (@{ $self->{data_type_tests}{ddl} || [] });
+    }
 
     unless($self->{skip_rels}) {
         # hack for now, since DB2 doesn't like inline comments, and we need
@@ -1689,45 +1749,47 @@ sub drop_tables {
     # For some reason some tests do this twice (I guess dependency issues?)
     # do it twice for all drops
     for (1,2) {
-      my $dbh = $self->dbconnect(0);
+        my $dbh = $self->dbconnect(0);
 
-      $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
+        $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
 
-      $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
+        $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
 
-      my $drop_auto_inc = $self->{auto_inc_drop_cb} || sub {};
+        my $drop_auto_inc = $self->{auto_inc_drop_cb} || sub {};
 
-      unless($self->{skip_rels}) {
-        $dbh->do("DROP TABLE $_") for (@tables_reltests);
-        $dbh->do("DROP TABLE $_") for (@tables_reltests);
-        if($self->{vendor} =~ /mysql/i) {
-            $dbh->do($drop_fk_mysql);
+        unless($self->{skip_rels}) {
+            $dbh->do("DROP TABLE $_") for (@tables_reltests);
+            $dbh->do("DROP TABLE $_") for (@tables_reltests);
+            if($self->{vendor} =~ /mysql/i) {
+                $dbh->do($drop_fk_mysql);
+            }
+            else {
+                $dbh->do($drop_fk);
+            }
+            $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_advanced_auto_inc;
+            $dbh->do("DROP TABLE $_") for (@tables_advanced);
+
+            unless($self->{no_inline_rels}) {
+                $dbh->do("DROP TABLE $_") for (@tables_inline_rels);
+            }
+            unless($self->{no_implicit_rels}) {
+                $dbh->do("DROP TABLE $_") for (@tables_implicit_rels);
+            }
         }
-        else {
-            $dbh->do($drop_fk);
+        $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_auto_inc;
+        $dbh->do("DROP TABLE $_") for (@tables, @tables_rescan);
+
+        if (not ($self->{vendor} eq 'mssql' && $dbh->{Driver}{Name} eq 'Sybase')) {
+            foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
+                $dbh->do("DROP TABLE $data_type_table");
+            }
         }
-        $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_advanced_auto_inc;
-        $dbh->do("DROP TABLE $_") for (@tables_advanced);
 
-        unless($self->{no_inline_rels}) {
-            $dbh->do("DROP TABLE $_") for (@tables_inline_rels);
-        }
-        unless($self->{no_implicit_rels}) {
-            $dbh->do("DROP TABLE $_") for (@tables_implicit_rels);
-        }
-      }
-      $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_auto_inc;
-      $dbh->do("DROP TABLE $_") for (@tables, @tables_rescan);
+        my ($oqt, $cqt) = $self->get_oqt_cqt(always => 1);
 
-      foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
-        $dbh->do("DROP TABLE $data_type_table");
-      }
+        $dbh->do("DROP TABLE ${oqt}${_}${cqt}") for @tables_preserve_case_tests;
 
-      my ($oqt, $cqt) = $self->get_oqt_cqt(always => 1);
-
-      $dbh->do("DROP TABLE ${oqt}${_}${cqt}") for @tables_preserve_case_tests;
-
-      $dbh->disconnect;
+        $dbh->disconnect;
     }
 }
 
@@ -1846,6 +1908,27 @@ sub setup_data_type_tests {
     $tests->{test_count} = $test_count;
 
     return $test_count;
+}
+
+sub rescan_without_warnings {
+    my ($self, $conn) = @_;
+
+    local $SIG{__WARN__} = sub { warn @_ unless $_[0] =~ RESCAN_WARNINGS };
+    return $conn->rescan;
+}
+
+sub test_column_accessor_map {
+    my ( $column_name, $default_name, $context ) = @_;
+    if( lc($column_name) eq 'crumb_crisp_coating' ) {
+
+        is( $default_name, 'crumb_crisp_coating', 'column_accessor_map was passed the default name' );
+        ok( $context->{$_}, "column_accessor_map func was passed the $_" )
+            for qw( table_name table_class table_moniker schema_class );
+
+        return 'trivet';
+    } else {
+        return $default_name;
+    }
 }
 
 sub DESTROY {
