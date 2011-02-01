@@ -49,11 +49,11 @@ requires:
   Scalar::Util: 0
   Scope::Guard: 0
   Try::Tiny: 0
-  namespace::clean: 0
+  namespace::clean: 0.20
   perl: 5.8.1
 resources:
   IRC: irc://irc.perl.org/#dbix-class
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.07005
+version: 0.07006

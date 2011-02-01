@@ -25,7 +25,7 @@ use DBIx::Class ();
 use Class::Load 'load_class';
 use namespace::clean;
 
-our $VERSION = '0.07005';
+our $VERSION = '0.07006';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -1069,7 +1069,7 @@ sub _load_tables {
         local $self->{dump_directory} = $self->{temp_directory};
         $self->_reload_classes(\@tables);
         $self->_load_relationships($_) for @tables;
-#        $self->_relbuilder->cleanup; # this breaks perl 5.8.x
+        $self->_relbuilder->cleanup;
         $self->{quiet} = 0;
 
         # Remove that temp dir from INC so it doesn't get reloaded
