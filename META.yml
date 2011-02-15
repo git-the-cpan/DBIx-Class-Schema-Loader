@@ -36,7 +36,7 @@ requires:
   Class::Inspector: 0
   Class::Load: 0
   Class::Unload: 0
-  DBIx::Class: 0.08114
+  DBIx::Class: 0.08127
   Data::Dump: 1.06
   Digest::MD5: 2.36
   Exporter: 5.63
@@ -56,4 +56,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.07006
+version: 0.07007
