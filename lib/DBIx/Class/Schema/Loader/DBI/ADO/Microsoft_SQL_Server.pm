@@ -1,30 +1,31 @@
-package DBIx::Class::Schema::Loader::DBI::ODBC::Firebird;
+package DBIx::Class::Schema::Loader::DBI::ADO::Microsoft_SQL_Server;
 
 use strict;
 use warnings;
 use base qw/
-    DBIx::Class::Schema::Loader::DBI::ODBC
-    DBIx::Class::Schema::Loader::DBI::InterBase
+    DBIx::Class::Schema::Loader::DBI::ADO
+    DBIx::Class::Schema::Loader::DBI::MSSQL
 /;
-use Carp::Clan qw/^DBIx::Class/;
 use mro 'c3';
+use Carp::Clan qw/^DBIx::Class/;
+use namespace::clean;
 
 our $VERSION = '0.07008';
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::DBI::ODBC::Firebird - ODBC wrapper for
-L<DBIx::Class::Schema::Loader::DBI::InterBase>
+DBIx::Class::Schema::Loader::DBI::ADO::Microsoft_SQL_Server - ADO wrapper for
+L<DBIx::Class::Schema::Loader::DBI::MSSQL>
 
 =head1 DESCRIPTION
 
-Proxy for L<DBIx::Class::Schema::Loader::DBI::InterBase> when using L<DBD::ODBC>.
+Proxy for L<DBIx::Class::Schema::Loader::DBI::MSSQL> when using L<DBD::ADO>.
 
 See L<DBIx::Class::Schema::Loader::Base> for usage information.
 
 =head1 SEE ALSO
 
-L<DBIx::Class::Schema::Loader::DBI::InterBase>,
+L<DBIx::Class::Schema::Loader::DBI::MSSQL>,
 L<DBIx::Class::Schema::Loader>, L<DBIx::Class::Schema::Loader::Base>,
 L<DBIx::Class::Schema::Loader::DBI>
 

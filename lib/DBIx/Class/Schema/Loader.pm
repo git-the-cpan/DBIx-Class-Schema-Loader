@@ -10,7 +10,7 @@ use Scalar::Util qw/ weaken /;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.07007';
+our $VERSION = '0.07008';
 
 __PACKAGE__->mk_group_accessors('inherited', qw/
                                 _loader_args
@@ -77,6 +77,8 @@ DBIx::Class::Schema::Loader - Dynamic definition of a DBIx::Class::Schema
 DBIx::Class::Schema::Loader automates the definition of a
 L<DBIx::Class::Schema> by scanning database table definitions and
 setting up the columns, primary keys, and relationships.
+
+See L<dbicdump> for the C<dbicdump> utility.
 
 DBIx::Class::Schema::Loader currently supports only the DBI storage type.  It
 has explicit support for L<DBD::Pg>, L<DBD::mysql>, L<DBD::DB2>,
