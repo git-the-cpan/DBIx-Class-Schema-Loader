@@ -94,6 +94,7 @@ t/backcompat/0.04006/lib/TestLeftBase.pm
 t/lib/DBICTest/Schema/_no_skip_load_external/Foo.pm
 t/lib/DBICTest/Schema/_skip_load_external/Foo.pm
 t/lib/DBIx/Class/TestComponent.pm
+t/lib/DBIx/Class/TestComponentForMap.pm
 t/lib/dbixcsl_common_tests.pm
 t/lib/dbixcsl_dumper_tests.pm
 t/lib/DBIXCSL_Test/Schema/LoaderTest1.pm
@@ -105,6 +106,7 @@ t/lib/My/ResultBaseClass.pm
 t/lib/My/SchemaBaseClass.pm
 t/lib/TestAdditional.pm
 t/lib/TestAdditionalBase.pm
+t/lib/TestComponentForMapFQN.pm
 t/lib/TestComponentFQN.pm
 t/lib/TestLeftBase.pm
 t/lib/TestLoaderSubclass.pm
