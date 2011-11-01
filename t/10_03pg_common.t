@@ -1,8 +1,19 @@
 use strict;
-use lib qw(t/lib);
-use dbixcsl_common_tests;
+use warnings;
+use utf8;
+use DBIx::Class::Schema::Loader 'make_schema_at';
+use DBIx::Class::Schema::Loader::Utils qw/no_warnings slurp_file/;
 use Test::More;
-use File::Slurp 'slurp';
+use Test::Exception;
+use Try::Tiny;
+use File::Path 'rmtree';
+use namespace::clean;
+
+use lib qw(t/lib);
+use dbixcsl_common_tests ();
+use dbixcsl_test_dir '$tdir';
+
+use constant EXTRA_DUMP_DIR => "$tdir/pg_extra_dump";
 
 my $dsn      = $ENV{DBICTEST_PG_DSN} || '';
 my $user     = $ENV{DBICTEST_PG_USER} || '';
@@ -16,7 +27,8 @@ my $tester = dbixcsl_common_tests->new(
     password    => $password,
     loader_options  => { preserve_case => 1 },
     connect_info_opts => {
-        on_connect_do => [ 'SET client_min_messages=WARNING' ],
+        pg_enable_utf8 => 1,
+        on_connect_do  => [ 'SET client_min_messages=WARNING' ],
     },
     quote_char  => '"',
     data_types  => {
@@ -27,6 +39,12 @@ my $tester = dbixcsl_common_tests->new(
 	bool        => { data_type => 'boolean' },
         'bool default false'
                     => { data_type => 'boolean', default_value => \'false' },
+        'bool default true'
+                    => { data_type => 'boolean', default_value => \'true' },
+        'bool default 0::bool'
+                    => { data_type => 'boolean', default_value => \'false' },
+        'bool default 1::bool'
+                    => { data_type => 'boolean', default_value => \'true' },
 
 	bigint      => { data_type => 'bigint' },
 	int8        => { data_type => 'bigint' },
@@ -82,12 +100,18 @@ my $tester = dbixcsl_common_tests->new(
 	'varchar(2)'                     => { data_type => 'varchar', size => 2 },
 	'character(2)'                   => { data_type => 'char', size => 2 },
 	'char(2)'                        => { data_type => 'char', size => 2 },
+        # check that default null is correctly rewritten
+        'char(3) default null'           => { data_type => 'char', size => 3,
+                                              default_value => \'null' },
 	'character'                      => { data_type => 'char', size => 1 },
 	'char'                           => { data_type => 'char', size => 1 },
 	text                             => { data_type => 'text' },
         # varchar with no size has unlimited size, we rewrite to 'text'
 	varchar                          => { data_type => 'text',
                                               original => { data_type => 'varchar' } },
+        # check default null again (to make sure ref is safe)
+        'varchar(3) default null'        => { data_type => 'varchar', size => 3,
+                                              default_value => \'null' },
 
         # Datetime Types
 	date                             => { data_type => 'date' },
@@ -139,27 +163,78 @@ my $tester = dbixcsl_common_tests->new(
                 )
             },
             qq{
-                COMMENT ON TABLE pg_loader_test1 IS 'The\15\12Table'
+                COMMENT ON TABLE pg_loader_test1 IS 'The\15\12Table ∑'
             },
             qq{
                 COMMENT ON COLUMN pg_loader_test1.value IS 'The\15\12Column'
             },
             q{
                 CREATE TABLE pg_loader_test2 (
-                    id SERIAL NOT NULL PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     value VARCHAR(100)
                 )
             },
             q{
                 COMMENT ON TABLE pg_loader_test2 IS 'very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very long comment'
             },
+            q{
+                CREATE SCHEMA "dbicsl-test"
+            },
+            q{
+                CREATE TABLE "dbicsl-test".pg_loader_test4 (
+                    id SERIAL PRIMARY KEY,
+                    value VARCHAR(100)
+                )
+            },
+            q{
+                CREATE TABLE "dbicsl-test".pg_loader_test5 (
+                    id SERIAL PRIMARY KEY,
+                    value VARCHAR(100),
+                    four_id INTEGER REFERENCES "dbicsl-test".pg_loader_test4 (id),
+                    CONSTRAINT loader_test5_uniq UNIQUE (four_id)
+                )
+            },
+            q{
+                CREATE SCHEMA "dbicsl.test"
+            },
+            q{
+                CREATE TABLE "dbicsl.test".pg_loader_test5 (
+                    pk SERIAL PRIMARY KEY,
+                    value VARCHAR(100),
+                    four_id INTEGER REFERENCES "dbicsl-test".pg_loader_test4 (id),
+                    CONSTRAINT loader_test5_uniq UNIQUE (four_id)
+                )
+            },
+            q{
+                CREATE TABLE "dbicsl.test".pg_loader_test6 (
+                    id SERIAL PRIMARY KEY,
+                    value VARCHAR(100),
+                    pg_loader_test4_id INTEGER REFERENCES "dbicsl-test".pg_loader_test4 (id)
+                )
+            },
+            q{
+                CREATE TABLE "dbicsl.test".pg_loader_test7 (
+                    id SERIAL PRIMARY KEY,
+                    value VARCHAR(100),
+                    six_id INTEGER UNIQUE REFERENCES "dbicsl.test".pg_loader_test6 (id)
+                )
+            },
+            q{
+                CREATE TABLE "dbicsl-test".pg_loader_test8 (
+                    id SERIAL PRIMARY KEY,
+                    value VARCHAR(100),
+                    pg_loader_test7_id INTEGER REFERENCES "dbicsl.test".pg_loader_test7 (id)
+                )
+            },
         ],
         pre_drop_ddl => [
             'DROP SCHEMA dbicsl_test CASCADE',
+            'DROP SCHEMA "dbicsl-test" CASCADE',
+            'DROP SCHEMA "dbicsl.test" CASCADE',
             'DROP TYPE pg_loader_test_enum',
         ],
         drop  => [ qw/ pg_loader_test1 pg_loader_test2 / ],
-        count => 4,
+        count => 4 + 30 * 2,
         run   => sub {
             my ($schema, $monikers, $classes) = @_;
 
@@ -168,23 +243,175 @@ my $tester = dbixcsl_common_tests->new(
                 'qualified sequence detected';
 
             my $class    = $classes->{pg_loader_test1};
-            my $filename = $schema->_loader->get_dump_filename($class);
+            my $filename = $schema->loader->get_dump_filename($class);
 
-            my $code = slurp $filename;
+            my $code = slurp_file $filename;
 
-            like $code, qr/^=head1 NAME\n\n^$class - The\nTable\n\n^=cut\n/m,
+            like $code, qr/^=head1 NAME\n\n^$class - The\nTable ∑\n\n^=cut\n/m,
                 'table comment';
 
             like $code, qr/^=head2 value\n\n(.+:.+\n)+\nThe\nColumn\n\n/m,
                 'column comment and attrs';
 
             $class    = $classes->{pg_loader_test2};
-            $filename = $schema->_loader->get_dump_filename($class);
+            $filename = $schema->loader->get_dump_filename($class);
 
-            $code = slurp $filename;
+            $code = slurp_file $filename;
 
             like $code, qr/^=head1 NAME\n\n^$class\n\n=head1 DESCRIPTION\n\n^very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very long comment\n\n^=cut\n/m,
                 'long table comment is in DESCRIPTION';
+
+            foreach my $db_schema (['dbicsl-test', 'dbicsl.test'], '%') {
+                lives_and {
+                    rmtree EXTRA_DUMP_DIR;
+
+                    my @warns;
+                    local $SIG{__WARN__} = sub {
+                        push @warns, $_[0] unless $_[0] =~ /\bcollides\b/;
+                    };
+
+                    make_schema_at(
+                        'PGMultiSchema',
+                        {
+                            naming => 'current',
+                            db_schema => $db_schema,
+                            moniker_parts => [qw/schema name/],
+                            preserve_case => 1,
+                            dump_directory => EXTRA_DUMP_DIR,
+                            quiet => 1,
+                        },
+                        [ $dsn, $user, $password, {
+                            on_connect_do  => [ 'SET client_min_messages=WARNING' ],
+                        } ],
+                    );
+
+                    diag join "\n", @warns if @warns;
+
+                    is @warns, 0;
+                } 'dumped schema for "dbicsl-test" and "dbicsl.test" schemas with no warnings';
+
+                my ($test_schema, $rsrc, $rs, $row, %uniqs, $rel_info);
+
+                lives_and {
+                    ok $test_schema = PGMultiSchema->connect($dsn, $user, $password, {
+                        on_connect_do  => [ 'SET client_min_messages=WARNING' ],
+                    });
+                } 'connected test schema';
+
+                lives_and {
+                    ok $rsrc = $test_schema->source('DbicslDashTestPgLoaderTest4');
+                } 'got source for table in schema name with dash';
+
+                is try { $rsrc->column_info('id')->{is_auto_increment} }, 1,
+                    'column in schema name with dash';
+
+                is try { $rsrc->column_info('value')->{data_type} }, 'varchar',
+                    'column in schema name with dash';
+
+                is try { $rsrc->column_info('value')->{size} }, 100,
+                    'column in schema name with dash';
+
+                lives_and {
+                    ok $rs = $test_schema->resultset('DbicslDashTestPgLoaderTest4');
+                } 'got resultset for table in schema name with dash';
+
+                lives_and {
+                    ok $row = $rs->create({ value => 'foo' });
+                } 'executed SQL on table in schema name with dash';
+
+                $rel_info = try { $rsrc->relationship_info('dbicsl_dash_test_pg_loader_test5') };
+
+                is_deeply $rel_info->{cond}, {
+                    'foreign.four_id' => 'self.id'
+                }, 'relationship in schema name with dash';
+
+                is $rel_info->{attrs}{accessor}, 'single',
+                    'relationship in schema name with dash';
+
+                is $rel_info->{attrs}{join_type}, 'LEFT',
+                    'relationship in schema name with dash';
+
+                lives_and {
+                    ok $rsrc = $test_schema->source('DbicslDashTestPgLoaderTest5');
+                } 'got source for table in schema name with dash';
+
+                %uniqs = try { $rsrc->unique_constraints };
+
+                is keys %uniqs, 2,
+                    'got unique and primary constraint in schema name with dash';
+
+                delete $uniqs{primary};
+
+                is_deeply ((values %uniqs)[0], ['four_id'],
+                    'unique constraint is correct in schema name with dash');
+
+                lives_and {
+                    ok $rsrc = $test_schema->source('DbicslDotTestPgLoaderTest6');
+                } 'got source for table in schema name with dot';
+
+                is try { $rsrc->column_info('id')->{is_auto_increment} }, 1,
+                    'column in schema name with dot introspected correctly';
+
+                is try { $rsrc->column_info('value')->{data_type} }, 'varchar',
+                    'column in schema name with dot introspected correctly';
+
+                is try { $rsrc->column_info('value')->{size} }, 100,
+                    'column in schema name with dot introspected correctly';
+
+                lives_and {
+                    ok $rs = $test_schema->resultset('DbicslDotTestPgLoaderTest6');
+                } 'got resultset for table in schema name with dot';
+
+                lives_and {
+                    ok $row = $rs->create({ value => 'foo' });
+                } 'executed SQL on table in schema name with dot';
+
+                $rel_info = try { $rsrc->relationship_info('pg_loader_test7') };
+
+                is_deeply $rel_info->{cond}, {
+                    'foreign.six_id' => 'self.id'
+                }, 'relationship in schema name with dot';
+
+                is $rel_info->{attrs}{accessor}, 'single',
+                    'relationship in schema name with dot';
+
+                is $rel_info->{attrs}{join_type}, 'LEFT',
+                    'relationship in schema name with dot';
+
+                lives_and {
+                    ok $rsrc = $test_schema->source('DbicslDotTestPgLoaderTest7');
+                } 'got source for table in schema name with dot';
+
+                %uniqs = try { $rsrc->unique_constraints };
+
+                is keys %uniqs, 2,
+                    'got unique and primary constraint in schema name with dot';
+
+                delete $uniqs{primary};
+
+                is_deeply ((values %uniqs)[0], ['six_id'],
+                    'unique constraint is correct in schema name with dot');
+
+                lives_and {
+                    ok $test_schema->source('DbicslDotTestPgLoaderTest6')
+                        ->has_relationship('pg_loader_test4');
+                } 'cross-schema relationship in multi-db_schema';
+
+                lives_and {
+                    ok $test_schema->source('DbicslDashTestPgLoaderTest4')
+                        ->has_relationship('pg_loader_test6s');
+                } 'cross-schema relationship in multi-db_schema';
+
+                lives_and {
+                    ok $test_schema->source('DbicslDashTestPgLoaderTest8')
+                        ->has_relationship('pg_loader_test7');
+                } 'cross-schema relationship in multi-db_schema';
+
+                lives_and {
+                    ok $test_schema->source('DbicslDotTestPgLoaderTest7')
+                        ->has_relationship('pg_loader_test8s');
+                } 'cross-schema relationship in multi-db_schema';
+            }
         },
     },
 );
@@ -194,5 +421,9 @@ if( !$dsn || !$user ) {
 }
 else {
     $tester->run_tests();
+}
+
+END {
+    rmtree EXTRA_DUMP_DIR unless $ENV{SCHEMA_LOADER_TESTS_NOCLEANUP};
 }
 # vim:et sw=4 sts=4 tw=0:

@@ -7,23 +7,35 @@ use Test::More;
 use Test::Exception;
 use DBIx::Class::Schema::Loader;
 use Class::Unload;
-use File::Path;
+use File::Path 'rmtree';
 use DBI;
 use Digest::MD5;
 use File::Find 'find';
 use Class::Unload ();
-use DBIx::Class::Schema::Loader::Utils 'dumper_squashed';
+use DBIx::Class::Schema::Loader::Utils qw/dumper_squashed slurp_file/;
 use List::MoreUtils 'apply';
 use DBIx::Class::Schema::Loader::Optional::Dependencies ();
 use Try::Tiny;
+use File::Spec::Functions 'catfile';
+use File::Basename 'basename';
 use namespace::clean;
 
-use dbixcsl_test_dir qw/$tdir/;
+use dbixcsl_test_dir '$tdir';
 
-my $DUMP_DIR = "$tdir/common_dump";
-rmtree $DUMP_DIR;
+use constant DUMP_DIR => "$tdir/common_dump";
+
+rmtree DUMP_DIR;
 
 use constant RESCAN_WARNINGS => qr/(?i:loader_test|LoaderTest)\d+s? has no primary key|^Dumping manual schema|^Schema dump completed|collides with an inherited method|invalidates \d+ active statement|^Bad table or view/;
+
+# skip schema-qualified tables in the Pg tests
+use constant SOURCE_DDL => qr/CREATE (?:TABLE|VIEW) (?!"dbicsl[.-]test")/i;
+
+use constant SCHEMA_CLASS => 'DBIXCSL_Test::Schema';
+
+use constant RESULT_NAMESPACE => [ 'MyResult', 'MyResultTwo' ];
+
+use constant RESULTSET_NAMESPACE => [ 'MyResultSet', 'MyResultSetTwo' ];
 
 sub new {
     my $class = shift;
@@ -56,6 +68,12 @@ sub new {
     $self->{default_function_def} ||= "timestamp default $self->{default_function}";
 
     $self = bless $self, $class;
+
+    $self->{preserve_case_tests_table_names} = [qw/LoaderTest40 LoaderTest41/];
+
+    if (lc($self->{vendor}) eq 'mysql' && $^O =~ /^(?:MSWin32|cygwin)\z/) {
+        $self->{preserve_case_tests_table_names} = [qw/Loader_Test40 Loader_Test41/];
+    }
 
     $self->setup_data_type_tests;
 
@@ -96,13 +114,12 @@ sub run_tests {
     my $extra_count = $self->{extra}{count} || 0;
 
     my $col_accessor_map_tests = 5;
-    my $num_rescans = 5;
-    $num_rescans-- if $self->{vendor} =~ /^(?:sybase|mysql)\z/i;
+    my $num_rescans = 6;
     $num_rescans++ if $self->{vendor} eq 'mssql';
     $num_rescans++ if $self->{vendor} eq 'Firebird';
 
     plan tests => @connect_info *
-        (192 + $num_rescans * $col_accessor_map_tests + $extra_count + ($self->{data_type_tests}{test_count} || 0));
+        (214 + $num_rescans * $col_accessor_map_tests + $extra_count + ($self->{data_type_tests}{test_count} || 0));
 
     foreach my $info_idx (0..$#connect_info) {
         my $info = $connect_info[$info_idx];
@@ -114,7 +131,7 @@ sub run_tests {
         my $schema_class = $self->setup_schema($info);
         $self->test_schema($schema_class);
 
-        rmtree $DUMP_DIR
+        rmtree DUMP_DIR
             unless $ENV{SCHEMA_LOADER_TESTS_NOCLEANUP} && $info_idx == $#connect_info;
     }
 }
@@ -122,9 +139,9 @@ sub run_tests {
 sub run_only_extra_tests {
     my ($self, $connect_info) = @_;
 
-    plan tests => @$connect_info * (4 + ($self->{extra}{count} || 0) + ($self->{data_type_tests}{test_count} || 0));
+    plan tests => @$connect_info * (3 + ($self->{extra}{count} || 0) + ($self->{data_type_tests}{test_count} || 0));
 
-    rmtree $DUMP_DIR;
+    rmtree DUMP_DIR;
 
     foreach my $info_idx (0..$#$connect_info) {
         my $info = $connect_info->[$info_idx];
@@ -138,12 +155,19 @@ sub run_only_extra_tests {
         $dbh->do($_) for @{ $self->{extra}{create} || [] };
 
         if (not ($self->{vendor} eq 'mssql' && $dbh->{Driver}{Name} eq 'Sybase')) {
-            $dbh->do($_) for @{ $self->{data_type_tests}{ddl} || []};
+            foreach my $ddl (@{ $self->{data_type_tests}{ddl} || []}) {
+                if (my $cb = $self->{data_types_ddl_cb}) {
+                    $cb->($ddl);
+                }
+                else {
+                    $dbh->do($ddl);
+                }
+            }
         }
 
         $self->{_created} = 1;
 
-        my $file_count = grep /CREATE (?:TABLE|VIEW)/i, @{ $self->{extra}{create} || [] };
+        my $file_count = grep $_ =~ SOURCE_DDL, @{ $self->{extra}{create} || [] };
         $file_count++; # schema
         
         if (not ($self->{vendor} eq 'mssql' && $dbh->{Driver}{Name} eq 'Sybase')) {
@@ -159,7 +183,7 @@ sub run_only_extra_tests {
 
         if (not ($ENV{SCHEMA_LOADER_TESTS_NOCLEANUP} && $info_idx == $#$connect_info)) {
             $self->drop_extra_tables_only;
-            rmtree $DUMP_DIR;
+            rmtree DUMP_DIR;
         }
     }
 }
@@ -172,11 +196,11 @@ sub drop_extra_tables_only {
     local $^W = 0; # for ADO
 
     $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
-    $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
+    $self->drop_table($dbh, $_) for @{ $self->{extra}{drop} || [] };
 
     if (not ($self->{vendor} eq 'mssql' && $dbh->{Driver}{Name} eq 'Sybase')) {
         foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
-            $dbh->do("DROP TABLE $data_type_table");
+            $self->drop_table($dbh, $data_type_table);
         }
     }
 }
@@ -189,24 +213,24 @@ my (@statements, @statements_reltests, @statements_advanced,
 sub setup_schema {
     my ($self, $connect_info, $expected_count) = @_;
 
-    my $schema_class = 'DBIXCSL_Test::Schema';
-
     my $debug = ($self->{verbose} > 1) ? 1 : 0;
 
-    if (
-      $ENV{SCHEMA_LOADER_TESTS_USE_MOOSE}
-        &&
-      ! DBIx::Class::Schema::Loader::Optional::Dependencies->req_ok_for('use_moose')
-    ) {
-      die sprintf ("Missing dependencies for SCHEMA_LOADER_TESTS_USE_MOOSE: %s\n",
-        DBIx::Class::Schema::Loader::Optional::Dependencies->req_missing_for('use_moose')
-      );
+    if ($ENV{SCHEMA_LOADER_TESTS_USE_MOOSE}) {
+        if (not DBIx::Class::Schema::Loader::Optional::Dependencies->req_ok_for('use_moose')) {
+            die sprintf ("Missing dependencies for SCHEMA_LOADER_TESTS_USE_MOOSE: %s\n",
+                DBIx::Class::Schema::Loader::Optional::Dependencies->req_missing_for('use_moose'));
+        }
+
+        $self->{use_moose} = 1;
     }
 
     my %loader_opts = (
         constraint              =>
-          qr/^(?:\S+\.)?(?:(?:$self->{vendor}|extra)_?)?loader_?test[0-9]+(?!.*_)/i,
-        relationships           => 1,
+          qr/^(?:\S+\.)?(?:(?:$self->{vendor}|extra)[_-]?)?loader[_-]?test[0-9]+(?!.*_)/i,
+        result_namespace        => RESULT_NAMESPACE,
+        resultset_namespace     => RESULTSET_NAMESPACE,
+        schema_base_class       => 'TestSchemaBaseClass',
+        schema_components       => [ 'TestSchemaComponent', '+TestSchemaComponentFQN' ],
         additional_classes      => 'TestAdditional',
         additional_base_classes => 'TestAdditionalBase',
         left_base_classes       => [ qw/TestLeftBase/ ],
@@ -216,28 +240,32 @@ sub setup_schema {
         moniker_map             => \&_monikerize,
         custom_column_info      => \&_custom_column_info,
         debug                   => $debug,
-        use_namespaces          => 0,
-        dump_directory          => $DUMP_DIR,
+        dump_directory          => DUMP_DIR,
         datetime_timezone       => 'Europe/Berlin',
         datetime_locale         => 'de_DE',
-        use_moose               => $ENV{SCHEMA_LOADER_TESTS_USE_MOOSE},
+        $self->{use_moose} ? (
+            use_moose        => 1,
+            result_roles     => 'TestRole',
+            result_roles_map => { LoaderTest2X => 'TestRoleForMap' },
+        ) : (),
         col_collision_map       => { '^(can)\z' => 'caught_collision_%s' },
         rel_collision_map       => { '^(set_primary_key)\z' => 'caught_rel_collision_%s' },
         col_accessor_map        => \&test_col_accessor_map,
-        result_component_map    => { LoaderTest2X => 'TestComponentForMap', LoaderTest1 => '+TestComponentForMapFQN' },
+        result_components_map   => { LoaderTest2X => 'TestComponentForMap', LoaderTest1 => '+TestComponentForMapFQN' },
+        uniq_to_primary         => 1,
         %{ $self->{loader_options} || {} },
     );
 
     $loader_opts{db_schema} = $self->{db_schema} if $self->{db_schema};
 
-    Class::Unload->unload($schema_class);
+    Class::Unload->unload(SCHEMA_CLASS);
 
     my $file_count;
     {
         my @loader_warnings;
         local $SIG{__WARN__} = sub { push(@loader_warnings, @_); };
          eval qq{
-             package $schema_class;
+             package @{[SCHEMA_CLASS]};
              use base qw/DBIx::Class::Schema::Loader/;
      
              __PACKAGE__->loader_options(\%loader_opts);
@@ -246,18 +274,18 @@ sub setup_schema {
  
         ok(!$@, "Loader initialization") or diag $@;
 
-        find sub { return if -d; $file_count++ }, $DUMP_DIR;
+        find sub { return if -d; $file_count++ }, DUMP_DIR;
 
         my $standard_sources = not defined $expected_count;
 
         if ($standard_sources) {
-            $expected_count = 36;
+            $expected_count = 37;
 
             if (not ($self->{vendor} eq 'mssql' && $connect_info->[0] =~ /Sybase/)) {
                 $expected_count++ for @{ $self->{data_type_tests}{table_names} || [] };
             }
 
-            $expected_count += grep /CREATE (?:TABLE|VIEW)/i,
+            $expected_count += grep $_ =~ SOURCE_DDL,
                 @{ $self->{extra}{create} || [] };
      
             $expected_count -= grep /CREATE TABLE/, @statements_inline_rels
@@ -288,34 +316,13 @@ sub setup_schema {
 
         $warn_count-- for grep { my $w = $_; grep $w =~ $_, @{ $self->{failtrigger_warnings} || [] } } @loader_warnings;
 
-        if ($standard_sources) {
-            if($self->{skip_rels}) {
-                SKIP: {
-                    is(scalar(@loader_warnings), $warn_count, "No loader warnings")
-                        or diag @loader_warnings;
-                    skip "No missing PK warnings without rels", 1;
-                }
-            }
-            else {
-                $warn_count++;
-                is(scalar(@loader_warnings), $warn_count, "Expected loader warning")
-                    or diag @loader_warnings;
-                is(grep(/loader_test9 has no primary key/i, @loader_warnings), 1,
-                     "Missing PK warning");
-            }
-        }
-        else {
-            SKIP: {
-                is scalar(@loader_warnings), $warn_count, 'Correct number of warnings'
-                    or diag @loader_warnings;
-                skip "not testing standard sources", 1;
-            }
-        }
+        is scalar(@loader_warnings), $warn_count, 'Correct number of warnings'
+            or diag @loader_warnings;
     }
 
     exit if ($file_count||0) != $expected_count;
-   
-    return $schema_class;
+
+    return SCHEMA_CLASS;
 }
 
 sub test_schema {
@@ -350,29 +357,103 @@ sub test_schema {
     my $class35   = $classes->{loader_test35};
     my $rsobj35   = $conn->resultset($moniker35);
 
+    my $moniker50 = $monikers->{loader_test50};
+    my $class50   = $classes->{loader_test50};
+    my $rsobj50   = $conn->resultset($moniker50);
+
     isa_ok( $rsobj1, "DBIx::Class::ResultSet" );
     isa_ok( $rsobj2, "DBIx::Class::ResultSet" );
     isa_ok( $rsobj23, "DBIx::Class::ResultSet" );
     isa_ok( $rsobj24, "DBIx::Class::ResultSet" );
     isa_ok( $rsobj35, "DBIx::Class::ResultSet" );
+    isa_ok( $rsobj50, "DBIx::Class::ResultSet" );
+
+    # check result_namespace
+    my @schema_dir = split /::/, SCHEMA_CLASS;
+    my $result_dir = ref RESULT_NAMESPACE ? ${RESULT_NAMESPACE()}[0] : RESULT_NAMESPACE;
+
+    my $schema_files = [ sort map basename($_), glob catfile(DUMP_DIR, @schema_dir, '*') ];
+
+    is_deeply $schema_files, [ $result_dir ],
+        'first entry in result_namespace exists as a directory';
+
+    my $result_file_count =()= glob catfile(DUMP_DIR, @schema_dir, $result_dir, '*.pm');
+
+    ok $result_file_count,
+        'Result files dumped to first entry in result_namespace';
+
+    # parse out the resultset_namespace
+    my $schema_code = slurp_file $conn->_loader->get_dump_filename(SCHEMA_CLASS);
+
+    my ($schema_resultset_namespace) = $schema_code =~ /\bresultset_namespace => (.*)/;
+    $schema_resultset_namespace = eval $schema_resultset_namespace;
+    die $@ if $@;
+
+    is_deeply $schema_resultset_namespace, RESULTSET_NAMESPACE,
+        'resultset_namespace set correctly on Schema';
+
+    like $schema_code,
+qr/\nuse base 'TestSchemaBaseClass';\n\n|\nextends 'TestSchemaBaseClass';\n\n/,
+        'schema_base_class works';
+
+    is $conn->testschemabaseclass, 'TestSchemaBaseClass works',
+        'schema base class works';
+
+    like $schema_code,
+qr/\n__PACKAGE__->load_components\("TestSchemaComponent", "\+TestSchemaComponentFQN"\);\n\n__PACKAGE__->load_namespaces/,
+        'schema_components works';
+
+    is $conn->dbix_class_testschemacomponent, 'dbix_class_testschemacomponent works',
+        'schema component works';
+
+    is $conn->testschemacomponent_fqn, 'TestSchemaComponentFQN works',
+        'fully qualified schema component works';
 
     my @columns_lt2 = $class2->columns;
-    is_deeply( \@columns_lt2, [ qw/id dat dat2 set_primary_key can dbix_class_testcomponent testcomponent_fqn meta/ ], "Column Ordering" );
+    is_deeply( \@columns_lt2, [ qw/id dat dat2 set_primary_key can dbix_class_testcomponent dbix_class_testcomponentmap testcomponent_fqn meta test_role_method test_role_for_map_method crumb_crisp_coating/ ], "Column Ordering" );
 
     is $class2->column_info('can')->{accessor}, 'caught_collision_can',
         'accessor for column name that conflicts with a UNIVERSAL method renamed based on col_collision_map';
 
-    is $class2->column_info('set_primary_key')->{accessor}, undef,
-        'accessor for column name that conflicts with a result base class method removed';
+    ok (exists $class2->column_info('set_primary_key')->{accessor}
+        && (not defined $class2->column_info('set_primary_key')->{accessor}),
+        'accessor for column name that conflicts with a result base class method removed');
 
-    is $class2->column_info('dbix_class_testcomponent')->{accessor}, undef,
-        'accessor for column name that conflicts with a component class method removed';
+    ok (exists $class2->column_info('dbix_class_testcomponent')->{accessor}
+        && (not defined $class2->column_info('dbix_class_testcomponent')->{accessor}),
+        'accessor for column name that conflicts with a component class method removed');
 
-    is $class2->column_info('testcomponent_fqn')->{accessor}, undef,
-        'accessor for column name that conflicts with a fully qualified component class method removed';
+    ok (exists $class2->column_info('dbix_class_testcomponentmap')->{accessor}
+        && (not defined $class2->column_info('dbix_class_testcomponentmap')->{accessor}),
+        'accessor for column name that conflicts with a component class method removed');
 
-    is $class2->column_info('meta')->{accessor}, undef,
-        'accessor for column name that conflicts with Moose removed';
+    ok (exists $class2->column_info('testcomponent_fqn')->{accessor}
+        && (not defined $class2->column_info('testcomponent_fqn')->{accessor}),
+        'accessor for column name that conflicts with a fully qualified component class method removed');
+
+    if ($self->{use_moose}) {
+        ok (exists $class2->column_info('meta')->{accessor}
+            && (not defined $class2->column_info('meta')->{accessor}),
+            'accessor for column name that conflicts with Moose removed');
+
+        ok (exists $class2->column_info('test_role_for_map_method')->{accessor}
+            && (not defined $class2->column_info('test_role_for_map_method')->{accessor}),
+            'accessor for column name that conflicts with a Result role removed');
+
+        ok (exists $class2->column_info('test_role_method')->{accessor}
+            && (not defined $class2->column_info('test_role_method')->{accessor}),
+            'accessor for column name that conflicts with a Result role removed');
+    }
+    else {
+        ok ((not exists $class2->column_info('meta')->{accessor}),
+            "not removing 'meta' accessor with use_moose disabled");
+
+        ok ((not exists $class2->column_info('test_role_for_map_method')->{accessor}),
+            'no role method conflicts with use_moose disabled');
+
+        ok ((not exists $class2->column_info('test_role_method')->{accessor}),
+            'no role method conflicts with use_moose disabled');
+    }
 
     my %uniq1 = $class1->unique_constraints;
     my $uniq1_test = 0;
@@ -399,6 +480,11 @@ sub test_schema {
         }
     }
     ok($uniq2_test, "Multi-col unique constraint");
+
+    my %uniq3 = $class50->unique_constraints;
+
+    is_deeply $uniq3{primary}, ['id1', 'id2'],
+        'unique constraint promoted to primary key with uniq_to_primary';
 
     is($moniker2, 'LoaderTest2X', "moniker_map testing");
 
@@ -432,10 +518,10 @@ sub test_schema {
             'Additional Component' );
     }
 
-    is try { $class2->dbix_class_testcomponentformap }, 'dbix_class_testcomponentformap works',
+    is try { $class2->dbix_class_testcomponentmap }, 'dbix_class_testcomponentmap works',
         'component from result_component_map';
 
-    isnt try { $class1->dbix_class_testcomponentformap }, 'dbix_class_testcomponentformap works',
+    isnt try { $class1->dbix_class_testcomponentmap }, 'dbix_class_testcomponentmap works',
         'component from result_component_map not added to not mapped Result';
 
     is try { $class1->testcomponent_fqn }, 'TestComponentFQN works',
@@ -446,6 +532,18 @@ sub test_schema {
 
     isnt try { $class2->testcomponentformap_fqn }, 'TestComponentForMapFQN works',
         'fully qualified component class from result_component_map not added to not mapped Result';
+
+    SKIP: {
+        skip 'not testing role methods with use_moose disabled', 2
+            unless $self->{use_moose};
+
+        is try { $class1->test_role_method }, 'test_role_method works',
+            'role from result_roles applied';
+
+        is try { $class2->test_role_for_map_method },
+            'test_role_for_map_method works',
+            'role from result_roles_map applied';
+    }
 
     SKIP: {
         can_ok( $class1, 'loader_test1_classmeth' )
@@ -493,13 +591,13 @@ sub test_schema {
             'constant negative integer default',
         );
 
-        cmp_ok(
-            $class35->column_info('a_double')->{default_value}, '==', 10.555,
+        is(
+            sprintf("%.3f", $class35->column_info('a_double')->{default_value}||0), '10.555',
             'constant numeric default',
         );
 
-        cmp_ok(
-            $class35->column_info('a_negative_double')->{default_value}, '==', -10.555,
+        is(
+            sprintf("%.3f", $class35->column_info('a_negative_double')->{default_value}||0), -10.555,
             'constant negative numeric default',
         );
 
@@ -512,8 +610,17 @@ sub test_schema {
         );
     }
 
+    is( $class2->column_info('crumb_crisp_coating')->{accessor},  'trivet',
+        'col_accessor_map is being run' );
+
+    is $class1->column_info('dat')->{is_nullable}, 0,
+        'is_nullable=0 detection';
+
+    is $class2->column_info('set_primary_key')->{is_nullable}, 1,
+        'is_nullable=1 detection';
+
     SKIP: {
-        skip $self->{skip_rels}, 120 if $self->{skip_rels};
+        skip $self->{skip_rels}, 131 if $self->{skip_rels};
 
         my $moniker3 = $monikers->{loader_test3};
         my $class3   = $classes->{loader_test3};
@@ -655,9 +762,6 @@ sub test_schema {
         my $rs_rel4 = try { $obj3->search_related('loader_test4zes') };
         isa_ok( try { $rs_rel4->first }, $class4);
 
-        is( $class4->column_info('crumb_crisp_coating')->{accessor},  'trivet',
-            'col_accessor_map is being run' );
-
         # check rel naming with prepositions
         ok ($rsobj4->result_source->has_relationship('loader_test5s_to'),
             "rel with preposition 'to' pluralized correctly");
@@ -712,7 +816,7 @@ sub test_schema {
             'might_have does not have is_deferrable');
 
         # find on multi-col pk
-        if ($conn->_loader->preserve_case) {
+        if ($conn->loader->preserve_case) {
             my $obj5 = $rsobj5->find({id1 => 1, iD2 => 1});
             is $obj5->i_d2, 1, 'Find on multi-col PK';
         }
@@ -729,9 +833,42 @@ sub test_schema {
         ok($class6->column_info('loader_test2_id')->{is_foreign_key}, 'Foreign key detected');
         ok($class6->column_info('id')->{is_foreign_key}, 'Foreign key detected');
 
-	my $id2_info = eval { $class6->column_info('id2') } ||
+	my $id2_info = try { $class6->column_info('id2') } ||
 			$class6->column_info('Id2');
         ok($id2_info->{is_foreign_key}, 'Foreign key detected');
+
+        unlike slurp_file $conn->_loader->get_dump_filename($class6),
+qr/\n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
+    \s+ "(\w+?)"
+    .*?
+   \n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
+    \s+ "\1"/xs,
+'did not create two relationships with the same name';
+
+        unlike slurp_file $conn->_loader->get_dump_filename($class8),
+qr/\n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
+    \s+ "(\w+?)"
+    .*?
+   \n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
+    \s+ "\1"/xs,
+'did not create two relationships with the same name';
+
+        # check naming of ambiguous relationships
+        my $rel_info = $class6->relationship_info('lovely_loader_test7') || {};
+
+        ok (($class6->has_relationship('lovely_loader_test7')
+            && $rel_info->{cond}{'foreign.lovely_loader_test6'} eq 'self.id'
+            && $rel_info->{class} eq $class7
+            && $rel_info->{attrs}{accessor} eq 'single'),
+            'ambiguous relationship named correctly');
+
+        $rel_info = $class8->relationship_info('active_loader_test16') || {};
+
+        ok (($class8->has_relationship('active_loader_test16')
+            && $rel_info->{cond}{'foreign.loader_test8_id'} eq 'self.id'
+            && $rel_info->{class} eq $class16
+            && $rel_info->{attrs}{accessor} eq 'single'),
+            'ambiguous relationship named correctly');
 
         # fk that references a non-pk key (UNIQUE)
         my $obj8 = try { $rsobj8->find(1) } || $rsobj8->search({ id => 1 })->first;
@@ -883,7 +1020,7 @@ sub test_schema {
         }
 
         SKIP: {
-            skip 'This vendor cannot do inline relationship definitions', 11
+            skip 'This vendor cannot do inline relationship definitions', 9
                 if $self->{no_inline_rels};
 
             my $moniker12 = $monikers->{loader_test12};
@@ -908,30 +1045,36 @@ sub test_schema {
 
             my $obj12 = try { $rsobj12->find(1) } || $rsobj12->search({ id => 1 })->first;
             isa_ok( try { $obj12->loader_test13 }, $class13 );
-
-            # relname is preserved when another fk is added
-
-            skip 'Sybase cannot add FKs via ALTER TABLE', 2
-                if $self->{vendor} eq 'sybase';
-
-            {
-                local $SIG{__WARN__} = sub { warn @_ unless $_[0] =~ /invalidates \d+ active statement/ };
-                $conn->storage->disconnect; # for mssql and access
-            }
-
-            isa_ok try { $rsobj3->find(1)->loader_test4zes }, 'DBIx::Class::ResultSet';
-
-            $conn->storage->disconnect; # for access
-
-            $conn->storage->dbh->do('ALTER TABLE loader_test4 ADD fkid2 INTEGER REFERENCES loader_test3 (id)');
-
-            $conn->storage->disconnect; # for firebird
-
-            $self->rescan_without_warnings($conn);
-
-            isa_ok try { $rsobj3->find(1)->loader_test4zes }, 'DBIx::Class::ResultSet',
-                'relationship name preserved when another foreign key is added in remote table';
         }
+
+        # relname is preserved when another fk is added
+        {
+            local $SIG{__WARN__} = sub { warn @_ unless $_[0] =~ /invalidates \d+ active statement/ };
+            $conn->storage->disconnect; # for mssql and access
+        }
+
+        isa_ok try { $rsobj3->find(1)->loader_test4zes }, 'DBIx::Class::ResultSet';
+
+        $conn->storage->disconnect; # for access
+
+        if (lc($self->{vendor}) !~ /^(?:sybase|mysql)\z/) {
+            $conn->storage->dbh->do('ALTER TABLE loader_test4 ADD fkid2 INTEGER REFERENCES loader_test3 (id)');
+        }
+        else {
+            $conn->storage->dbh->do(<<"EOF");
+            ALTER TABLE loader_test4 ADD fkid2 INTEGER $self->{null}
+EOF
+            $conn->storage->dbh->do(<<"EOF");
+            ALTER TABLE loader_test4 ADD CONSTRAINT loader_test4_to_3_fk FOREIGN KEY (fkid2) REFERENCES loader_test3 (id)
+EOF
+        }
+
+        $conn->storage->disconnect; # for firebird
+
+        $self->rescan_without_warnings($conn);
+
+        isa_ok try { $rsobj3->find(1)->loader_test4zes }, 'DBIx::Class::ResultSet',
+            'relationship name preserved when another foreign key is added in remote table';
 
         SKIP: {
             skip 'This vendor cannot do out-of-line implicit rel defs', 4
@@ -999,10 +1142,12 @@ sub test_schema {
             $digest->addfile($fh);
         };
 
-        find $find_cb, $DUMP_DIR;
+        find $find_cb, DUMP_DIR;
 
-#        system "rm -f /tmp/before_rescan/* /tmp/after_rescan/*";
-#        system "cp $tdir/common_dump/DBIXCSL_Test/Schema/*.pm /tmp/before_rescan";
+#        system "rm -rf /tmp/before_rescan /tmp/after_rescan";
+#        system "mkdir /tmp/before_rescan";
+#        system "mkdir /tmp/after_rescan";
+#        system "cp -a @{[DUMP_DIR]} /tmp/before_rescan";
 
         my $before_digest = $digest->b64digest;
 
@@ -1017,10 +1162,10 @@ sub test_schema {
 
         is_deeply(\@new, [ qw/LoaderTest30/ ], "Rescan");
 
-#        system "cp t/_common_dump/DBIXCSL_Test/Schema/*.pm /tmp/after_rescan";
+#        system "cp -a @{[DUMP_DIR]} /tmp/after_rescan";
 
         $digest = Digest::MD5->new;
-        find $find_cb, $DUMP_DIR;
+        find $find_cb, DUMP_DIR;
         my $after_digest = $digest->b64digest;
 
         is $before_digest, $after_digest,
@@ -1040,7 +1185,7 @@ sub test_schema {
         }
 
         $conn->storage->disconnect; # for Firebird
-        $conn->storage->dbh->do("DROP TABLE loader_test30");
+        $self->drop_table($conn->storage->dbh, 'loader_test30');
 
         @new = $self->rescan_without_warnings($conn);
 
@@ -1053,10 +1198,10 @@ sub test_schema {
 
     $self->test_data_types($conn);
 
+    $self->test_preserve_case($conn);
+
     # run extra tests
     $self->{extra}{run}->($conn, $monikers, $classes, $self) if $self->{extra}{run};
-
-    $self->test_preserve_case($conn);
 
     $self->drop_tables unless $ENV{SCHEMA_LOADER_TESTS_NOCLEANUP};
 
@@ -1102,38 +1247,54 @@ sub test_preserve_case {
 
     my $dbh = $self->dbconnect;
 
+    my ($table40_name, $table41_name) = @{ $self->{preserve_case_tests_table_names} };
+
     $dbh->do($_) for (
 qq|
-    CREATE TABLE ${oqt}LoaderTest40${cqt} (
+    CREATE TABLE ${oqt}${table40_name}${cqt} (
         ${oqt}Id${cqt} INTEGER NOT NULL PRIMARY KEY,
         ${oqt}Foo3Bar${cqt} VARCHAR(100) NOT NULL
     ) $self->{innodb}
 |,
 qq|
-    CREATE TABLE ${oqt}LoaderTest41${cqt} (
+    CREATE TABLE ${oqt}${table41_name}${cqt} (
         ${oqt}Id${cqt} INTEGER NOT NULL PRIMARY KEY,
         ${oqt}LoaderTest40Id${cqt} INTEGER,
-        FOREIGN KEY (${oqt}LoaderTest40Id${cqt}) REFERENCES ${oqt}LoaderTest40${cqt} (${oqt}Id${cqt})
+        FOREIGN KEY (${oqt}LoaderTest40Id${cqt}) REFERENCES ${oqt}${table40_name}${cqt} (${oqt}Id${cqt})
     ) $self->{innodb}
 |,
-qq| INSERT INTO ${oqt}LoaderTest40${cqt} VALUES (1, 'foo') |,
-qq| INSERT INTO ${oqt}LoaderTest41${cqt} VALUES (1, 1) |,
+qq| INSERT INTO ${oqt}${table40_name}${cqt} VALUES (1, 'foo') |,
+qq| INSERT INTO ${oqt}${table41_name}${cqt} VALUES (1, 1) |,
     );
     $conn->storage->disconnect;
 
-    local $conn->_loader->{preserve_case} = 1;
-    $conn->_loader->_setup;
+    my $orig_preserve_case = $conn->loader->preserve_case;
 
+    $conn->loader->preserve_case(1);
+    $conn->loader->_setup;
     $self->rescan_without_warnings($conn);
 
     if (not $self->{skip_rels}) {
-        is try { $conn->resultset('LoaderTest41')->find(1)->loader_test40->foo3_bar }, 'foo',
-            'rel and accessor for mixed-case column name in mixed case table';
+        ok my $row = try { $conn->resultset('LoaderTest41')->find(1) },
+            'row in mixed-case table';
+        ok my $related_row = try { $row->loader_test40 },
+            'rel in mixed-case table';
+        is try { $related_row->foo3_bar }, 'foo',
+            'accessor for mixed-case column name in mixed case table';
     }
     else {
+        SKIP: { skip 'not testing mixed-case rels with skip_rels', 2 }
+
         is try { $conn->resultset('LoaderTest40')->find(1)->foo3_bar }, 'foo',
             'accessor for mixed-case column name in mixed case table';
     }
+
+    # Further tests may expect preserve_case to be unset, so reset it to the
+    # original value and rescan again.
+
+    $conn->loader->preserve_case($orig_preserve_case);
+    $conn->loader->_setup;
+    $self->rescan_without_warnings($conn);
 }
 
 sub monikers_and_classes {
@@ -1141,16 +1302,16 @@ sub monikers_and_classes {
     my ($monikers, $classes);
 
     foreach my $source_name ($schema_class->sources) {
-        my $table_name = $schema_class->source($source_name)->from;
+        my $table_name = $schema_class->loader->moniker_to_table->{$source_name};
 
-        $table_name = $$table_name if ref $table_name;
+        my $result_class = $schema_class->source($source_name)->result_class;
 
         $monikers->{$table_name} = $source_name;
-        $classes->{$table_name} = $schema_class . q{::} . $source_name;
+        $classes->{$table_name} = $result_class;
 
-        # some DBs (Firebird) uppercase everything
+        # some DBs (Firebird, Oracle) uppercase everything
         $monikers->{lc $table_name} = $source_name;
-        $classes->{lc $table_name} = $schema_class . q{::} . $source_name;
+        $classes->{lc $table_name} = $result_class;
     }
 
     return ($monikers, $classes);
@@ -1223,7 +1384,7 @@ sub create {
 
     $self->drop_tables;
 
-    my $make_auto_inc = $self->{auto_inc_cb} || sub {};
+    my $make_auto_inc = $self->{auto_inc_cb} || sub { return () };
     @statements = (
         qq{
             CREATE TABLE loader_test1s (
@@ -1238,6 +1399,7 @@ sub create {
         q{ INSERT INTO loader_test1s (dat) VALUES('baz') }, 
 
         # also test method collision
+        # crumb_crisp_coating is for col_accessor_map tests
         qq{ 
             CREATE TABLE loader_test2 (
                 id $self->{auto_inc_pk},
@@ -1246,8 +1408,12 @@ sub create {
                 set_primary_key INTEGER $self->{null},
                 can INTEGER $self->{null},
                 dbix_class_testcomponent INTEGER $self->{null},
+                dbix_class_testcomponentmap INTEGER $self->{null},
                 testcomponent_fqn INTEGER $self->{null},
                 meta INTEGER $self->{null},
+                test_role_method INTEGER $self->{null},
+                test_role_for_map_method INTEGER $self->{null},
+                crumb_crisp_coating VARCHAR(32) $self->{null},
                 UNIQUE (dat2, dat)
             ) $self->{innodb}
         },
@@ -1303,6 +1469,21 @@ sub create {
                 c_char_as_data VARCHAR(100)
             ) $self->{innodb}
         },
+        # DB2 does not allow nullable uniq components, SQLAnywhere automatically
+        # converts nullable uniq components to NOT NULL
+        qq{
+            CREATE TABLE loader_test50 (
+                id INTEGER NOT NULL UNIQUE,
+                id1 INTEGER NOT NULL,
+                id2 INTEGER NOT NULL,
+                @{[ $self->{vendor} !~ /^(?:DB2|SQLAnywhere)\z/i ? "
+                    id3 INTEGER $self->{null},
+                    id4 INTEGER NOT NULL,
+                    UNIQUE (id3, id4),
+                " : '' ]}
+                    UNIQUE (id1, id2)
+            ) $self->{innodb}
+        },
     );
 
     # some DBs require mixed case identifiers to be quoted
@@ -1326,7 +1507,6 @@ sub create {
                 id INTEGER NOT NULL PRIMARY KEY,
                 fkid INTEGER NOT NULL,
                 dat VARCHAR(32),
-                crumb_crisp_coating VARCHAR(32) $self->{null},
                 belongs_to INTEGER $self->{null},
                 set_primary_key INTEGER $self->{null},
                 FOREIGN KEY( fkid ) REFERENCES loader_test3 (id),
@@ -1369,15 +1549,31 @@ sub create {
         (qq| INSERT INTO loader_test6 (id, ${oqt}Id2${cqt},loader_test2_id,dat) | .
          q{ VALUES (1, 1,1,'aaa') }),
 
+        # here we are testing adjective detection
+
         qq{
             CREATE TABLE loader_test7 (
                 id INTEGER NOT NULL PRIMARY KEY,
                 id2 VARCHAR(8) NOT NULL UNIQUE,
-                dat VARCHAR(8)
+                dat VARCHAR(8),
+                lovely_loader_test6 INTEGER NOT NULL UNIQUE,
+                FOREIGN KEY (lovely_loader_test6) REFERENCES loader_test6 (id)
             ) $self->{innodb}
         },
 
-        q{ INSERT INTO loader_test7 (id,id2,dat) VALUES (1,'aaa','bbb') },
+        q{ INSERT INTO loader_test7 (id,id2,dat,lovely_loader_test6) VALUES (1,'aaa','bbb',1) },
+
+        # for some DBs we need a named FK to drop later
+        ($self->{vendor} =~ /^(mssql|sybase|access|mysql)\z/i ? (
+            (q{ ALTER TABLE loader_test6 ADD } .
+             qq{ loader_test7_id INTEGER $self->{null} }),
+            (q{ ALTER TABLE loader_test6 ADD CONSTRAINT loader_test6_to_7_fk } .
+             q{ FOREIGN KEY (loader_test7_id) } .
+             q{ REFERENCES loader_test7 (id) })
+        ) : (
+            (q{ ALTER TABLE loader_test6 ADD } .
+             qq{ loader_test7_id INTEGER $self->{null} REFERENCES loader_test7 (id) }),
+        )),
 
         qq{
             CREATE TABLE loader_test8 (
@@ -1388,8 +1584,9 @@ sub create {
             ) $self->{innodb}
         },
 
-        (q{ INSERT INTO loader_test8 (id,loader_test7,dat) } .
-         q{ VALUES (1,'aaa','bbb') }),
+        (q{ INSERT INTO loader_test8 (id,loader_test7,dat) VALUES (1,'aaa','bbb') }),
+        (q{ INSERT INTO loader_test8 (id,loader_test7,dat) VALUES (2,'aaa','bbb') }),
+        (q{ INSERT INTO loader_test8 (id,loader_test7,dat) VALUES (3,'aaa','bbb') }),
 
         qq{
             CREATE TABLE loader_test9 (
@@ -1400,13 +1597,27 @@ sub create {
         qq{
             CREATE TABLE loader_test16 (
                 id INTEGER NOT NULL PRIMARY KEY,
-                dat  VARCHAR(8)
+                dat  VARCHAR(8),
+                loader_test8_id INTEGER NOT NULL UNIQUE,
+                FOREIGN KEY (loader_test8_id) REFERENCES loader_test8 (id)
             ) $self->{innodb}
         },
 
-        qq{ INSERT INTO loader_test16 (id,dat) VALUES (2,'x16') },
-        qq{ INSERT INTO loader_test16 (id,dat) VALUES (4,'y16') },
-        qq{ INSERT INTO loader_test16 (id,dat) VALUES (6,'z16') },
+        qq{ INSERT INTO loader_test16 (id,dat,loader_test8_id) VALUES (2,'x16',1) },
+        qq{ INSERT INTO loader_test16 (id,dat,loader_test8_id) VALUES (4,'y16',2) },
+        qq{ INSERT INTO loader_test16 (id,dat,loader_test8_id) VALUES (6,'z16',3) },
+
+        # for some DBs we need a named FK to drop later
+        ($self->{vendor} =~ /^(mssql|sybase|access|mysql)\z/i ? (
+            (q{ ALTER TABLE loader_test8 ADD } .
+             qq{ loader_test16_id INTEGER $self->{null} }),
+            (q{ ALTER TABLE loader_test8 ADD CONSTRAINT loader_test8_to_16_fk } .
+             q{ FOREIGN KEY (loader_test16_id) } .
+             q{ REFERENCES loader_test16 (id) })
+        ) : (
+            (q{ ALTER TABLE loader_test8 ADD } .
+             qq{ loader_test16_id INTEGER $self->{null} REFERENCES loader_test16 (id) }),
+        )),
 
         qq{
             CREATE TABLE loader_test17 (
@@ -1686,10 +1897,17 @@ sub create {
     $dbh->do($_) foreach (@statements);
 
     if (not ($self->{vendor} eq 'mssql' && $dbh->{Driver}{Name} eq 'Sybase')) {
-        $dbh->do($_) foreach (@{ $self->{data_type_tests}{ddl} || [] });
+        foreach my $ddl (@{ $self->{data_type_tests}{ddl} || [] }) {
+            if (my $cb = $self->{data_types_ddl_cb}) {
+                $cb->($ddl);
+            }
+            else {
+                $dbh->do($ddl);
+            }
+        }
     }
 
-    unless($self->{skip_rels}) {
+    unless ($self->{skip_rels}) {
         # hack for now, since DB2 doesn't like inline comments, and we need
         # to test one for mysql, which works on everyone else...
         # this all needs to be refactored anyways.
@@ -1731,6 +1949,7 @@ sub drop_tables {
         LoAdEr_test24
         loader_test35
         loader_test36
+        loader_test50
     /;
     
     my @tables_auto_inc = (
@@ -1786,13 +2005,20 @@ sub drop_tables {
 
     my @tables_rescan = qw/ loader_test30 /;
 
-    my @tables_preserve_case_tests = qw/ LoaderTest41 LoaderTest40 /;
+    my @tables_preserve_case_tests = @{ $self->{preserve_case_tests_table_names} };
 
-    my $drop_fk_mysql =
-        q{ALTER TABLE loader_test10 DROP FOREIGN KEY loader_test11_fk};
+    my %drop_columns = (
+        loader_test6  => 'loader_test7_id',
+        loader_test7  => 'lovely_loader_test6',
+        loader_test8  => 'loader_test16_id',
+        loader_test16 => 'loader_test8_id',
+    );
 
-    my $drop_fk =
-        q{ALTER TABLE loader_test10 DROP CONSTRAINT loader_test11_fk};
+    my %drop_constraints = (
+        loader_test10 => 'loader_test11_fk',
+        loader_test6  => 'loader_test6_to_7_fk',
+        loader_test8  => 'loader_test8_to_16_fk',
+    );
 
     # For some reason some tests do this twice (I guess dependency issues?)
     # do it twice for all drops
@@ -1803,44 +2029,69 @@ sub drop_tables {
 
         $dbh->do($_) for @{ $self->{extra}{pre_drop_ddl} || [] };
 
-        $dbh->do("DROP TABLE $_") for @{ $self->{extra}{drop} || [] };
+        $self->drop_table($dbh, $_) for @{ $self->{extra}{drop} || [] };
 
         my $drop_auto_inc = $self->{auto_inc_drop_cb} || sub {};
 
-        unless($self->{skip_rels}) {
-            $dbh->do("DROP TABLE $_") for (@tables_reltests);
-            $dbh->do("DROP TABLE $_") for (@tables_reltests);
-            if($self->{vendor} =~ /mysql/i) {
-                $dbh->do($drop_fk_mysql);
+        unless ($self->{skip_rels}) {
+            # drop the circular rel columns if possible, this
+            # doesn't work on all DBs
+            foreach my $table (keys %drop_columns) {
+                $dbh->do("ALTER TABLE $table DROP $drop_columns{$table}");
+                $dbh->do("ALTER TABLE $table DROP COLUMN $drop_columns{$table}");
             }
-            else {
-                $dbh->do($drop_fk);
+
+            foreach my $table (keys %drop_constraints) {
+                # for MSSQL
+                $dbh->do("ALTER TABLE $table DROP $drop_constraints{$table}"); 
+                # for Sybase and Access
+                $dbh->do("ALTER TABLE $table DROP CONSTRAINT $drop_constraints{$table}"); 
+                # for MySQL
+                $dbh->do("ALTER TABLE $table DROP FOREIGN KEY $drop_constraints{$table}"); 
             }
+
+            $self->drop_table($dbh, $_) for (@tables_reltests);
+            $self->drop_table($dbh, $_) for (@tables_reltests);
+
             $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_advanced_auto_inc;
-            $dbh->do("DROP TABLE $_") for (@tables_advanced);
+
+            $self->drop_table($dbh, $_) for (@tables_advanced);
 
             unless($self->{no_inline_rels}) {
-                $dbh->do("DROP TABLE $_") for (@tables_inline_rels);
+                $self->drop_table($dbh, $_) for (@tables_inline_rels);
             }
             unless($self->{no_implicit_rels}) {
-                $dbh->do("DROP TABLE $_") for (@tables_implicit_rels);
+                $self->drop_table($dbh, $_) for (@tables_implicit_rels);
             }
         }
         $dbh->do($_) for map { $drop_auto_inc->(@$_) } @tables_auto_inc;
-        $dbh->do("DROP TABLE $_") for (@tables, @tables_rescan);
+        $self->drop_table($dbh, $_) for (@tables, @tables_rescan);
 
         if (not ($self->{vendor} eq 'mssql' && $dbh->{Driver}{Name} eq 'Sybase')) {
             foreach my $data_type_table (@{ $self->{data_type_tests}{table_names} || [] }) {
-                $dbh->do("DROP TABLE $data_type_table");
+                $self->drop_table($dbh, $data_type_table);
             }
         }
 
-        my ($oqt, $cqt) = $self->get_oqt_cqt(always => 1);
-
-        $dbh->do("DROP TABLE ${oqt}${_}${cqt}") for @tables_preserve_case_tests;
+        $self->drop_table($dbh, $_) for @tables_preserve_case_tests;
 
         $dbh->disconnect;
     }
+}
+
+sub drop_table {
+    my ($self, $dbh, $table) = @_;
+
+    local $^W = 0; # for ADO
+
+    try { $dbh->do("DROP TABLE $table CASCADE CONSTRAINTS") }; # oracle
+    try { $dbh->do("DROP TABLE $table CASCADE") }; # postgres and ?
+    try { $dbh->do("DROP TABLE $table") };
+
+    # if table name is case sensitive
+    my ($oqt, $cqt) = $self->get_oqt_cqt(always => 1);
+
+    try { $dbh->do("DROP TABLE ${oqt}${table}${cqt}") };
 }
 
 sub _custom_column_info {
@@ -1911,15 +2162,16 @@ sub setup_data_type_tests {
         my %seen_col_names;
 
         while (my ($col_def, $expected_info) = each %$types) {
-            (my $type_alias = $col_def) =~ s/\( ([^)]+) \)//xg;
+            (my $type_alias = $col_def) =~ s/\( (.+) \)(?=(?:[^()]* '(?:[^']* (?:''|\\')* [^']*)* [^\\']' [^()]*)*\z)//xg;
 
             my $size = $1;
             $size = '' unless defined $size;
+            $size = '' unless $size =~ /^[\d, ]+\z/;
             $size =~ s/\s+//g;
             my @size = split /,/, $size;
 
             # some DBs don't like very long column names
-            if ($self->{vendor} =~ /^(?:firebird|sqlanywhere|oracle|db2)\z/i) {
+            if ($self->{vendor} =~ /^(?:Firebird|SQLAnywhere|Oracle|DB2)\z/i) {
                 my ($col_def, $default) = $type_alias =~ /^(.*)(default.*)?\z/i;
 
                 $type_alias = substr $col_def, 0, 15;
@@ -1938,7 +2190,7 @@ sub setup_data_type_tests {
                 $col_name .= "_sz_$size_name";
             }
 
-            # XXX would be better to check _loader->preserve_case
+            # XXX would be better to check loader->preserve_case
             $col_name = lc $col_name;
 
             $col_name .= '_' . $seen_col_names{$col_name} if $seen_col_names{$col_name}++;
@@ -1985,7 +2237,7 @@ sub DESTROY {
     my $self = shift;
     unless ($ENV{SCHEMA_LOADER_TESTS_NOCLEANUP}) {
       $self->drop_tables if $self->{_created};
-      rmtree $DUMP_DIR
+      rmtree DUMP_DIR
     }
 }
 

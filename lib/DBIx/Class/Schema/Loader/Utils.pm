@@ -3,23 +3,34 @@ package # hide from PAUSE
 
 use strict;
 use warnings;
-use Data::Dumper ();
 use Test::More;
+use String::CamelCase 'wordsplit';
+use Carp::Clan qw/^DBIx::Class/;
 use namespace::clean;
 use Exporter 'import';
+use Data::Dumper ();
 
-our @EXPORT_OK = qw/split_name dumper dumper_squashed eval_without_redefine_warnings warnings_exist warnings_exist_silent/;
+our @EXPORT_OK = qw/split_name dumper dumper_squashed eval_package_without_redefine_warnings class_path no_warnings warnings_exist warnings_exist_silent slurp_file write_file/;
 
-use constant BY_CASE_TRANSITION =>
+use constant BY_CASE_TRANSITION_V7 =>
     qr/(?<=[[:lower:]\d])[\W_]*(?=[[:upper:]])|[\W_]+/;
 
 use constant BY_NON_ALPHANUM =>
     qr/[\W_]+/;
 
-sub split_name($) {
-    my $name = shift;
+my $LF   = "\x0a";
+my $CRLF = "\x0d\x0a";
 
-    split $name =~ /[[:upper:]]/ && $name =~ /[[:lower:]]/ ? BY_CASE_TRANSITION : BY_NON_ALPHANUM, $name;
+sub split_name($;$) {
+    my ($name, $v) = @_;
+
+    my $is_camel_case = $name =~ /[[:upper:]]/ && $name =~ /[[:lower:]]/;
+
+    if ((not $v) || $v >= 8) {
+        return map split(BY_NON_ALPHANUM, $_), wordsplit($name);
+    }
+
+    return split $is_camel_case ? BY_CASE_TRANSITION_V7 : BY_NON_ALPHANUM, $name;
 }
 
 sub dumper($) {
@@ -38,16 +49,66 @@ sub dumper_squashed($) {
     return $dd->Values([ $val ])->Dump;
 }
 
-sub eval_without_redefine_warnings {
-    my $code = shift;
+sub eval_package_without_redefine_warnings {
+    my ($pkg, $code) = @_;
 
     my $warn_handler = $SIG{__WARN__} || sub { warn @_ };
+
     local $SIG{__WARN__} = sub {
         $warn_handler->(@_)
             unless $_[0] =~ /^Subroutine \S+ redefined/;
     };
-    eval $code;
-    die $@ if $@;
+
+    # This hairiness is to handle people using "use warnings FATAL => 'all';"
+    # in their custom or external content.
+    my @delete_syms;
+    my $try_again = 1;
+
+    while ($try_again) {
+        eval $code;
+
+        if (my ($sym) = $@ =~ /^Subroutine (\S+) redefined/) {
+            delete $INC{ +class_path($pkg) };
+            push @delete_syms, $sym;
+
+            foreach my $sym (@delete_syms) {
+                no strict 'refs';
+                undef *{"${pkg}::${sym}"};
+            }
+        }
+        elsif ($@) {
+            die $@ if $@;
+        }
+        else {
+            $try_again = 0;
+        }
+    }
+}
+
+sub class_path {
+    my $class = shift;
+
+    my $class_path = $class;
+    $class_path =~ s{::}{/}g;
+    $class_path .= '.pm';
+
+    return $class_path;
+}
+
+sub no_warnings(&;$) {
+    my ($code, $test_name) = @_;
+
+    my $failed = 0;
+
+    my $warn_handler = $SIG{__WARN__} || sub { warn @_ };
+    local $SIG{__WARN__} = sub {
+        $failed = 1;
+        $warn_handler->(@_);
+    };
+
+    $code->();
+
+    ok ((not $failed), $test_name);
 }
 
 sub warnings_exist(&$$) {
@@ -82,6 +143,30 @@ sub warnings_exist_silent(&$$) {
     ok $matched, $test_name;
 }
 
+sub slurp_file($) {
+    my $file_name = shift;
+
+    open my $fh, '<:encoding(UTF-8)', $file_name,
+        or croak "Can't open '$file_name' for reading: $!";
+
+    my $data = do { local $/; <$fh> };
+
+    close $fh;
+
+    $data =~ s/$CRLF|$LF/\n/g;
+
+    return $data;
+}
+
+sub write_file($$) {
+    my $file_name = shift;
+
+    open my $fh, '>:encoding(UTF-8)', $file_name,
+        or croak "Can't open '$file_name' for writing: $!";
+
+    print $fh shift;
+    close $fh;
+}
 
 1;
 # vim:et sts=4 sw=4 tw=0:

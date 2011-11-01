@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class::Schema::Loader' => '0.07010';
+  configure_requires 'DBIx::Class::Schema::Loader' => '0.07011';
 
   require DBIx::Class::Schema::Loader::Optional::Dependencies;
 
@@ -51,6 +51,32 @@ Dependencies are organized in C<groups> and each group can list one or more
 required modules, with an optional minimum version (or 0 for any version).
 
 
+=head2 dbicdump config file
+
+Modules required for using a config file with dbicdump
+
+=over
+
+=item * Config::Any
+
+=back
+
+Requirement group: B<dbicdump_config>
+
+=head2 dbicdump config file testing
+
+Modules required for using testing using a config file with dbicdump
+
+=over
+
+=item * Config::Any
+
+=item * Config::General
+
+=back
+
+Requirement group: B<test_dbicdump_config>
+
 =head2 use_moose
 
 Modules required for the use_moose option
@@ -59,7 +85,9 @@ Modules required for the use_moose option
 
 =item * Moose >= 1.12
 
-=item * MooseX::NonMoose >= 0.15
+=item * MooseX::MarkAsMethods >= 0.13
+
+=item * MooseX::NonMoose >= 0.16
 
 =item * namespace::autoclean >= 0.09
 

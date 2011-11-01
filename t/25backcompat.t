@@ -6,8 +6,8 @@ use File::Path qw/rmtree make_path/;
 use Class::Unload;
 use File::Temp qw/tempfile tempdir/;
 use IO::File;
-use File::Slurp 'slurp';
 use DBIx::Class::Schema::Loader ();
+use DBIx::Class::Schema::Loader::Utils 'slurp_file';
 use Lingua::EN::Inflect::Number ();
 use lib qw(t/lib);
 use make_dbictest_db_with_unique;
@@ -58,7 +58,7 @@ sub class_content_like;
         Bar   => 'Foos',
     });
 
-    my $res = run_loader(naming => 'current');
+    my $res = run_loader(naming => 'current', use_namespaces => 0);
     my $schema = $res->{schema};
 
     is scalar @{ $res->{warnings} }, 1,
@@ -734,8 +734,8 @@ sub class_content_like;
     my $res = run_loader(static => 1, naming => 'current');
     my $schema = $res->{schema};
 
-    my $file = $schema->_loader->get_dump_filename($SCHEMA_CLASS);
-    my $code = slurp $file;
+    my $file = $schema->loader->get_dump_filename($SCHEMA_CLASS);
+    my $code = slurp_file $file;
 
     my ($dumped_ver) =
         $code =~ /^# Created by DBIx::Class::Schema::Loader v(\S+)/m;
@@ -1301,8 +1301,8 @@ sub _rel_condition {
 sub class_content_like {
     my ($schema, $class, $re, $test_name) = @_;
 
-    my $file = $schema->_loader->get_dump_filename($class);
-    my $code = slurp $file;
+    my $file = $schema->loader->get_dump_filename($class);
+    my $code = slurp_file $file;
 
     like $code, $re, $test_name;
 }
@@ -1333,7 +1333,7 @@ EOF
 sub _write_custom_content {
     my ($schema, $class, $content) = @_;
 
-    my $pm = $schema->_loader->get_dump_filename($class);
+    my $pm = $schema->loader->get_dump_filename($class);
     {
         local ($^I, @ARGV) = ('.bak', $pm);
         while (<>) {

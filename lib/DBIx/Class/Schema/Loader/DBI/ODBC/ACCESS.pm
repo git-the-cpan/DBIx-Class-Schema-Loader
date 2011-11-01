@@ -6,11 +6,11 @@ use base qw/
     DBIx::Class::Schema::Loader::DBI::ODBC
 /;
 use mro 'c3';
-use Carp::Clan qw/^DBIx::Class/;
 use Try::Tiny;
 use namespace::clean;
+use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07010';
+our $VERSION = '0.07011';
 
 __PACKAGE__->mk_group_accessors('simple', qw/
     __ado_connection
@@ -27,6 +27,8 @@ DBIx::Class::Schema::Loader
 See L<DBIx::Class::Schema::Loader::Base> for usage information.
 
 =cut
+
+sub _supports_db_schema { 0 }
 
 sub _db_path {
     my $self = shift;
@@ -158,6 +160,26 @@ sub _adox_catalog {
     return $cat;
 }
 
+sub _adox_column {
+    my ($self, $table, $col) = @_;
+
+    my $col_obj;
+
+    my $cols = $self->_adox_catalog->Tables->Item($table->name)->Columns;
+
+    for my $col_idx (0..$cols->Count-1) {
+        $col_obj = $cols->Item($col_idx);
+        if ($self->preserve_case) {
+            last if $col_obj->Name eq $col;
+        }
+        else {
+            last if lc($col_obj->Name) eq lc($col);
+        }
+    }
+
+    return $col_obj;
+}
+
 sub rescan {
     my $self = shift;
 
@@ -177,7 +199,7 @@ sub _table_pk_info {
     my @keydata;
 
     my $indexes = try {
-        $self->_adox_catalog->Tables->Item($table)->Indexes
+        $self->_adox_catalog->Tables->Item($table->name)->Indexes
     }
     catch {
         warn "Could not retrieve indexes in table '$table', disabling primary key detection: $_\n";
@@ -208,7 +230,7 @@ sub _table_fk_info {
     return [] if $self->_disable_fk_detection;
 
     my $keys = try {
-        $self->_adox_catalog->Tables->Item($table)->Keys;
+        $self->_adox_catalog->Tables->Item($table->name)->Keys;
     }
     catch {
         warn "Could not retrieve keys in table '$table', disabling relationship detection: $_\n";
@@ -223,25 +245,32 @@ sub _table_fk_info {
     my @rels;
 
     for my $key_idx (0..($keys->Count-1)) {
-      my $key = $keys->Item($key_idx);
-      if ($key->Type == 2) {
+        my $key = $keys->Item($key_idx);
+
+        next unless $key->Type == 2;
+
         my $local_cols   = $key->Columns;
         my $remote_table = $key->RelatedTable;
         my (@local_cols, @remote_cols);
 
         for my $col_idx (0..$local_cols->Count-1) {
-          my $col = $local_cols->Item($col_idx);
-          push @local_cols,  $self->_lc($col->Name);
-          push @remote_cols, $self->_lc($col->RelatedColumn);
+            my $col = $local_cols->Item($col_idx);
+            push @local_cols,  $self->_lc($col->Name);
+            push @remote_cols, $self->_lc($col->RelatedColumn);
         }
 
         push @rels, {
             local_columns => \@local_cols,
             remote_columns => \@remote_cols,
-            remote_table => $remote_table,
+            remote_table => DBIx::Class::Schema::Loader::Table->new(
+                loader => $self,
+                name   => $remote_table,
+                ($self->db_schema ? (
+                    schema        => $self->db_schema->[0],
+                    ignore_schema => 1,
+                ) : ()),
+            ),
         };
-
-      }
     }
 
     return \@rels;
@@ -255,6 +284,10 @@ sub _columns_info_for {
 
     while (my ($col, $info) = each %$result) {
         my $data_type = $info->{data_type};
+
+        my $col_obj = $self->_adox_column($table, $col);
+
+        $info->{is_nullable} = ($col_obj->Attributes & 2) == 2 ? 1 : 0;
 
         if ($data_type eq 'counter') {
             $info->{data_type} = 'integer';
@@ -286,14 +319,19 @@ sub _columns_info_for {
             $info->{original}{data_type} = 'currency';
 
             if (ref $info->{size} eq 'ARRAY' && $info->{size}[0] == 19 && $info->{size}[1] == 4) {
-                # Actual money column via ODBC, otherwise we pass the sizes on to the ADO driver for decimal
-                # columns (which masquerade as money columns...)
+                # Actual money column via ODBC, otherwise we pass the sizes on to the ADO driver for
+                # decimal columns (which masquerade as money columns...)
+                delete $info->{size};
+            }
+        }
+        elsif ($data_type eq 'decimal') {
+            if (ref $info->{size} eq 'ARRAY' && $info->{size}[0] == 18 && $info->{size}[1] == 0) {
                 delete $info->{size};
             }
         }
 
 # Pass through currency (which can be decimal for ADO.)
-        if ($data_type !~ /^(?:(?:var)?(?:char|binary))\z/ && $data_type ne 'currency') {
+        if ($data_type !~ /^(?:(?:var)?(?:char|binary)|decimal)\z/ && $data_type ne 'currency') {
             delete $info->{size};
         }
     }

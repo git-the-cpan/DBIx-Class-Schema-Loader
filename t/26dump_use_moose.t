@@ -22,23 +22,43 @@ $t->dump_test(
     use_moose => 1,
     result_base_class => 'My::ResultBaseClass',
     schema_base_class => 'My::SchemaBaseClass',
+    result_roles => ['TestRole', 'TestRole2'],
   },
-  warnings => [
-    qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
-    qr/Schema dump completed/,
-  ],
   regexes => {
     schema => [
-      qr/\nuse Moose;\nuse namespace::autoclean;\nextends 'My::SchemaBaseClass';\n\n/,
+      qr/\nuse Moose;\nuse MooseX::MarkAsMethods autoclean => 1;\nextends 'My::SchemaBaseClass';\n\n/,
       qr/\n__PACKAGE__->meta->make_immutable\(inline_constructor => 0\);\n1;(?!\n1;\n)\n.*/,
     ],
     Foo => [
-      qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse namespace::autoclean;\nextends 'My::ResultBaseClass';\n\n/,
+      qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse MooseX::MarkAsMethods autoclean => 1;\nextends 'My::ResultBaseClass';\n\n/,
+      qr/=head1 L<Moose> ROLES APPLIED\n\n=over 4\n\n=item \* L<TestRole>\n\n=item \* L<TestRole2>\n\n=back\n\n=cut\n\n/,
+      qr/\nwith 'TestRole', 'TestRole2';\n\n/,
       qr/\n__PACKAGE__->meta->make_immutable;\n1;(?!\n1;\n)\n.*/,
     ],
     Bar => [
-      qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse namespace::autoclean;\nextends 'My::ResultBaseClass';\n\n/,
+      qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse MooseX::MarkAsMethods autoclean => 1;\nextends 'My::ResultBaseClass';\n\n/,
+      qr/=head1 L<Moose> ROLES APPLIED\n\n=over 4\n\n=item \* L<TestRole>\n\n=item \* L<TestRole2>\n\n=back\n\n=cut\n\n/,
+      qr/\nwith 'TestRole', 'TestRole2';\n\n/,
       qr/\n__PACKAGE__->meta->make_immutable;\n1;(?!\n1;\n)\n.*/,
+    ],
+  },
+);
+
+$t->cleanup;
+
+# check protect_overloads works as expected
+$t->dump_test(
+  classname => 'DBICTest::DumpMore::1',
+  options => {
+    use_moose      => 1,
+    only_autoclean => 1,
+  },
+  regexes => {
+    schema => [
+      qr/\nuse namespace::autoclean;\n/,
+    ],
+    Foo => [
+      qr/\nuse namespace::autoclean;\n/,
     ],
   },
 );
@@ -53,10 +73,6 @@ $t->dump_test(
     result_base_class => 'My::ResultBaseClass',
     schema_base_class => 'My::SchemaBaseClass',
   },
-  warnings => [
-    qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
-    qr/Schema dump completed/,
-  ],
   regexes => {
     schema => [
       qr/\nuse base 'My::SchemaBaseClass';\n/,
@@ -80,22 +96,18 @@ $t->dump_test(
     result_base_class => 'My::ResultBaseClass',
     schema_base_class => 'My::SchemaBaseClass',
   },
-  warnings => [
-    qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
-    qr/Schema dump completed/,
-  ],
   regexes => {
     schema => [
-      qr/\nuse Moose;\nuse namespace::autoclean;\nextends 'My::SchemaBaseClass';\n\n/,
+      qr/\nuse Moose;\nuse MooseX::MarkAsMethods autoclean => 1;\nextends 'My::SchemaBaseClass';\n\n/,
       qr/\n__PACKAGE__->meta->make_immutable\(inline_constructor => 0\);\n1;(?!\n1;\n)\n.*/,
     ],
     Foo => [
-      qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse namespace::autoclean;\nextends 'My::ResultBaseClass';\n\n/,
+      qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse MooseX::MarkAsMethods autoclean => 1;\nextends 'My::ResultBaseClass';\n\n/,
       qr/\n__PACKAGE__->meta->make_immutable;\n1;(?!\n1;\n)\n.*/,
       qr/# XXX This is my custom content XXX/,
     ],
     Bar => [
-      qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse namespace::autoclean;\nextends 'My::ResultBaseClass';\n\n/,
+      qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse MooseX::MarkAsMethods autoclean => 1;\nextends 'My::ResultBaseClass';\n\n/,
       qr/\n__PACKAGE__->meta->make_immutable;\n1;(?!\n1;\n)\n.*/,
     ],
   },
@@ -110,10 +122,6 @@ $t->dump_test(
     result_base_class => 'My::ResultBaseClass',
     schema_base_class => 'My::SchemaBaseClass',
   },
-  warnings => [
-    qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
-    qr/Schema dump completed/,
-  ],
   regexes => {
     schema => [
       qr/\nuse base 'My::SchemaBaseClass';\n/,
@@ -140,21 +148,17 @@ for my $supply_use_moose (1, 0) {
       result_base_class => 'My::ResultBaseClass',
       schema_base_class => 'My::SchemaBaseClass',
     },
-    warnings => [
-      qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
-      qr/Schema dump completed/,
-    ],
     regexes => {
       schema => [
-        qr/\nuse Moose;\nuse namespace::autoclean;\nextends 'My::SchemaBaseClass';\n\n/,
+        qr/\nuse Moose;\nuse MooseX::MarkAsMethods autoclean => 1;\nextends 'My::SchemaBaseClass';\n\n/,
         qr/\n__PACKAGE__->meta->make_immutable\(inline_constructor => 0\);\n1;(?!\n1;\n)\n.*/,
       ],
       Foo => [
-        qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse namespace::autoclean;\nextends 'My::ResultBaseClass';\n\n/,
+        qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse MooseX::MarkAsMethods autoclean => 1;\nextends 'My::ResultBaseClass';\n\n/,
         qr/\n__PACKAGE__->meta->make_immutable;\n1;(?!\n1;\n)\n.*/,
       ],
       Bar => [
-        qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse namespace::autoclean;\nextends 'My::ResultBaseClass';\n\n/,
+        qr/\nuse Moose;\nuse MooseX::NonMoose;\nuse MooseX::MarkAsMethods autoclean => 1;\nextends 'My::ResultBaseClass';\n\n/,
         qr/\n__PACKAGE__->meta->make_immutable;\n1;(?!\n1;\n)\n.*/,
       ],
     },
@@ -176,9 +180,6 @@ $t->dump_test (
     result_base_class => 'My::ResultBaseClass',
     schema_base_class => 'My::SchemaBaseClass',
   },
-  warnings => [
-    qr/Dumping manual schema for DBICTest::DumpMore::1 to directory /,
-  ],
   error => qr/\QIt is not possible to "downgrade" a schema that was loaded with use_moose => 1\E/,
 );
 

@@ -2,12 +2,11 @@ package DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_05;
 
 use strict;
 use warnings;
-use mro 'c3';
 use base 'DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_06';
-use Carp::Clan qw/^DBIx::Class/;
+use mro 'c3';
 use Lingua::EN::Inflect::Number ();
 
-our $VERSION = '0.07010';
+our $VERSION = '0.07011';
 
 sub _to_PL {
     my ($self, $name) = @_;
@@ -29,10 +28,10 @@ sub _relnames_and_method {
     my $remote_moniker = $rel->{remote_source};
     my $remote_obj     = $self->{schema}->source( $remote_moniker );
     my $remote_class   = $self->{schema}->class(  $remote_moniker );
-    my $remote_relname = $self->_remote_relname( $remote_obj->from, $cond);
+    my $remote_relname = $self->_remote_relname( $rel->{remote_table}, $cond);
 
     my $local_cols  = $rel->{local_columns};
-    my $local_table = $self->{schema}->source($local_moniker)->from;
+    my $local_table = $rel->{local_table};
 
     # If more than one rel between this pair of tables, use the local
     # col names to distinguish
@@ -44,10 +43,10 @@ sub _relnames_and_method {
         $local_relname = lc($local_table) . $colnames;
 
         $local_relname_uninflected = $local_relname;
-        $local_relname = $self->_inflect_plural( $local_relname );
+        ($local_relname) = $self->_inflect_plural( $local_relname );
     } else {
         $local_relname_uninflected = lc $local_table;
-        $local_relname = $self->_inflect_plural(lc $local_table);
+        ($local_relname) = $self->_inflect_plural(lc $local_table);
     }
 
     my $remote_method = 'has_many';
@@ -57,7 +56,7 @@ sub _relnames_and_method {
     if ($self->_array_eq([ $local_source->primary_columns ], $local_cols) ||
             grep { $self->_array_eq($_->[1], $local_cols) } @$uniqs) {
         $remote_method = 'might_have';
-        $local_relname = $self->_inflect_singular($local_relname_uninflected);
+        ($local_relname) = $self->_inflect_singular($local_relname_uninflected);
     }
 
     return ( $local_relname, $remote_relname, $remote_method );

@@ -2,12 +2,10 @@ package DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_06;
 
 use strict;
 use warnings;
+use base 'DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_07';
 use mro 'c3';
-use base 'DBIx::Class::Schema::Loader::RelBuilder';
-use Carp::Clan qw/^DBIx::Class/;
-use Lingua::EN::Inflect::Phrase ();
 
-our $VERSION = '0.07010';
+our $VERSION = '0.07011';
 
 sub _normalize_name {
     my ($self, $name) = @_;
@@ -20,7 +18,7 @@ sub _normalize_name {
 =head1 NAME
 
 DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_06 - RelBuilder for
-compatibility with DBIx::Class::Schema::Loader version 0.06001
+compatibility with DBIx::Class::Schema::Loader version 0.06000
 
 =head1 DESCRIPTION
 

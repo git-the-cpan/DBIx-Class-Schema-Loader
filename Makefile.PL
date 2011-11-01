@@ -36,25 +36,27 @@ test_requires 'IPC::Open3'    => 0;
 
 requires 'File::Spec'                  => 0;
 requires 'Scalar::Util'                => 0;
+requires 'Task::Weaken'                => 0;
 requires 'Data::Dump'                  => '1.06';
 requires 'Lingua::EN::Inflect::Number' => '1.1';
+requires 'Lingua::EN::Tagger'          => 0;
 requires 'Lingua::EN::Inflect::Phrase' => '0.02';
 requires 'Digest::MD5'                 => '2.36';
 requires 'Class::Accessor::Grouped'    => '0.10002';
 requires 'MRO::Compat'                 => '0.09';
+requires 'Sub::Name'                   => 0;
 requires 'Class::C3::Componentised'    => '1.0008';
 requires 'Carp::Clan'                  => 0;
 requires 'Class::Inspector'            => 0;
 requires 'DBIx::Class'                 => '0.08127';
 requires 'Class::Unload'               => 0;
-requires 'Class::Load'                 => 0;
-requires 'File::Slurp'                 => '9999.13';
 requires 'List::MoreUtils'             => 0;
 requires 'namespace::clean'            => '0.20';
 requires 'Scope::Guard'                => 0;
-requires 'List::MoreUtils'             => 0;
 requires 'Exporter'                    => '5.63';
 requires 'Try::Tiny'                   => 0;
+requires 'String::ToIdentifier::EN'    => '0.05';
+requires 'String::CamelCase'           => '0.02';
 
 if ($Module::Install::AUTHOR && ! $args->{skip_author_deps}) {
     eval { require Module::Install::ReadmeFromPod }

@@ -3,10 +3,9 @@ package DBIx::Class::Schema::Loader::DBI::Sybase::Microsoft_SQL_Server;
 use strict;
 use warnings;
 use base 'DBIx::Class::Schema::Loader::DBI::MSSQL';
-use Carp::Clan qw/^DBIx::Class/;
 use mro 'c3';
 
-our $VERSION = '0.07010';
+our $VERSION = '0.07011';
 
 =head1 NAME
 

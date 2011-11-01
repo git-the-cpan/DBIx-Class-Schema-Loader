@@ -5,27 +5,31 @@ use warnings;
 use base qw/Class::Accessor::Grouped Class::C3::Componentised/;
 use mro 'c3';
 use Carp::Clan qw/^DBIx::Class/;
-use DBIx::Class::Schema::Loader::RelBuilder;
-use Data::Dump qw/ dump /;
-use POSIX qw//;
-use File::Spec qw//;
-use Cwd qw//;
-use Digest::MD5 qw//;
-use Lingua::EN::Inflect::Number qw//;
-use Lingua::EN::Inflect::Phrase qw//;
-use File::Temp qw//;
+use DBIx::Class::Schema::Loader::RelBuilder ();
+use Data::Dump 'dump';
+use POSIX ();
+use File::Spec ();
+use Cwd ();
+use Digest::MD5 ();
+use Lingua::EN::Inflect::Number ();
+use Lingua::EN::Inflect::Phrase ();
+use String::ToIdentifier::EN ();
+use String::ToIdentifier::EN::Unicode ();
+use File::Temp ();
 use Class::Unload;
 use Class::Inspector ();
 use Scalar::Util 'looks_like_number';
-use File::Slurp 'slurp';
-use DBIx::Class::Schema::Loader::Utils qw/split_name dumper_squashed eval_without_redefine_warnings/;
+use DBIx::Class::Schema::Loader::Utils qw/split_name dumper_squashed eval_package_without_redefine_warnings class_path slurp_file/;
 use DBIx::Class::Schema::Loader::Optional::Dependencies ();
 use Try::Tiny;
 use DBIx::Class ();
-use Class::Load 'load_class';
+use Encode qw/encode decode/;
+use List::MoreUtils qw/all firstidx/;
+use IPC::Open2;
+use Symbol 'gensym';
 use namespace::clean;
 
-our $VERSION = '0.07010';
+our $VERSION = '0.07011';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -37,6 +41,7 @@ __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 additional_base_classes
                                 left_base_classes
                                 components
+                                schema_components
                                 skip_relationships
                                 skip_load_external
                                 moniker_map
@@ -52,12 +57,13 @@ __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 default_resultset_class
                                 schema_base_class
                                 result_base_class
+                                result_roles
                                 use_moose
+                                only_autoclean
                                 overwrite_modifications
 
                                 relationship_attrs
 
-                                db_schema
                                 _tables
                                 classes
                                 _upgrading_classes
@@ -68,7 +74,12 @@ __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 datetime_locale
                                 config_file
                                 loader_class
-                                qualify_objects
+                                table_comments_table
+                                column_comments_table
+                                class_to_table
+                                moniker_to_table
+                                uniq_to_primary
+                                quiet
 /);
 
 
@@ -87,11 +98,30 @@ __PACKAGE__->mk_group_accessors('simple', qw/
                                 preserve_case
                                 col_collision_map
                                 rel_collision_map
+                                rel_name_map
                                 real_dump_directory
-                                result_component_map
+                                result_components_map
+                                result_roles_map
                                 datetime_undef_if_invalid
                                 _result_class_methods
+                                naming_set
+                                filter_generated_code
+                                db_schema
+                                qualify_objects
+                                moniker_parts
 /);
+
+my $CURRENT_V = 'v7';
+
+my @CLASS_ARGS = qw(
+    schema_components schema_base_class result_base_class
+    additional_base_classes left_base_classes additional_classes components
+    result_roles
+);
+
+my $CR   = "\x0d";
+my $LF   = "\x0a";
+my $CRLF = "\x0d\x0a";
 
 =head1 NAME
 
@@ -99,7 +129,7 @@ DBIx::Class::Schema::Loader::Base - Base DBIx::Class::Schema::Loader Implementat
 
 =head1 SYNOPSIS
 
-See L<DBIx::Class::Schema::Loader>
+See L<DBIx::Class::Schema::Loader>.
 
 =head1 DESCRIPTION
 
@@ -139,11 +169,25 @@ overwriting a dump made with an earlier version.
 
 The option also takes a hashref:
 
-    naming => { relationships => 'v7', monikers => 'v7' }
+    naming => {
+        relationships    => 'v8',
+        monikers         => 'v8',
+        column_accessors => 'v8',
+        force_ascii      => 1,
+    }
+
+or
+
+    naming => { ALL => 'v8', force_ascii => 1 }
 
 The keys are:
 
 =over 4
+
+=item ALL
+
+Set L</relationships>, L</monikers> and L</column_accessors> to the specified
+value.
 
 =item relationships
 
@@ -156,6 +200,12 @@ How to name Result classes.
 =item column_accessors
 
 How to name column accessors in Result classes.
+
+=item force_ascii
+
+For L</v8> mode and later, uses L<String::ToIdentifier::EN> instead of
+L<String::ToIdentifier::EM::Unicode> to force monikers and other identifiers to
+ASCII.
 
 =back
 
@@ -201,6 +251,42 @@ transition instead of just being lowercased, so C<FooId> becomes C<foo_id>.
 If you don't have any CamelCase table or column names, you can upgrade without
 breaking any of your code.
 
+=item v8
+
+(EXPERIMENTAL)
+
+The default mode is L</v7>, to get L</v8> mode, you have to specify it in
+L</naming> explictly until C<0.08> comes out.
+
+L</monikers> and L</column_accessors> are created using
+L<String::ToIdentifier::EN::Unicode> or L<String::ToIdentifier::EN> if
+L</force_ascii> is set; this is only significant for names with non-C<\w>
+characters such as C<.>.
+
+CamelCase identifiers with words in all caps, e.g. C<VLANValidID> are supported
+correctly in this mode.
+
+For relationships, belongs_to accessors are made from column names by stripping
+postfixes other than C<_id> as well, for example just C<Id>, C<_?ref>, C<_?cd>,
+C<_?code> and C<_?num>, case insensitively.
+
+=item preserve
+
+For L</monikers>, this option does not inflect the table names but makes
+monikers based on the actual name. For L</column_accessors> this option does
+not normalize CamelCase column names to lowercase column accessors, but makes
+accessors that are the same names as the columns (with any non-\w chars
+replaced with underscores.)
+
+=item singular
+
+For L</monikers>, singularizes the names using the most current inflector. This
+is the same as setting the option to L</current>.
+
+=item plural
+
+For L</monikers>, pluralizes the names, using the most current inflector.
+
 =back
 
 Dynamic schemas will always default to the 0.04XXX relationship names and won't
@@ -214,13 +300,36 @@ next major version upgrade:
 
     __PACKAGE__->naming('v7');
 
+=head2 quiet
+
+If true, will not print the usual C<Dumping manual schema ... Schema dump
+completed.> messages. Does not affect warnings (except for warnings related to
+L</really_erase_my_files>.)
+
 =head2 generate_pod
 
 By default POD will be generated for columns and relationships, using database
 metadata for the text if available and supported.
 
-Reading database metadata (e.g. C<COMMENT ON TABLE some_table ...>) is only
-supported for Postgres right now.
+Comment metadata can be stored in two ways.
+
+The first is that you can create two tables named C<table_comments> and
+C<column_comments> respectively. These tables must exist in the same database
+and schema as the tables they describe. They both need to have columns named
+C<table_name> and C<comment_text>. The second one needs to have a column named
+C<column_name>. Then data stored in these tables will be used as a source of
+metadata about tables and comments.
+
+(If you wish you can change the name of these tables with the parameters
+L</table_comments_table> and L</column_comments_table>.)
+
+As a fallback you can use built-in commenting mechanisms.  Currently this is
+only supported for PostgreSQL, Oracle and MySQL.  To create comments in
+PostgreSQL you add statements of the form C<COMMENT ON TABLE some_table IS
+'...'>, the same syntax is used in Oracle. To create comments in MySQL you add
+C<COMMENT '...'> to the end of the column or table definition.  Note that MySQL
+restricts the length of comments, and also does not handle complex Unicode
+characters properly.
 
 Set this to C<0> to turn off all POD generation.
 
@@ -256,6 +365,22 @@ which it will be forced into a separate description section.
 
 The default is C<60>
 
+=head2 table_comments_table
+
+The table to look for comments about tables in.  By default C<table_comments>.
+See L</generate_pod> for details.
+
+This must not be a fully qualified name, the table will be looked for in the
+same database and schema as the table whose comment is being retrieved.
+
+=head2 column_comments_table
+
+The table to look for comments about columns in.  By default C<column_comments>.
+See L</generate_pod> for details.
+
+This must not be a fully qualified name, the table will be looked for in the
+same database and schema as the table/column whose comment is being retrieved.
+
 =head2 relationship_attrs
 
 Hashref of attributes to pass to each generated relationship, listed
@@ -279,8 +404,52 @@ decides to execute will be C<warn>-ed before execution.
 =head2 db_schema
 
 Set the name of the schema to load (schema in the sense that your database
-vendor means it).  Does not currently support loading more than one schema
-name.
+vendor means it).
+
+Can be set to an arrayref of schema names for multiple schemas, or the special
+value C<%> for all schemas.
+
+For MSSQL, Sybase ASE, and Informix can be set to a hashref of databases as
+keys and arrays of owners as values, set to the value:
+
+    { '%' => '%' }
+
+for all owners in all databases.
+
+You may need to control naming of monikers with L</moniker_parts> if you have
+name clashes for tables in different schemas/databases.
+
+=head2 moniker_parts
+
+The database table names are represented by the
+L<DBIx::Class::Schema::Loader::Table> class in the loader, the
+L<DBIx::Class::Schema::Loader::Table::Sybase> class for Sybase ASE and
+L<DBIx::Class::Schema::Loader::Table::Informix> for Informix.
+
+Monikers are created normally based on just the
+L<name|DBIx::Class::Schema::Loader::DBObject/name> property, corresponding to
+the table name, but can consist of other parts of the fully qualified name of
+the table.
+
+The L</moniker_parts> option is an arrayref of methods on the table class
+corresponding to parts of the fully qualified table name, defaulting to
+C<['name']>, in the order those parts are used to create the moniker name.
+
+The C<'name'> entry B<must> be present.
+
+Below is a table of supported databases and possible L</moniker_parts>.
+
+=over 4
+
+=item * DB2, Firebird, mysql, Oracle, Pg, SQLAnywhere, SQLite, MS Access
+
+C<schema>, C<name>
+
+=item * Informix, MSSQL, Sybase ASE
+
+C<database>, C<schema>, C<name>    
+
+=back
 
 =head2 constraint
 
@@ -327,6 +496,43 @@ passed, the code is called with arguments of
       column_info     => hashref of column info (data_type, is_nullable, etc),
     }
 
+=head2 rel_name_map
+
+Similar in idea to moniker_map, but different in the details.  It can be
+a hashref or a code ref.
+
+If it is a hashref, keys can be either the default relationship name, or the
+moniker. The keys that are the default relationship name should map to the
+name you want to change the relationship to. Keys that are monikers should map
+to hashes mapping relationship names to their translation.  You can do both at
+once, and the more specific moniker version will be picked up first.  So, for
+instance, you could have
+
+    {
+        bar => "baz",
+        Foo => {
+            bar => "blat",
+        },
+    }
+
+and relationships that would have been named C<bar> will now be named C<baz>
+except that in the table whose moniker is C<Foo> it will be named C<blat>.
+
+If it is a coderef, the argument passed will be a hashref of this form:
+
+    {
+        name           => default relationship name,
+        type           => the relationship type eg: C<has_many>,
+        local_class    => name of the DBIC class we are building,
+        local_moniker  => moniker of the DBIC class we are building,
+        local_columns  => columns in this table in the relationship,
+        remote_class   => name of the DBIC class we are related to,
+        remote_moniker => moniker of the DBIC class we are related to,
+        remote_columns => columns in the other table in the relationship,
+    }
+
+DBICSL will try to use the value returned as the relationship name.
+
 =head2 inflect_plural
 
 Just like L</moniker_map> above (can be hash/code-ref, falls back to default
@@ -342,6 +548,10 @@ Default behavior is to utilize L<Lingua::EN::Inflect::Phrase/to_S>.
 =head2 schema_base_class
 
 Base class for your schema classes. Defaults to 'DBIx::Class::Schema'.
+
+=head2 schema_components
+
+List of components to load into the Schema class.
 
 =head2 result_base_class
 
@@ -363,17 +573,17 @@ List of additional classes which all of your table classes will use.
 
 =head2 components
 
-List of additional components to be loaded into all of your table
+List of additional components to be loaded into all of your Result
 classes.  A good example would be
 L<InflateColumn::DateTime|DBIx::Class::InflateColumn::DateTime>
 
-=head2 result_component_map
+=head2 result_components_map
 
-A hashref of moniker keys and component values.  Unlike C<components>, which loads the
-given components into every table class, this option allows you to load certain
-components for specified tables.  For example:
+A hashref of moniker keys and component values.  Unlike L</components>, which
+loads the given components into every Result class, this option allows you to
+load certain components for specified Result classes. For example:
 
-  result_component_map => {
+  result_components_map => {
       StationVisited => '+YourApp::Schema::Component::StationVisited',
       RouteChange    => [
                             '+YourApp::Schema::Component::RouteChange',
@@ -381,7 +591,27 @@ components for specified tables.  For example:
                         ],
   }
   
-You may use this in conjunction with C<components>.
+You may use this in conjunction with L</components>.
+
+=head2 result_roles
+
+List of L<Moose> roles to be applied to all of your Result classes.
+
+=head2 result_roles_map
+
+A hashref of moniker keys and role values.  Unlike L</result_roles>, which
+applies the given roles to every Result class, this option allows you to apply
+certain roles for specified Result classes. For example:
+
+  result_roles_map => {
+      StationVisited => [
+                            'YourApp::Role::Building',
+                            'YourApp::Role::Destination',
+                        ],
+      RouteChange    => 'YourApp::Role::TripEvent',
+  }
+  
+You may use this in conjunction with L</result_roles>.
 
 =head2 use_namespaces
 
@@ -496,15 +726,16 @@ loader options.
 
 =head2 preserve_case
 
-Usually column names are lowercased, to make them easier to work with in
-L<DBIx::Class>. This option lets you turn this behavior off, if the driver
-supports it.
+Normally database names are lowercased and split by underscore, use this option
+if you have CamelCase database names.
 
 Drivers for case sensitive databases like Sybase ASE or MSSQL with a
 case-sensitive collation will turn this option on unconditionally.
 
-Currently the drivers for SQLite, mysql, MSSQL and Firebird/InterBase support
-setting this option.
+B<NOTE:> L</naming> = C<v8> is highly recommended with this option as the
+semantics of this mode are much improved for CamelCase database names.
+
+L</naming> = C<v7> or greater is required with this option.
 
 =head2 qualify_objects
 
@@ -514,10 +745,26 @@ __PACKAGE__->table >> calls, and to some other things like Oracle sequences.
 =head2 use_moose
 
 Creates Schema and Result classes that use L<Moose>, L<MooseX::NonMoose> and
-L<namespace::autoclean>. The default content after the md5 sum also makes the
-classes immutable.
+L<MooseX::MarkAsMethods> (or L<namespace::autoclean>, see below). The default
+content after the md5 sum also makes the classes immutable.
 
 It is safe to upgrade your existing Schema to this option.
+
+=head2 only_autoclean
+
+By default, we use L<MooseX::MarkAsMethods> to remove imported functions from
+your generated classes.  It uses L<namespace::autoclean> to do this, after
+telling your object's metaclass that any operator L<overload>s in your class
+are methods, which will cause namespace::autoclean to spare them from removal.
+
+This prevents the "Hey, where'd my overloads go?!" effect.
+
+If you don't care about operator overloads, enabling this option falls back to
+just using L<namespace::autoclean> itself.
+
+If none of the above made any sense, or you don't have some pressing need to
+only use L<namespace::autoclean>, leaving this set to the default is
+recommended.
 
 =head2 col_collision_map
 
@@ -544,6 +791,32 @@ rather than column names/accessors.
 The default is to just append C<_rel> to the relationship name, see
 L</RELATIONSHIP NAME COLLISIONS>.
 
+=head2 uniq_to_primary
+
+Automatically promotes the largest unique constraints with non-nullable columns
+on tables to primary keys, assuming there is only one largest unique
+constraint.
+
+=head2 filter_generated_code
+
+An optional hook that lets you filter the generated text for various classes
+through a function that change it in any way that you want.  The function will
+receive the type of file, C<schema> or C<result>, class and code; and returns
+the new code to use instead.  For instance you could add custom comments, or do
+anything else that you want.
+
+The option can also be set to a string, which is then used as a filter program,
+e.g. C<perltidy>.
+
+If this exists but fails to return text matching C</\bpackage\b/>, no file will
+be generated.
+
+    filter_generated_code => sub {
+        my ($type, $class, $text) = @_;
+	...
+	return $new_code;
+    }
+
 =head1 METHODS
 
 None of these methods are intended for direct invocation by regular
@@ -551,13 +824,6 @@ users of L<DBIx::Class::Schema::Loader>. Some are proxied via
 L<DBIx::Class::Schema::Loader>.
 
 =cut
-
-my $CURRENT_V = 'v7';
-
-my @CLASS_ARGS = qw(
-    schema_base_class result_base_class additional_base_classes
-    left_base_classes additional_classes components
-);
 
 # ensure that a peice of object data is a valid arrayref, creating
 # an empty one or encapsulating whatever's there.
@@ -606,25 +872,64 @@ sub new {
         }
     }
 
-    $self->_ensure_arrayref(qw/additional_classes
+    if (defined $self->{result_component_map}) {
+        if (defined $self->result_components_map) {
+            croak "Specify only one of result_components_map or result_component_map";
+        }
+        $self->result_components_map($self->{result_component_map})
+    }
+    
+    if (defined $self->{result_role_map}) {
+        if (defined $self->result_roles_map) {
+            croak "Specify only one of result_roles_map or result_role_map";
+        }
+        $self->result_roles_map($self->{result_role_map})
+    }
+
+    croak "the result_roles and result_roles_map options may only be used in conjunction with use_moose=1"
+        if ((not defined $self->use_moose) || (not $self->use_moose))
+            && ((defined $self->result_roles) || (defined $self->result_roles_map));
+
+    $self->_ensure_arrayref(qw/schema_components
+                               additional_classes
                                additional_base_classes
                                left_base_classes
                                components
+                               result_roles
                               /);
 
     $self->_validate_class_args;
 
-    if ($self->result_component_map) {
-        my %rc_map = %{ $self->result_component_map };
+    croak "result_components_map must be a hash"
+        if defined $self->result_components_map
+            && ref $self->result_components_map ne 'HASH';
+
+    if ($self->result_components_map) {
+        my %rc_map = %{ $self->result_components_map };
         foreach my $moniker (keys %rc_map) {
             $rc_map{$moniker} = [ $rc_map{$moniker} ] unless ref $rc_map{$moniker};
         }
-        $self->result_component_map(\%rc_map);
+        $self->result_components_map(\%rc_map);
     }
     else {
-        $self->result_component_map({});
+        $self->result_components_map({});
     }
-    $self->_validate_result_component_map;
+    $self->_validate_result_components_map;
+
+    croak "result_roles_map must be a hash"
+        if defined $self->result_roles_map
+            && ref $self->result_roles_map ne 'HASH';
+
+    if ($self->result_roles_map) {
+        my %rr_map = %{ $self->result_roles_map };
+        foreach my $moniker (keys %rr_map) {
+            $rr_map{$moniker} = [ $rr_map{$moniker} ] unless ref $rr_map{$moniker};
+        }
+        $self->result_roles_map(\%rr_map);
+    } else {
+        $self->result_roles_map({});
+    }
+    $self->_validate_result_roles_map;
 
     if ($self->use_moose) {
         if (not DBIx::Class::Schema::Loader::Optional::Dependencies->req_ok_for('use_moose')) {
@@ -633,12 +938,17 @@ sub new {
         }
     }
 
+    $self->{_tables} = {};
     $self->{monikers} = {};
-    $self->{classes} = {};
+    $self->{moniker_to_table} = {};
+    $self->{class_to_table} = {};
+    $self->{classes}  = {};
     $self->{_upgrading_classes} = {};
 
     $self->{schema_class} ||= ( ref $self->{schema} || $self->{schema} );
     $self->{schema} ||= $self->{schema_class};
+    $self->{table_comments_table} ||= 'table_comments';
+    $self->{column_comments_table} ||= 'column_comments';
 
     croak "dump_overwrite is deprecated.  Please read the"
         . " DBIx::Class::Schema::Loader::Base documentation"
@@ -657,6 +967,13 @@ sub new {
     $self->version_to_dump($DBIx::Class::Schema::Loader::VERSION);
     $self->schema_version_to_dump($DBIx::Class::Schema::Loader::VERSION);
 
+    if (not defined $self->naming) {
+        $self->naming_set(0);
+    }
+    else {
+        $self->naming_set(1);
+    }
+
     if ((not ref $self->naming) && defined $self->naming) {
         my $naming_ver = $self->naming;
         $self->{naming} = {
@@ -665,10 +982,16 @@ sub new {
             column_accessors => $naming_ver,
         };
     }
+    elsif (ref $self->naming eq 'HASH' && exists $self->naming->{ALL}) {
+        my $val = delete $self->naming->{ALL};
+
+        $self->naming->{$_} = $val
+            foreach qw/relationships monikers column_accessors/;
+    }
 
     if ($self->naming) {
-        for (values %{ $self->naming }) {
-            $_ = $CURRENT_V if $_ eq 'current';
+        foreach my $key (qw/relationships monikers column_accessors/) {
+            $self->naming->{$key} = $CURRENT_V if ($self->naming->{$key}||'') eq 'current';
         }
     }
     $self->{naming} ||= {};
@@ -695,7 +1018,65 @@ sub new {
         }
     }
 
-    $self;
+    if (my $rel_collision_map = $self->rel_collision_map) {
+        if (my $reftype = ref $rel_collision_map) {
+            if ($reftype ne 'HASH') {
+                croak "Invalid type $reftype for option 'rel_collision_map'";
+            }
+        }
+        else {
+            $self->rel_collision_map({ '(.*)' => $rel_collision_map });
+        }
+    }
+
+    if (defined(my $rel_name_map = $self->rel_name_map)) {
+        my $reftype = ref $rel_name_map;
+        if ($reftype ne 'HASH' && $reftype ne 'CODE') {
+            croak "Invalid type $reftype for option 'rel_name_map', must be HASH or CODE";
+        }
+    }
+
+    if (defined(my $filter = $self->filter_generated_code)) {
+        my $reftype = ref $filter;
+        if ($reftype && $reftype ne 'CODE') {
+            croak "Invalid type $reftype for option 'filter_generated_code, must be a scalar or a CODE reference";
+        }
+    }
+
+    if (defined $self->db_schema) {
+        if (ref $self->db_schema eq 'ARRAY') {
+            if (@{ $self->db_schema } > 1) {
+                $self->{qualify_objects} = 1;
+            }
+            elsif (@{ $self->db_schema } == 0) {
+                $self->{db_schema} = undef;
+            }
+        }
+        elsif (not ref $self->db_schema) {
+            if ($self->db_schema eq '%') {
+                $self->{qualify_objects} = 1;
+            }
+
+            $self->{db_schema} = [ $self->db_schema ];
+        }
+    }
+
+    if (not $self->moniker_parts) {
+        $self->moniker_parts(['name']);
+    }
+    else {
+        if (not ref $self->moniker_parts) {
+            $self->moniker_parts([ $self->moniker_parts ]);
+        }
+        if (ref $self->moniker_parts ne 'ARRAY') {
+            croak 'moniker_parts must be an arrayref';
+        }
+        if ((firstidx { $_ eq 'name' } @{ $self->moniker_parts }) == -1) {
+            croak "moniker_parts option *must* contain 'name'";
+        }
+    }
+
+    return $self;
 }
 
 sub _check_back_compat {
@@ -706,7 +1087,7 @@ sub _check_back_compat {
 # just in case, though no one is likely to dump a dynamic schema
         $self->schema_version_to_dump('0.04006');
 
-        if (not %{ $self->naming }) {
+        if (not $self->naming_set) {
             warn <<EOF unless $ENV{SCHEMA_LOADER_BACKCOMPAT};
 
 Dynamic schema detected, will run in 0.04006 mode.
@@ -714,14 +1095,16 @@ Dynamic schema detected, will run in 0.04006 mode.
 Set the 'naming' attribute or the SCHEMA_LOADER_BACKCOMPAT environment variable
 to disable this warning.
 
-Also consider setting 'use_namespaces => 1' if/when upgrading.
-
 See perldoc DBIx::Class::Schema::Loader::Manual::UpgradingFromV4 for more
 details.
 EOF
         }
         else {
             $self->_upgrading_from('v4');
+        }
+
+        if ((not defined $self->use_namespaces) && ($self->naming_set)) {
+            $self->use_namespaces(1);
         }
 
         $self->naming->{relationships} ||= 'v4';
@@ -738,7 +1121,7 @@ EOF
     }
 
 # otherwise check if we need backcompat mode for a static schema
-    my $filename = $self->_get_dump_filename($self->schema_class);
+    my $filename = $self->get_dump_filename($self->schema_class);
     return unless -e $filename;
 
     my ($old_gen, $old_md5, $old_ver, $old_ts, $old_custom) =
@@ -752,7 +1135,14 @@ EOF
     }
 
     my $load_classes = ($old_gen =~ /^__PACKAGE__->load_classes;/m) ? 1 : 0;
-    my $result_namespace = do { ($old_gen =~ /result_namespace => '([^']+)'/) ? $1 : '' };
+
+    my $result_namespace = do { ($old_gen =~ /result_namespace => (.+)/) ? $1 : '' };
+    my $ds = eval $result_namespace;
+    die <<"EOF" if $@;
+Could not eval expression '$result_namespace' for result_namespace from
+$filename: $@
+EOF
+    $result_namespace = $ds || '';
 
     if ($load_classes && (not defined $self->use_namespaces)) {
         warn <<"EOF"  unless $ENV{SCHEMA_LOADER_BACKCOMPAT};
@@ -828,14 +1218,19 @@ sub _validate_class_args {
     }
 }
 
-sub _validate_result_component_map {
+sub _validate_result_components_map {
     my $self = shift;
 
-    my $map = $self->result_component_map;
-    return unless $map && ref $map eq 'HASH';
+    foreach my $classes (values %{ $self->result_components_map }) {
+        $self->_validate_classes('result_components_map', $classes);
+    }
+}
 
-    foreach my $classes (values %$map) {
-        $self->_validate_classes('result_component_map', [@$classes]);
+sub _validate_result_roles_map {
+    my $self = shift;
+
+    foreach my $classes (values %{ $self->result_roles_map }) {
+        $self->_validate_classes('result_roles_map', $classes);
     }
 }
 
@@ -844,7 +1239,10 @@ sub _validate_classes {
     my $key  = shift;
     my $classes = shift;
 
-    foreach my $c (@$classes) {
+    # make a copy to not destroy original
+    my @classes = @$classes;
+
+    foreach my $c (@classes) {
         # components default to being under the DBIx::Class namespace unless they
         # are preceeded with a '+'
         if ( $key =~ m/component/ && $c !~ s/^\+// ) {
@@ -878,20 +1276,10 @@ sub _find_file_in_inc {
     return;
 }
 
-sub _class_path {
-    my ($self, $class) = @_;
-
-    my $class_path = $class;
-    $class_path =~ s{::}{/}g;
-    $class_path .= '.pm';
-
-    return $class_path;
-}
-
 sub _find_class_in_inc {
     my ($self, $class) = @_;
 
-    return $self->_find_file_in_inc($self->_class_path($class));
+    return $self->_find_file_in_inc(class_path($class));
 }
 
 sub _rewriting {
@@ -942,10 +1330,10 @@ sub _load_external {
         warn qq/# Loaded external class definition for '$class'\n/
             if $self->debug;
 
-        my $code = $self->_rewrite_old_classnames(scalar slurp $real_inc_path);
+        my $code = $self->_rewrite_old_classnames(slurp_file $real_inc_path);
 
         if ($self->dynamic) { # load the class too
-            eval_without_redefine_warnings($code);
+            eval_package_without_redefine_warnings($class, $code);
         }
 
         $self->_ext_stmt($class,
@@ -965,7 +1353,7 @@ sub _load_external {
     }
 
     if ($old_real_inc_path) {
-        my $code = slurp $old_real_inc_path;
+        my $code = slurp_file $old_real_inc_path;
 
         $self->_ext_stmt($class, <<"EOF");
 
@@ -986,7 +1374,7 @@ been used by an older version of the Loader.
 * PLEASE RENAME THIS CLASS: from '$old_class' to '$class', as that is the
 new name of the Result.
 EOF
-            eval_without_redefine_warnings($code);
+            eval_package_without_redefine_warnings($class, $code);
         }
 
         chomp $code;
@@ -1033,25 +1421,28 @@ sub rescan {
     my @current = $self->_tables_list({ constraint => $self->constraint, exclude => $self->exclude });
 
     foreach my $table (@current) {
-        if(!exists $self->{_tables}->{$table}) {
+        if(!exists $self->_tables->{$table->sql_name}) {
             push(@created, $table);
         }
     }
 
     my %current;
-    @current{@current} = ();
-    foreach my $table (keys %{ $self->{_tables} }) {
-        if (not exists $current{$table}) {
-            $self->_unregister_source_for_table($table);
+    @current{map $_->sql_name, @current} = ();
+    foreach my $table (values %{ $self->_tables }) {
+        if (not exists $current{$table->sql_name}) {
+            $self->_remove_table($table);
         }
     }
 
-    delete $self->{_dump_storage};
-    delete $self->{_relations_started};
+    delete @$self{qw/_dump_storage _relations_started _uniqs_started/};
 
     my $loaded = $self->_load_tables(@current);
 
-    return map { $self->monikers->{$_} } @created;
+    foreach my $table (@created) {
+        $self->monikers->{$table->sql_name} = $self->_table2moniker($table);
+    }
+
+    return map { $self->monikers->{$_->sql_name} } @created;
 }
 
 sub _relbuilder {
@@ -1060,20 +1451,18 @@ sub _relbuilder {
     return if $self->{skip_relationships};
 
     return $self->{relbuilder} ||= do {
-
-        no warnings 'uninitialized';
         my $relbuilder_suff =
             {qw{
                 v4  ::Compat::v0_040
                 v5  ::Compat::v0_05
                 v6  ::Compat::v0_06
+                v7  ::Compat::v0_07
             }}
-            ->{ $self->naming->{relationships}};
+            ->{$self->naming->{relationships}||$CURRENT_V} || '';
 
         my $relbuilder_class = 'DBIx::Class::Schema::Loader::RelBuilder'.$relbuilder_suff;
-        load_class $relbuilder_class;
-        $relbuilder_class->new( $self );
-
+        $self->ensure_class_loaded($relbuilder_class);
+        $relbuilder_class->new($self);
     };
 }
 
@@ -1082,54 +1471,54 @@ sub _load_tables {
 
     # Save the new tables to the tables list
     foreach (@tables) {
-        $self->{_tables}->{$_} = 1;
+        $self->_tables->{$_->sql_name} = $_;
     }
 
     $self->_make_src_class($_) for @tables;
 
     # sanity-check for moniker clashes
     my $inverse_moniker_idx;
-    for (keys %{$self->monikers}) {
-      push @{$inverse_moniker_idx->{$self->monikers->{$_}}}, $_;
+    foreach my $table (values %{ $self->_tables }) {
+      push @{ $inverse_moniker_idx->{$self->monikers->{$table->sql_name}} }, $table;
     }
 
     my @clashes;
-    for (keys %$inverse_moniker_idx) {
-      my $tables = $inverse_moniker_idx->{$_};
+    foreach my $moniker (keys %$inverse_moniker_idx) {
+      my $tables = $inverse_moniker_idx->{$moniker};
       if (@$tables > 1) {
         push @clashes, sprintf ("tables %s reduced to the same source moniker '%s'",
-          join (', ', map { "'$_'" } @$tables),
-          $_,
+          join (', ', map $_->sql_name, @$tables),
+          $moniker,
         );
       }
     }
 
     if (@clashes) {
       die   'Unable to load schema - chosen moniker/class naming style results in moniker clashes. '
-          . 'Either change the naming style, or supply an explicit moniker_map: '
+          . 'In multi db_schema configurations you may need to set moniker_parts, '
+          . 'otherwise change the naming style, or supply an explicit moniker_map: '
           . join ('; ', @clashes)
           . "\n"
       ;
     }
 
-
     $self->_setup_src_meta($_) for @tables;
 
     if(!$self->skip_relationships) {
         # The relationship loader needs a working schema
-        $self->{quiet} = 1;
+        local $self->{quiet} = 1;
         local $self->{dump_directory} = $self->{temp_directory};
         $self->_reload_classes(\@tables);
-        $self->_load_relationships($_) for @tables;
-        $self->_relbuilder->cleanup;
-        $self->{quiet} = 0;
+        $self->_load_relationships(\@tables);
 
         # Remove that temp dir from INC so it doesn't get reloaded
         @INC = grep $_ ne $self->dump_directory, @INC;
     }
 
+    $self->_load_roles($_) for @tables;
+
     $self->_load_external($_)
-        for map { $self->classes->{$_} } @tables;
+        for map { $self->classes->{$_->sql_name} } @tables;
 
     # Reload without unloading first to preserve any symbols from external
     # packages.
@@ -1152,7 +1541,7 @@ sub _reload_classes {
     # so that we don't repeat custom sections
     @INC = grep $_ ne $self->dump_directory, @INC;
 
-    $self->_dump_to_dir(map { $self->classes->{$_} } @tables);
+    $self->_dump_to_dir(map { $self->classes->{$_->sql_name} } @tables);
 
     unshift @INC, $self->dump_directory;
     
@@ -1161,8 +1550,8 @@ sub _reload_classes {
         $self->schema->sources;
 
     for my $table (@tables) {
-        my $moniker = $self->monikers->{$table};
-        my $class = $self->classes->{$table};
+        my $moniker = $self->monikers->{$table->sql_name};
+        my $class = $self->classes->{$table->sql_name};
         
         {
             no warnings 'redefine';
@@ -1213,15 +1602,13 @@ sub _moose_metaclass {
 sub _reload_class {
     my ($self, $class) = @_;
 
-    my $class_path = $self->_class_path($class);
-    delete $INC{ $class_path };
+    delete $INC{ +class_path($class) };
 
-# kill redefined warnings
     try {
-        eval_without_redefine_warnings ("require $class");
+        eval_package_without_redefine_warnings ($class, "require $class");
     }
     catch {
-        my $source = slurp $self->_get_dump_filename($class);
+        my $source = slurp_file $self->_get_dump_filename($class);
         die "Failed to reload class $class: $_.\n\nCLASS SOURCE:\n\n$source";
     };
 }
@@ -1275,18 +1662,35 @@ sub _dump_to_dir {
 
     my $target_dir = $self->dump_directory;
     warn "Dumping manual schema for $schema_class to directory $target_dir ...\n"
-        unless $self->{dynamic} or $self->{quiet};
+        unless $self->dynamic or $self->quiet;
 
     my $schema_text =
-          qq|package $schema_class;\n\n|
+          qq|use utf8;\n|
+        . qq|package $schema_class;\n\n|
         . qq|# Created by DBIx::Class::Schema::Loader\n|
         . qq|# DO NOT MODIFY THE FIRST PART OF THIS FILE\n\n|;
 
+    my $autoclean
+        = $self->only_autoclean
+        ? 'namespace::autoclean'
+        : 'MooseX::MarkAsMethods autoclean => 1'
+        ;
+
     if ($self->use_moose) {
-        $schema_text.= qq|use Moose;\nuse namespace::autoclean;\nextends '$schema_base_class';\n\n|;
+
+        $schema_text.= qq|use Moose;\nuse $autoclean;\nextends '$schema_base_class';\n\n|;
     }
     else {
         $schema_text .= qq|use strict;\nuse warnings;\n\nuse base '$schema_base_class';\n\n|;
+    }
+
+    my @schema_components = @{ $self->schema_components || [] };
+
+    if (@schema_components) {
+        my $schema_components = dump @schema_components;
+        $schema_components = "($schema_components)" if @schema_components == 1;
+
+        $schema_text .= "__PACKAGE__->load_components${schema_components};\n\n";
     }
 
     if ($self->use_namespaces) {
@@ -1299,7 +1703,8 @@ sub _dump_to_dir {
 
         for my $attr (@attr) {
             if ($self->$attr) {
-                $namespace_options .= qq|    $attr => '| . $self->$attr . qq|',\n|
+                my $code = dumper_squashed $self->$attr;
+                $namespace_options .= qq|    $attr => $code,\n|
             }
         }
         $schema_text .= qq|(\n$namespace_options)| if $namespace_options;
@@ -1318,24 +1723,33 @@ sub _dump_to_dir {
 
     foreach my $src_class (@classes) {
         my $src_text = 
-              qq|package $src_class;\n\n|
+              qq|use utf8;\n|
+            . qq|package $src_class;\n\n|
             . qq|# Created by DBIx::Class::Schema::Loader\n|
-            . qq|# DO NOT MODIFY THE FIRST PART OF THIS FILE\n\n|
-            . qq|use strict;\nuse warnings;\n\n|;
+            . qq|# DO NOT MODIFY THE FIRST PART OF THIS FILE\n\n|;
+
+        $src_text .= $self->_make_pod_heading($src_class);
+
+        $src_text .= qq|use strict;\nuse warnings;\n\n|;
+
+        $src_text .= $self->_base_class_pod($result_base_class)
+            unless $result_base_class eq 'DBIx::Class::Core';
+
         if ($self->use_moose) {
-            $src_text.= qq|use Moose;\nuse MooseX::NonMoose;\nuse namespace::autoclean;|;
+            $src_text.= qq|use Moose;\nuse MooseX::NonMoose;\nuse $autoclean;|;
 
             # these options 'use base' which is compile time
             if (@{ $self->left_base_classes } || @{ $self->additional_base_classes }) {
-                $src_text .= qq|\nBEGIN { extends '$result_base_class' }\n\n|;
+                $src_text .= qq|\nBEGIN { extends '$result_base_class' }\n|;
             }
             else {
-                $src_text .= qq|\nextends '$result_base_class';\n\n|;
+                $src_text .= qq|\nextends '$result_base_class';\n|;
             }
         }
         else {
-             $src_text .= qq|use base '$result_base_class';\n\n|;
+             $src_text .= qq|use base '$result_base_class';\n|;
         }
+
         $self->_write_classfile($src_class, $src_text);
     }
 
@@ -1356,8 +1770,7 @@ sub _dump_to_dir {
         }
     }
 
-    warn "Schema dump completed.\n" unless $self->{dynamic} or $self->{quiet};
-
+    warn "Schema dump completed.\n" unless $self->dynamic or $self->quiet;
 }
 
 sub _sig_comment {
@@ -1376,7 +1789,7 @@ sub _write_classfile {
 
     if (-f $filename && $self->really_erase_my_files) {
         warn "Deleting existing file '$filename' due to "
-            . "'really_erase_my_files' setting\n" unless $self->{quiet};
+            . "'really_erase_my_files' setting\n" unless $self->quiet;
         unlink($filename);
     }
 
@@ -1390,17 +1803,13 @@ sub _write_classfile {
 
     my $custom_content = $old_custom || '';
 
-    # prepend extra custom content from a *renamed* class (singularization effect)
+    # Use custom content from a renamed class, the class names in it are
+    # rewritten below.
     if (my $renamed_class = $self->_upgrading_classes->{$class}) {
         my $old_filename = $self->_get_dump_filename($renamed_class);
 
         if (-f $old_filename) {
-            my $extra_custom = ($self->_parse_generated_file ($old_filename))[4];
-
-            $extra_custom =~ s/\n\n# You can replace.*\n1;\n//;
-
-            $custom_content = join ("\n", '', $extra_custom, $custom_content)
-                if $extra_custom;
+            $custom_content = ($self->_parse_generated_file ($old_filename))[4];
 
             unlink $old_filename;
         }
@@ -1434,12 +1843,50 @@ sub _write_classfile {
     $text .= qq|$_\n|
         for @{$self->{_dump_storage}->{$class} || []};
 
-    # Check and see if the dump is infact differnt
+    if ($self->filter_generated_code) {
+        my $filter = $self->filter_generated_code;
+
+        if (ref $filter eq 'CODE') {
+            $text = $filter->(
+                ($is_schema ? 'schema' : 'result'),
+                $class,
+                $text
+            );
+        }
+        else {
+            my ($out, $in) = (gensym, gensym);
+
+            my $pid = open2($out, $in, $filter)
+                or croak "Could not open pipe to $filter: $!";
+
+            print $in $text;
+
+            close $in;
+
+            $text = decode('UTF-8', do { local $/; <$out> });
+
+            $text =~ s/$CR?$LF/\n/g;
+
+            waitpid $pid, 0;
+
+            my $exit_code = $? >> 8;
+
+            if ($exit_code != 0) {
+                croak "filter '$filter' exited non-zero: $exit_code";
+            }
+        }
+	if (not $text or not $text =~ /\bpackage\b/) {
+	    warn("$class skipped due to filter") if $self->debug;
+	    return;
+	}
+    }
+
+    # Check and see if the dump is in fact different
 
     my $compare_to;
     if ($old_md5) {
       $compare_to = $text . $self->_sig_comment($old_ver, $old_ts);
-      if (Digest::MD5::md5_base64($compare_to) eq $old_md5) {
+      if (Digest::MD5::md5_base64(encode 'UTF-8', $compare_to) eq $old_md5) {
         return unless $self->_upgrading_from && $is_schema;
       }
     }
@@ -1449,11 +1896,11 @@ sub _write_classfile {
       POSIX::strftime('%Y-%m-%d %H:%M:%S', localtime)
     );
 
-    open(my $fh, '>', $filename)
+    open(my $fh, '>:encoding(UTF-8)', $filename)
         or croak "Cannot open '$filename' for writing: $!";
 
     # Write the top half and its MD5 sum
-    print $fh $text . Digest::MD5::md5_base64($text) . "\n";
+    print $fh $text . Digest::MD5::md5_base64(encode 'UTF-8', $text) . "\n";
 
     # Write out anything loaded via external partial class file in @INC
     print $fh qq|$_\n|
@@ -1492,11 +1939,11 @@ sub _parse_generated_file {
 
     return unless -f $fn;
 
-    open(my $fh, '<', $fn)
+    open(my $fh, '<:encoding(UTF-8)', $fn)
         or croak "Cannot open '$fn' for reading: $!";
 
     my $mark_re =
-        qr{^(# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:)([A-Za-z0-9/+]{22})\n};
+        qr{^(# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:)([A-Za-z0-9/+]{22})\r?\n};
 
     my ($md5, $ts, $ver, $gen);
     while(<$fh>) {
@@ -1505,11 +1952,11 @@ sub _parse_generated_file {
             $md5 = $2;
 
             # Pull out the version and timestamp from the line above
-            ($ver, $ts) = $gen =~ m/^# Created by DBIx::Class::Schema::Loader v(.*?) @ (.*?)\Z/m;
+            ($ver, $ts) = $gen =~ m/^# Created by DBIx::Class::Schema::Loader v(.*?) @ (.*?)\r?\Z/m;
 
             $gen .= $pre_md5;
             croak "Checksum mismatch in '$fn', the auto-generated part of the file has been modified outside of this loader.  Aborting.\nIf you want to overwrite these modifications, set the 'overwrite_modifications' loader option.\n"
-                if !$self->overwrite_modifications && Digest::MD5::md5_base64($gen) ne $md5;
+                if !$self->overwrite_modifications && Digest::MD5::md5_base64(encode 'UTF-8', $gen) ne $md5;
 
             last;
         }
@@ -1521,7 +1968,10 @@ sub _parse_generated_file {
     my $custom = do { local $/; <$fh> }
         if $md5;
 
-    close ($fh);
+    $custom ||= '';
+    $custom =~ s/$CRLF|$LF/\n/g;
+
+    close $fh;
 
     return ($gen, $md5, $ver, $ts, $custom);
 }
@@ -1548,9 +1998,23 @@ sub _inject {
     $self->_raw_stmt($target, "use base qw/$blist/;");
 }
 
+sub _with {
+    my $self = shift;
+    my $target = shift;
+
+    my $rlist = join(q{, }, map { qq{'$_'} } @_);
+
+    return unless $rlist;
+
+    warn "$target: with $rlist;" if $self->debug;
+    $self->_raw_stmt($target, "\nwith $rlist;");
+}
+
 sub _result_namespace {
     my ($self, $schema_class, $ns) = @_;
     my @result_namespace;
+
+    $ns = $ns->[0] if ref $ns;
 
     if ($ns =~ /^\+(.*)/) {
         # Fully qualified namespace
@@ -1604,54 +2068,80 @@ sub _make_src_class {
             );
         }
 
-        my $old_class = join(q{::}, @result_namespace,
-            $self->_table2moniker($table));
+        my $old_table_moniker = do {
+            local $self->naming->{monikers} = $upgrading_v;
+            $self->_table2moniker($table);
+        };
+
+        my $old_class = join(q{::}, @result_namespace, $old_table_moniker);
 
         $self->_upgrading_classes->{$table_class} = $old_class
             unless $table_class eq $old_class;
     }
 
-# this was a bad idea, should be ok now without it
-#    my $table_normalized = lc $table;
-#    $self->classes->{$table_normalized} = $table_class;
-#    $self->monikers->{$table_normalized} = $table_moniker;
+    $self->classes->{$table->sql_name}  = $table_class;
+    $self->monikers->{$table->sql_name} = $table_moniker;
+    $self->moniker_to_table->{$table_moniker} = $table;
+    $self->class_to_table->{$table_class} = $table;
 
-    $self->classes->{$table} = $table_class;
-    $self->monikers->{$table} = $table_moniker;
+    $self->_pod_class_list($table_class, 'ADDITIONAL CLASSES USED', @{$self->additional_classes});
 
     $self->_use   ($table_class, @{$self->additional_classes});
+
+    $self->_pod_class_list($table_class, 'LEFT BASE CLASSES', @{$self->left_base_classes});
+
     $self->_inject($table_class, @{$self->left_base_classes});
 
     my @components = @{ $self->components || [] };
 
-    push @components, @{ $self->result_component_map->{$table_moniker} }
-        if exists $self->result_component_map->{$table_moniker};
+    push @components, @{ $self->result_components_map->{$table_moniker} }
+        if exists $self->result_components_map->{$table_moniker};
+
+    my @fq_components = @components;
+    foreach my $component (@fq_components) {
+        if ($component !~ s/^\+//) {
+            $component = "DBIx::Class::$component";
+        }
+    }
+
+    $self->_pod_class_list($table_class, 'COMPONENTS LOADED', @fq_components);
 
     $self->_dbic_stmt($table_class, 'load_components', @components) if @components;
+
+    $self->_pod_class_list($table_class, 'ADDITIONAL BASE CLASSES', @{$self->additional_base_classes});
 
     $self->_inject($table_class, @{$self->additional_base_classes});
 }
 
 sub _is_result_class_method {
-    my ($self, $name, $table_name) = @_;
+    my ($self, $name, $table) = @_;
 
-    my $table_moniker = $table_name ? $self->_table2moniker($table_name) : '';
+    my $table_moniker = $table ? $self->monikers->{$table->sql_name} : '';
 
-    if (not $self->_result_class_methods) {
+    $self->_result_class_methods({})
+        if not defined $self->_result_class_methods;
+
+    if (not exists $self->_result_class_methods->{$table_moniker}) {
         my (@methods, %methods);
         my $base       = $self->result_base_class || 'DBIx::Class::Core';
 
         my @components = @{ $self->components || [] };
 
-        push @components, @{ $self->result_component_map->{$table_moniker} }
-            if exists $self->result_component_map->{$table_moniker};
+        push @components, @{ $self->result_components_map->{$table_moniker} }
+            if exists $self->result_components_map->{$table_moniker};
 
         for my $c (@components) {
             $c = $c =~ /^\+/ ? substr($c,1) : "DBIx::Class::$c";
         }
 
-        for my $class ($base, @components, $self->use_moose ? 'Moose::Object' : ()) {
-            load_class $class;
+        my @roles = @{ $self->result_roles || [] };
+
+        push @roles, @{ $self->result_roles_map->{$table_moniker} }
+            if exists $self->result_roles_map->{$table_moniker};
+
+        for my $class ($base, @components,
+                       ($self->use_moose ? 'Moose::Object' : ()), @roles) {
+            $self->ensure_class_loaded($class);
 
             push @methods, @{ Class::Inspector->methods($class) || [] };
         }
@@ -1660,12 +2150,9 @@ sub _is_result_class_method {
 
         @methods{@methods} = ();
 
-        # futureproof meta
-        $methods{meta} = undef;
-
-        $self->_result_class_methods(\%methods);
+        $self->_result_class_methods->{$table_moniker} = \%methods;
     }
-    my $result_methods = $self->_result_class_methods;
+    my $result_methods = $self->_result_class_methods->{$table_moniker};
 
     return exists $result_methods->{$name};
 }
@@ -1673,14 +2160,12 @@ sub _is_result_class_method {
 sub _resolve_col_accessor_collisions {
     my ($self, $table, $col_info) = @_;
 
-    my $table_name = ref $table ? $$table : $table;
-
     while (my ($col, $info) = each %$col_info) {
         my $accessor = $info->{accessor} || $col;
 
         next if $accessor eq 'id'; # special case (very common column)
 
-        if ($self->_is_result_class_method($accessor, $table_name)) {
+        if ($self->_is_result_class_method($accessor, $table)) {
             my $mapped = 0;
 
             if (my $map = $self->col_collision_map) {
@@ -1694,7 +2179,7 @@ sub _resolve_col_accessor_collisions {
 
             if (not $mapped) {
                 warn <<"EOF";
-Column '$col' in table '$table_name' collides with an inherited method.
+Column '$col' in table '$table' collides with an inherited method.
 See "COLUMN ACCESSOR COLLISIONS" in perldoc DBIx::Class::Schema::Loader::Base .
 EOF
                 $info->{accessor} = undef;
@@ -1703,8 +2188,7 @@ EOF
     }
 }
 
-# use the same logic to run moniker_map, col_accessor_map, and
-# relationship_name_map
+# use the same logic to run moniker_map, col_accessor_map
 sub _run_user_map {
     my ( $self, $map, $default_code, $ident, @extra ) = @_;
 
@@ -1725,16 +2209,27 @@ sub _run_user_map {
 sub _default_column_accessor_name {
     my ( $self, $column_name ) = @_;
 
-    my $accessor_name = $column_name;
-    $accessor_name =~ s/\W+/_/g;
+    my $preserve = ($self->naming->{column_accessors}||'') eq 'preserve';
 
-    if ((($self->naming->{column_accessors}||'') =~ /(\d+)/ && $1 < 7) || (not $self->preserve_case)) {
+    my $v = $self->_get_naming_v('column_accessors');
+
+    my $accessor_name = $preserve ?
+        $self->_to_identifier('column_accessors', $column_name) # assume CamelCase
+        :
+        $self->_to_identifier('column_accessors', $column_name, '_');
+
+    $accessor_name =~ s/\W+/_/g; # only if naming < v8, otherwise to_identifier
+                                 # takes care of it
+
+    if ($preserve) {
+        return $accessor_name;
+    }
+    elsif ($v < 7 || (not $self->preserve_case)) {
         # older naming just lc'd the col accessor and that's all.
         return lc $accessor_name;
     }
 
-    return join '_', map lc, split_name $column_name;
-
+    return join '_', map lc, split_name $column_name, $v;
 }
 
 sub _make_column_accessor_name {
@@ -1757,22 +2252,10 @@ sub _setup_src_meta {
     my $schema       = $self->schema;
     my $schema_class = $self->schema_class;
 
-    my $table_class = $self->classes->{$table};
-    my $table_moniker = $self->monikers->{$table};
+    my $table_class   = $self->classes->{$table->sql_name};
+    my $table_moniker = $self->monikers->{$table->sql_name};
 
-    my $table_name = $table;
-    my $name_sep   = $self->schema->storage->sql_maker->name_sep;
-
-    if ($name_sep && $table_name =~ /\Q$name_sep\E/) {
-        $table_name = \ $self->_quote_table_name($table_name);
-    }
-
-    my $full_table_name = ($self->qualify_objects ? ($self->db_schema . '.') : '') . (ref $table_name ? $$table_name : $table_name);
-
-    # be careful to not create refs Data::Dump can "optimize"
-    $full_table_name    = \do {"".$full_table_name} if ref $table_name;
-
-    $self->_dbic_stmt($table_class, 'table', $full_table_name);
+    $self->_dbic_stmt($table_class, 'table', $table->dbic_name);
 
     my $cols     = $self->_table_columns($table);
     my $col_info = $self->__columns_info_for($table);
@@ -1784,8 +2267,8 @@ sub _setup_src_meta {
         my $context = {
             table_class     => $table_class,
             table_moniker   => $table_moniker,
-            table_name      => $table_name,
-            full_table_name => $full_table_name,
+            table_name      => $table,
+            full_table_name => $table->dbic_name,
             schema_class    => $schema_class,
             column_info     => $info,
         };
@@ -1793,7 +2276,7 @@ sub _setup_src_meta {
         $info->{accessor} = $self->_make_column_accessor_name( $col, $context );
     }
 
-    $self->_resolve_col_accessor_collisions($full_table_name, $col_info);
+    $self->_resolve_col_accessor_collisions($table, $col_info);
 
     # prune any redundant accessor names
     while (my ($col, $info) = each %$col_info) {
@@ -1811,6 +2294,39 @@ sub _setup_src_meta {
 
     my $pks = $self->_table_pk_info($table) || [];
 
+    my %uniq_tag; # used to eliminate duplicate uniqs
+
+    $uniq_tag{ join("\0", @$pks) }++ if @$pks; # pk is a uniq
+
+    my $uniqs = $self->_table_uniq_info($table) || [];
+    my @uniqs;
+
+    foreach my $uniq (@$uniqs) {
+        my ($name, $cols) = @$uniq;
+        next if $uniq_tag{ join("\0", @$cols) }++; # skip duplicates
+        push @uniqs, [$name, $cols];
+    }
+
+    my @non_nullable_uniqs = grep {
+        all { $col_info->{$_}{is_nullable} == 0 } @{ $_->[1] }
+    } @uniqs;
+
+    if ($self->uniq_to_primary && (not @$pks) && @non_nullable_uniqs) {
+        my @by_colnum = sort { $b->[0] <=> $a->[0] }
+            map [ scalar @{ $_->[1] }, $_ ], @non_nullable_uniqs;
+
+        if (not (@by_colnum > 1 && $by_colnum[0][0] == $by_colnum[1][0])) {
+            my @keys = map $_->[1], @by_colnum;
+
+            my $pk = $keys[0];
+
+            # remove the uniq from list
+            @uniqs = grep { $_->[0] ne $pk->[0] } @uniqs;
+
+            $pks = $pk->[1];
+        }
+    }
+
     foreach my $pkcol (@$pks) {
         $col_info->{$pkcol}{is_nullable} = 0;
     }
@@ -1821,19 +2337,17 @@ sub _setup_src_meta {
         map { $_, ($col_info->{$_}||{}) } @$cols
     );
 
-    my %uniq_tag; # used to eliminate duplicate uniqs
+    $self->_dbic_stmt($table_class, 'set_primary_key', @$pks)
+        if @$pks;
 
-    @$pks ? $self->_dbic_stmt($table_class,'set_primary_key',@$pks)
-          : carp("$table has no primary key");
-    $uniq_tag{ join("\0", @$pks) }++ if @$pks; # pk is a uniq
+    # Sort unique constraints by constraint name for repeatable results (rels
+    # are sorted as well elsewhere.)
+    @uniqs = sort { $a->[0] cmp $b->[0] } @uniqs;
 
-    my $uniqs = $self->_table_uniq_info($table) || [];
-    for (@$uniqs) {
-        my ($name, $cols) = @$_;
-        next if $uniq_tag{ join("\0", @$cols) }++; # skip duplicates
+    foreach my $uniq (@uniqs) {
+        my ($name, $cols) = @$uniq;
         $self->_dbic_stmt($table_class,'add_unique_constraint', $name, $cols);
     }
-
 }
 
 sub __columns_info_for {
@@ -1861,34 +2375,82 @@ names.
 sub tables {
     my $self = shift;
 
-    return keys %{$self->_tables};
+    return values %{$self->_tables};
+}
+
+sub _get_naming_v {
+    my ($self, $naming_key) = @_;
+
+    my $v;
+
+    if (($self->naming->{$naming_key}||'') =~ /^v(\d+)\z/) {
+        $v = $1;
+    }
+    else {
+        ($v) = $CURRENT_V =~ /^v(\d+)\z/;
+    }
+
+    return $v;
+}
+
+sub _to_identifier {
+    my ($self, $naming_key, $name, $sep_char, $force) = @_;
+
+    my $v = $self->_get_naming_v($naming_key);
+
+    my $to_identifier = $self->naming->{force_ascii} ?
+        \&String::ToIdentifier::EN::to_identifier
+        : \&String::ToIdentifier::EN::Unicode::to_identifier;
+
+    return $v >= 8 || $force ? $to_identifier->($name, $sep_char) : $name;
 }
 
 # Make a moniker from a table
 sub _default_table2moniker {
-    no warnings 'uninitialized';
     my ($self, $table) = @_;
 
-    if ($self->naming->{monikers} eq 'v4') {
-        return join '', map ucfirst, split /[\W_]+/, lc $table;
+    my $v = $self->_get_naming_v('monikers');
+
+    my @name_parts = map $table->$_, @{ $self->moniker_parts };
+
+    my $name_idx = firstidx { $_ eq 'name' } @{ $self->moniker_parts };
+
+    my @all_parts;
+
+    foreach my $i (0 .. $#name_parts) {
+        my $part = $name_parts[$i];
+
+        if ($i != $name_idx || $v >= 8) {
+            $part = $self->_to_identifier('monikers', $part, '_', 1);
+        }
+
+        if ($i == $name_idx && $v == 5) {
+            $part = Lingua::EN::Inflect::Number::to_S($part);
+        }
+
+        my @part_parts = map lc, $v > 6 ?
+            # use v8 semantics for all moniker parts except name
+            ($i == $name_idx ? split_name $part, $v : split_name $part)
+            : split /[\W_]+/, $part;
+
+        if ($i == $name_idx && $v >= 6) {
+            my $as_phrase = join ' ', @part_parts;
+
+            my $inflected = ($self->naming->{monikers}||'') eq 'plural' ?
+                Lingua::EN::Inflect::Phrase::to_PL($as_phrase)
+                :
+                ($self->naming->{monikers}||'') eq 'preserve' ?
+                    $as_phrase
+                    :
+                    Lingua::EN::Inflect::Phrase::to_S($as_phrase);
+
+            @part_parts = split /\s+/, $inflected;
+        }
+
+        push @all_parts, map ucfirst, @part_parts;
     }
-    elsif ($self->naming->{monikers} eq 'v5') {
-        return join '', map ucfirst, split /[\W_]+/,
-            Lingua::EN::Inflect::Number::to_S(lc $table);
-    }
-    elsif ($self->naming->{monikers} eq 'v6') {
-        (my $as_phrase = lc $table) =~ s/_+/ /g;
-        my $inflected = Lingua::EN::Inflect::Phrase::to_S($as_phrase);
 
-        return join '', map ucfirst, split /\W+/, $inflected;
-    }
-
-    my @words = map lc, split_name $table;
-    my $as_phrase = join ' ', @words;
-
-    my $inflected = Lingua::EN::Inflect::Phrase::to_S($as_phrase);
-
-    return join '', map ucfirst, split /\W+/, $inflected;
+    return join '', @all_parts;
 }
 
 sub _table2moniker {
@@ -1902,23 +2464,54 @@ sub _table2moniker {
 }
 
 sub _load_relationships {
-    my ($self, $table) = @_;
+    my ($self, $tables) = @_;
 
-    my $tbl_fk_info = $self->_table_fk_info($table);
-    foreach my $fkdef (@$tbl_fk_info) {
-        $fkdef->{remote_source} =
-            $self->monikers->{delete $fkdef->{remote_table}};
+    my @tables;
+
+    foreach my $table (@$tables) {
+        my $local_moniker = $self->monikers->{$table->sql_name};
+
+        my $tbl_fk_info = $self->_table_fk_info($table);
+
+        foreach my $fkdef (@$tbl_fk_info) {
+            $fkdef->{local_table}   = $table;
+            $fkdef->{local_moniker} = $local_moniker;
+            $fkdef->{remote_source} =
+                $self->monikers->{$fkdef->{remote_table}->sql_name};
+        }
+        my $tbl_uniq_info = $self->_table_uniq_info($table);
+
+        push @tables, [ $local_moniker, $tbl_fk_info, $tbl_uniq_info ];
     }
-    my $tbl_uniq_info = $self->_table_uniq_info($table);
 
-    my $local_moniker = $self->monikers->{$table};
-    my $rel_stmts = $self->_relbuilder->generate_code($local_moniker, $tbl_fk_info, $tbl_uniq_info);
+    my $rel_stmts = $self->_relbuilder->generate_code(\@tables);
 
     foreach my $src_class (sort keys %$rel_stmts) {
-        my $src_stmts = $rel_stmts->{$src_class};
-        foreach my $stmt (@$src_stmts) {
-            $self->_dbic_stmt($src_class,$stmt->{method},@{$stmt->{args}});
+        # sort by rel name
+        my @src_stmts = map $_->[1],
+            sort { $a->[0] cmp $b->[0] }
+            map [ $_->{args}[0], $_ ], @{ $rel_stmts->{$src_class} };
+
+        foreach my $stmt (@src_stmts) {
+            $self->_dbic_stmt($src_class,$stmt->{method}, @{$stmt->{args}});
         }
+    }
+}
+
+sub _load_roles {
+    my ($self, $table) = @_;
+
+    my $table_moniker = $self->monikers->{$table->sql_name};
+    my $table_class   = $self->classes->{$table->sql_name};
+
+    my @roles = @{ $self->result_roles || [] };
+    push @roles, @{ $self->result_roles_map->{$table_moniker} }
+        if exists $self->result_roles_map->{$table_moniker};
+
+    if (@roles) {
+        $self->_pod_class_list($table_class, 'L<Moose> ROLES APPLIED', @roles);
+
+        $self->_with($table_class, @roles);
     }
 }
 
@@ -1959,6 +2552,36 @@ sub _dbic_stmt {
     return;
 }
 
+sub _make_pod_heading {
+    my ($self, $class) = @_;
+
+    return '' if not $self->generate_pod;
+
+    my $table = $self->class_to_table->{$class};
+    my $pod;
+
+    my $pcm = $self->pod_comment_mode;
+    my ($comment, $comment_overflows, $comment_in_name, $comment_in_desc);
+    $comment = $self->__table_comment($table);
+    $comment_overflows = ($comment and length $comment > $self->pod_comment_spillover_length);
+    $comment_in_name   = ($pcm eq 'name' or ($pcm eq 'auto' and !$comment_overflows));
+    $comment_in_desc   = ($pcm eq 'description' or ($pcm eq 'auto' and $comment_overflows));
+
+    $pod .= "=head1 NAME\n\n";
+
+    my $table_descr = $class;
+    $table_descr .= " - " . $comment if $comment and $comment_in_name;
+
+    $pod .= "$table_descr\n\n";
+
+    if ($comment and $comment_in_desc) {
+        $pod .= "=head1 DESCRIPTION\n\n${comment}\n\n";
+    }
+    $pod .= "=cut\n\n";
+
+    return $pod;
+}
+
 # generates the accompanying pod for a DBIC class method statement,
 # storing it with $self->_pod
 sub _make_pod {
@@ -1966,25 +2589,13 @@ sub _make_pod {
     my $class  = shift;
     my $method = shift;
 
-    if ( $method eq 'table' ) {
-        my ($table) = @_;
-        my $pcm = $self->pod_comment_mode;
-        my ($comment, $comment_overflows, $comment_in_name, $comment_in_desc);
-        $comment = $self->__table_comment($table);
-        $comment_overflows = ($comment and length $comment > $self->pod_comment_spillover_length);
-        $comment_in_name   = ($pcm eq 'name' or ($pcm eq 'auto' and !$comment_overflows));
-        $comment_in_desc   = ($pcm eq 'description' or ($pcm eq 'auto' and $comment_overflows));
-        $self->_pod( $class, "=head1 NAME" );
-        my $table_descr = $class;
-        $table_descr .= " - " . $comment if $comment and $comment_in_name;
-        $self->{_class2table}{ $class } = $table;
-        $self->_pod( $class, $table_descr );
-        if ($comment and $comment_in_desc) {
-            $self->_pod( $class, "=head1 DESCRIPTION" );
-            $self->_pod( $class, $comment );
-        }
-        $self->_pod_cut( $class );
-    } elsif ( $method eq 'add_columns' ) {
+    if ($method eq 'table') {
+        my $table = $_[0];
+        $table = $$table if ref $table eq 'SCALAR';
+        $self->_pod($class, "=head1 TABLE: C<$table>");
+        $self->_pod_cut($class);
+    }
+    elsif ( $method eq 'add_columns' ) {
         $self->_pod( $class, "=head1 ACCESSORS" );
         my $col_counter = 0;
         my @cols = @_;
@@ -2003,7 +2614,7 @@ sub _make_pod {
                     "  $_: $s"
                  } sort keys %$attrs,
             );
-            if (my $comment = $self->__column_comment($self->{_class2table}{$class}, $col_counter, $name)) {
+            if (my $comment = $self->__column_comment($self->class_to_table->{$class}, $col_counter, $name)) {
                 $self->_pod( $class, $comment );
             }
         }
@@ -2017,6 +2628,64 @@ sub _make_pod {
         $self->_pod_cut( $class );
         $self->{_relations_started} { $class } = 1;
     }
+    elsif ($method eq 'add_unique_constraint') {
+        $self->_pod($class, '=head1 UNIQUE CONSTRAINTS')
+            unless $self->{_uniqs_started}{$class};
+        
+        my ($name, $cols) = @_;
+
+        $self->_pod($class, "=head2 C<$name>");
+        $self->_pod($class, '=over 4');
+        
+        foreach my $col (@$cols) {
+            $self->_pod($class, "=item \* L</$col>");
+        }
+
+        $self->_pod($class, '=back');
+        $self->_pod_cut($class);
+
+        $self->{_uniqs_started}{$class} = 1;
+    }
+    elsif ($method eq 'set_primary_key') {
+        $self->_pod($class, "=head1 PRIMARY KEY");
+        $self->_pod($class, '=over 4');
+        
+        foreach my $col (@_) {
+            $self->_pod($class, "=item \* L</$col>");
+        }
+
+        $self->_pod($class, '=back');
+        $self->_pod_cut($class);
+    }
+}
+
+sub _pod_class_list {
+    my ($self, $class, $title, @classes) = @_;
+
+    return unless @classes && $self->generate_pod;
+
+    $self->_pod($class, "=head1 $title");
+    $self->_pod($class, '=over 4');
+
+    foreach my $link (@classes) {
+        $self->_pod($class, "=item * L<$link>");
+    }
+
+    $self->_pod($class, '=back');
+    $self->_pod_cut($class);
+}
+
+sub _base_class_pod {
+    my ($self, $base_class) = @_;
+
+    return '' unless $self->generate_pod;
+
+    return <<"EOF"
+=head1 BASE CLASS: L<$base_class>
+
+=cut
+
+EOF
 }
 
 sub _filter_comment {
@@ -2072,20 +2741,6 @@ sub _ext_stmt {
     push(@{$self->{_ext_storage}->{$class}}, $stmt);
 }
 
-sub _quote_table_name {
-    my ($self, $table) = @_;
-
-    my $qt = $self->schema->storage->sql_maker->quote_char;
-
-    return $table unless $qt;
-
-    if (ref $qt) {
-        return $qt->[0] . $table . $qt->[1];
-    }
-
-    return $qt . $table . $qt;
-}
-
 sub _custom_column_info {
     my ( $self, $table_name, $column_name, $column_info ) = @_;
 
@@ -2119,19 +2774,16 @@ sub _uc {
     return $self->preserve_case ? $name : uc($name);
 }
 
-sub _unregister_source_for_table {
+sub _remove_table {
     my ($self, $table) = @_;
 
     try {
-        local $@;
         my $schema = $self->schema;
         # in older DBIC it's a private method
         my $unregister = $schema->can('unregister_source') || $schema->can('_unregister_source');
-        $schema->$unregister($self->_table2moniker($table));
-        delete $self->monikers->{$table};
-        delete $self->classes->{$table};
-        delete $self->_upgrading_classes->{$table};
-        delete $self->{_tables}{$table};
+        $schema->$unregister(delete $self->monikers->{$table->sql_name});
+        delete $self->_upgrading_classes->{delete $self->classes->{$table->sql_name}};
+        delete $self->_tables->{$table->sql_name};
     };
 }
 
@@ -2155,6 +2807,18 @@ definitions, or what-have-you).
 Returns a hashref of table to class mappings.  In some cases it will
 contain multiple entries per table for the original and normalized table
 names, as above in L</monikers>.
+
+=head1 NON-ENGLISH DATABASES
+
+If you use the loader on a database with table and column names in a language
+other than English, you will want to turn off the English language specific
+heuristics.
+
+To do so, use something like this in your laoder options:
+
+    naming           => { monikers => 'v4' },
+    inflect_singular => sub { "$_[0]_rel" },
+    inflect_plural   => sub { "$_[0]_rel" },
 
 =head1 COLUMN ACCESSOR COLLISIONS
 

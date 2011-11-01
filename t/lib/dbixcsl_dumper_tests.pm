@@ -5,22 +5,37 @@ use Test::More;
 use File::Path;
 use IPC::Open3;
 use IO::Handle;
+use List::MoreUtils 'any';
 use DBIx::Class::Schema::Loader::Utils 'dumper_squashed';
 use DBIx::Class::Schema::Loader ();
+use namespace::clean;
 
-use dbixcsl_test_dir qw/$tdir/;
+use dbixcsl_test_dir '$tdir';
 
 my $DUMP_PATH = "$tdir/dump";
+
 sub cleanup {
     rmtree($DUMP_PATH, 1, 1);
 }
 
-sub append_to_class {
-    my ($self, $class, $string) = @_;
+sub class_file {
+    my ($self, $class) = @_;
+
     $class =~ s{::}{/}g;
     $class = $DUMP_PATH . '/' . $class . '.pm';
+
+    return $class;
+}
+
+sub append_to_class {
+    my ($self, $class, $string) = @_;
+
+    $class = $self->class_file($class);
+
     open(my $appendfh, '>>', $class) or die "Failed to open '$class' for append: $!";
+
     print $appendfh $string;
+
     close($appendfh);
 }
 
@@ -31,7 +46,14 @@ sub dump_test {
     $tdata{options}{dump_directory} = $DUMP_PATH;
     $tdata{options}{use_namespaces} ||= 0;
 
-    for my $dumper (\&_dump_directly, \&_dump_dbicdump) {
+    SKIP: for my $dumper (\&_dump_directly, \&_dump_dbicdump) {
+        skip 'fucking pigs broke my Win32 perl', 1,
+            if $dumper == \&_dump_dbicdump
+                && $^O eq 'MSWin32'
+                && $ENV{FUCKING_PIGS}
+                && (  (any { ref $_ } values %{ $tdata{options} })
+                    || any { ref $_ } _get_connect_info(\%tdata));
+
         _test_dumps(\%tdata, $dumper->(%tdata));
     }
 }
@@ -44,7 +66,10 @@ sub _dump_directly {
 
     no strict 'refs';
     @{$schema_class . '::ISA'} = ('DBIx::Class::Schema::Loader');
-    $schema_class->loader_options(%{$tdata{options}});
+    $schema_class->loader_options(
+      quiet => 1,
+      %{$tdata{options}},
+    );
 
     my @warns;
     eval {
@@ -66,6 +91,8 @@ sub _dump_dbicdump {
 
     # use $^X so we execute ./script/dbicdump with the same perl binary that the tests were executed with
     my @cmd = ($^X, qw(script/dbicdump));
+
+    $tdata{options}{quiet} = 1 unless exists $tdata{options}{quiet};
 
     while (my ($opt, $val) = each(%{ $tdata{options} })) {
         $val = dumper_squashed $val if ref $val;
@@ -135,7 +162,6 @@ sub _check_error {
     is $got, $expected, 'error matches';
 }
 
-
 sub _test_dumps {
     my ($tdata, @warns) = @_;
 
@@ -143,10 +169,12 @@ sub _test_dumps {
 
     my $schema_class = $tdata{classname};
     my $check_warns = $tdata{warnings};
-    is(@warns, @$check_warns, "$schema_class warning count");
+
+    is(@warns, @$check_warns, "$schema_class warning count")
+      or diag @warns;
 
     for(my $i = 0; $i <= $#$check_warns; $i++) {
-        like($warns[$i], $check_warns->[$i], "$schema_class warning $i");
+        like(($warns[$i] || ''), $check_warns->[$i], "$schema_class warning $i");
     }
 
     my $file_regexes = $tdata{regexes};

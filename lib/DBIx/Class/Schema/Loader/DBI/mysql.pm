@@ -3,38 +3,65 @@ package DBIx::Class::Schema::Loader::DBI::mysql;
 use strict;
 use warnings;
 use base 'DBIx::Class::Schema::Loader::DBI';
-use Carp::Clan qw/^DBIx::Class/;
 use mro 'c3';
+use Carp::Clan qw/^DBIx::Class/;
+use List::Util 'first';
+use List::MoreUtils 'any';
+use Try::Tiny;
+use namespace::clean;
+use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07010';
+our $VERSION = '0.07011';
 
 =head1 NAME
 
 DBIx::Class::Schema::Loader::DBI::mysql - DBIx::Class::Schema::Loader::DBI mysql Implementation.
 
-=head1 SYNOPSIS
-
-  package My::Schema;
-  use base qw/DBIx::Class::Schema::Loader/;
-
-  __PACKAGE__->loader_options( debug => 1 );
-
-  1;
-
 =head1 DESCRIPTION
 
-See L<DBIx::Class::Schema::Loader::Base>.
+See L<DBIx::Class::Schema::Loader> and L<DBIx::Class::Schema::Loader::Base>.
 
 =cut
 
 sub _setup {
     my $self = shift;
 
+    $self->schema->storage->sql_maker->quote_char("`");
+    $self->schema->storage->sql_maker->name_sep(".");
+
     $self->next::method(@_);
 
     if (not defined $self->preserve_case) {
         $self->preserve_case(0);
     }
+
+    if ($self->db_schema && $self->db_schema->[0] eq '%') {
+        my @schemas = try {
+            $self->_show_databases;
+        }
+        catch {
+            croak "no SHOW DATABASES privileges: $_";
+        };
+
+        @schemas = grep {
+            my $schema = $_;
+            not any { lc($schema) eq lc($_) } $self->_system_schemas
+        } @schemas;
+
+        $self->db_schema(\@schemas);
+    }
+}
+
+sub _show_databases {
+    my $self = shift;
+
+    return map $_->[0], @{ $self->dbh->selectall_arrayref('SHOW DATABASES') };
+}
+
+sub _system_schemas {
+    my $self = shift;
+
+    return ($self->next::method(@_), 'mysql');
 }
 
 sub _tables_list { 
@@ -46,35 +73,65 @@ sub _tables_list {
 sub _table_fk_info {
     my ($self, $table) = @_;
 
-    my $dbh = $self->schema->storage->dbh;
-
-    my $table_def_ref = eval { $dbh->selectrow_arrayref("SHOW CREATE TABLE `$table`") };
+    my $table_def_ref = eval { $self->dbh->selectrow_arrayref("SHOW CREATE TABLE ".$table->sql_name) };
     my $table_def = $table_def_ref->[1];
 
     return [] if not $table_def;
 
-    my $qt = qr/["`]/;
+    my $qt  = qr/["`]/;
+    my $nqt = qr/[^"`]/;
 
     my (@reldata) = ($table_def =~
-        /CONSTRAINT $qt.*$qt FOREIGN KEY \($qt(.*)$qt\) REFERENCES $qt(.*)$qt \($qt(.*)$qt\)/ig
+        /CONSTRAINT ${qt}${nqt}+${qt} FOREIGN KEY \($qt(.*)$qt\) REFERENCES (?:$qt($nqt+)$qt\.)?$qt($nqt+)$qt \($qt(.+)$qt\)/ig
     );
 
     my @rels;
     while (scalar @reldata > 0) {
-        my $cols = shift @reldata;
-        my $f_table = shift @reldata;
-        my $f_cols = shift @reldata;
+        my ($cols, $f_schema, $f_table, $f_cols) = splice @reldata, 0, 4;
 
-        my @cols   = map { s/(?: \Q$self->{_quoter}\E | $qt )//x; $self->_lc($_) }
+        my @cols   = map { s/$qt//g; $self->_lc($_) }
             split(/$qt?\s*$qt?,$qt?\s*$qt?/, $cols);
 
-        my @f_cols = map { s/(?: \Q$self->{_quoter}\E | $qt )//x; $self->_lc($_) }
+        my @f_cols = map { s/$qt//g; $self->_lc($_) }
             split(/$qt?\s*$qt?,$qt?\s*$qt?/, $f_cols);
+
+        # Match case of remote schema to that in SHOW DATABASES, if it's there
+        # and we have permissions to run SHOW DATABASES.
+        if ($f_schema) {
+            my $matched = first {
+                lc($_) eq lc($f_schema)
+            } try { $self->_show_databases };
+
+            $f_schema = $matched if $matched;
+        }
+
+        my $remote_table = do {
+            # Get ->tables_list to return tables from the remote schema, in case it is not in the db_schema list.
+            local $self->{db_schema} = [ $f_schema ] if $f_schema;
+
+            first {
+                   lc($_->name) eq lc($f_table)
+                && ((not $f_schema) || lc($_->schema) eq lc($f_schema))
+            } $self->_tables_list;
+        };
+
+        # The table may not be in any database, or it may not have been found by the previous code block for whatever reason.
+        if (not $remote_table) {
+            my $remote_schema = $f_schema || $self->db_schema && @{ $self->db_schema } == 1 && $self->db_schema->[0];
+
+            $remote_table = DBIx::Class::Schema::Loader::Table->new(
+                loader => $self,
+                name   => $f_table,
+                ($remote_schema ? (
+                    schema => $remote_schema,
+                ) : ()),
+            );
+        }
 
         push(@rels, {
             local_columns => \@cols,
             remote_columns => \@f_cols,
-            remote_table => $f_table
+            remote_table => $remote_table,
         });
     }
 
@@ -86,10 +143,9 @@ sub _table_fk_info {
 sub _mysql_table_get_keys {
     my ($self, $table) = @_;
 
-    if(!exists($self->{_cache}->{_mysql_keys}->{$table})) {
+    if(!exists($self->{_cache}->{_mysql_keys}->{$table->sql_name})) {
         my %keydata;
-        my $dbh = $self->schema->storage->dbh;
-        my $sth = $dbh->prepare('SHOW INDEX FROM '.$self->_table_as_sql($table));
+        my $sth = $self->dbh->prepare('SHOW INDEX FROM '.$table->sql_name);
         $sth->execute;
         while(my $row = $sth->fetchrow_hashref) {
             next if $row->{Non_unique};
@@ -102,10 +158,10 @@ sub _mysql_table_get_keys {
                 @{$keydata{$keyname}};
             $keydata{$keyname} = \@ordered_cols;
         }
-        $self->{_cache}->{_mysql_keys}->{$table} = \%keydata;
+        $self->{_cache}->{_mysql_keys}->{$table->sql_name} = \%keydata;
     }
 
-    return $self->{_cache}->{_mysql_keys}->{$table};
+    return $self->{_cache}->{_mysql_keys}->{$table->sql_name};
 }
 
 sub _table_pk_info {
@@ -133,32 +189,31 @@ sub _columns_info_for {
 
     my $result = $self->next::method(@_);
 
-    my $dbh = $self->schema->storage->dbh;
-
     while (my ($col, $info) = each %$result) {
-        delete $info->{size} if $info->{data_type} !~ /^(?: (?:var)?(?:char(?:acter)?|binary) | bit | year)\z/ix;
-
         if ($info->{data_type} eq 'int') {
             $info->{data_type} = 'integer';
         }
         elsif ($info->{data_type} eq 'double') {
             $info->{data_type} = 'double precision';
         }
+        my $data_type = $info->{data_type};
+
+        delete $info->{size} if $data_type !~ /^(?: (?:var)?(?:char(?:acter)?|binary) | bit | year)\z/ix;
 
         # information_schema is available in 5.0+
-        my ($precision, $scale, $column_type, $default) = eval { $dbh->selectrow_array(<<'EOF', {}, $table, $col) };
+        my ($precision, $scale, $column_type, $default) = eval { $self->dbh->selectrow_array(<<'EOF', {}, $table, $col) };
 SELECT numeric_precision, numeric_scale, column_type, column_default
 FROM information_schema.columns
 WHERE table_name = ? AND column_name = ?
 EOF
-        my $has_information_schema = not defined $@;
+        my $has_information_schema = not $@;
 
         $column_type = '' if not defined $column_type;
 
-        if ($info->{data_type} eq 'bit' && (not exists $info->{size})) {
+        if ($data_type eq 'bit' && (not exists $info->{size})) {
             $info->{size} = $precision if defined $precision;
         }
-        elsif ($info->{data_type} =~ /^(?:float|double precision|decimal)\z/i) {
+        elsif ($data_type =~ /^(?:float|double precision|decimal)\z/i) {
             if (defined $precision && defined $scale) {
                 if ($precision == 10 && $scale == 0) {
                     delete $info->{size};
@@ -168,7 +223,7 @@ EOF
                 }
             }
         }
-        elsif ($info->{data_type} eq 'year') {
+        elsif ($data_type eq 'year') {
             if ($column_type =~ /\(2\)/) {
                 $info->{size} = 2;
             }
@@ -176,9 +231,20 @@ EOF
                 delete $info->{size};
             }
         }
-        elsif ($info->{data_type} =~ /^(?:date(?:time)?|timestamp)\z/) {
+        elsif ($data_type =~ /^(?:date(?:time)?|timestamp)\z/) {
             if (not (defined $self->datetime_undef_if_invalid && $self->datetime_undef_if_invalid == 0)) {
                 $info->{datetime_undef_if_invalid} = 1;
+            }
+        }
+        elsif ($data_type =~ /^(?:enum|set)\z/ && $has_information_schema
+               && $column_type =~ /^(?:enum|set)\(/) {
+
+            delete $info->{extra}{list};
+
+            while ($column_type =~ /'((?:[^']* (?:''|\\')* [^']*)* [^\\'])',?/xg) {
+                my $el = $1;
+                $el =~ s/''/'/g;
+                push @{ $info->{extra}{list} }, $el;
             }
         }
 
@@ -191,7 +257,7 @@ EOF
                 }
             }
             else { # just check if it's a char/text type, otherwise remove
-                delete $info->{default_value} unless $info->{data_type} =~ /char|text/i;
+                delete $info->{default_value} unless $data_type =~ /char|text/i;
             }
         }
     }
@@ -230,6 +296,47 @@ sub _dbh_column_info {
         unless $_[0] =~ /^column_info: unrecognized column type/ };
 
     $self->next::method(@_);
+}
+
+sub _table_comment {
+    my ( $self, $table ) = @_;
+    my $comment = $self->next::method($table);
+    if (not $comment) {
+        ($comment) = try { $self->schema->storage->dbh->selectrow_array(
+            qq{SELECT table_comment
+                FROM information_schema.tables
+                WHERE table_schema = schema()
+                  AND table_name = ?
+            }, undef, $table);
+        };
+        # InnoDB likes to auto-append crap.
+        if (not $comment) {
+            # Do nothing.
+        }
+        elsif ($comment =~ /^InnoDB free:/) {
+            $comment = undef;
+        }
+        else {
+            $comment =~ s/; InnoDB.*//;
+        }
+    }
+    return $comment;
+}
+
+sub _column_comment {
+    my ( $self, $table, $column_number, $column_name ) = @_;
+    my $comment = $self->next::method($table, $column_number, $column_name);
+    if (not $comment) {
+        ($comment) = try { $self->schema->storage->dbh->selectrow_array(
+            qq{SELECT column_comment
+                FROM information_schema.columns
+                WHERE table_schema = schema()
+                  AND table_name = ?
+                  AND column_name = ?
+            }, undef, $table, $column_name);
+        };
+    }
+    return $comment;
 }
 
 =head1 SEE ALSO

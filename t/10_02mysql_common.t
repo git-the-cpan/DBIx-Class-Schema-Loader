@@ -1,25 +1,41 @@
 use strict;
+use warnings;
 use Test::More;
+use Test::Exception;
+use Try::Tiny;
+use File::Path 'rmtree';
+use DBIx::Class::Schema::Loader::Utils 'slurp_file';
+use DBIx::Class::Schema::Loader 'make_schema_at';
+
 use lib qw(t/lib);
+
 use dbixcsl_common_tests;
+use dbixcsl_test_dir '$tdir';
+
+use constant EXTRA_DUMP_DIR => "$tdir/mysql_extra_dump";
 
 my $dsn         = $ENV{DBICTEST_MYSQL_DSN} || '';
 my $user        = $ENV{DBICTEST_MYSQL_USER} || '';
 my $password    = $ENV{DBICTEST_MYSQL_PASS} || '';
 my $test_innodb = $ENV{DBICTEST_MYSQL_INNODB} || 0;
 
-my $skip_rels_msg = 'You need to set the DBICTEST_MYSQL_INNODB environment variable to test relationships.';
+my $skip_rels_msg = 'You need to set the environment variable DBICTEST_MYSQL_INNODB=1 to test relationships.';
+
+my $innodb = $test_innodb ? q{Engine=InnoDB} : '';
+
+my ($schema, $databases_created); # for cleanup in END for extra tests
 
 my $tester = dbixcsl_common_tests->new(
     vendor           => 'Mysql',
     auto_inc_pk      => 'INTEGER NOT NULL PRIMARY KEY AUTO_INCREMENT',
-    innodb           => $test_innodb ? q{Engine=InnoDB} : 0,
+    innodb           => $innodb,
     dsn              => $dsn,
     user             => $user,
     password         => $password,
     connect_info_opts=> { on_connect_call => 'set_strict_mode' },
     loader_options   => { preserve_case => 1 },
     skip_rels        => $test_innodb ? 0 : $skip_rels_msg,
+    quote_char       => '`',
     no_inline_rels   => 1,
     no_implicit_rels => 1,
     data_types  => {
@@ -121,41 +137,374 @@ my $tester = dbixcsl_common_tests->new(
 
         "enum('foo','bar','baz')"
                       => { data_type => 'enum', extra => { list => [qw/foo bar baz/] } },
+        "enum('foo \\'bar\\' baz', 'foo ''bar'' quux')"
+                      => { data_type => 'enum', extra => { list => [q{foo 'bar' baz}, q{foo 'bar' quux}] } },
+        "set('foo \\'bar\\' baz', 'foo ''bar'' quux')"
+                      => { data_type => 'set', extra => { list => [q{foo 'bar' baz}, q{foo 'bar' quux}] } },
         "set('foo','bar','baz')"
                       => { data_type => 'set',  extra => { list => [qw/foo bar baz/] } },
+
+        # RT#68717
+        "enum('11,10 (<500)/0 DUN','4,90 (<120)/0 EUR') NOT NULL default '11,10 (<500)/0 DUN'"
+                      => { data_type => 'enum', extra => { list => ['11,10 (<500)/0 DUN', '4,90 (<120)/0 EUR'] }, default_value => '11,10 (<500)/0 DUN' },
+        "set('11_10 (<500)/0 DUN','4_90 (<120)/0 EUR') NOT NULL default '11_10 (<500)/0 DUN'"
+                      => { data_type => 'set', extra => { list => ['11_10 (<500)/0 DUN', '4_90 (<120)/0 EUR'] }, default_value => '11_10 (<500)/0 DUN' },
+        "enum('19,90 (<500)/0 EUR','4,90 (<120)/0 EUR','7,90 (<200)/0 CHF','300 (<6000)/0 CZK','4,90 (<100)/0 EUR','39 (<900)/0 DKK','299 (<5000)/0 EEK','9,90 (<250)/0 EUR','3,90 (<100)/0 GBP','3000 (<70000)/0 HUF','4000 (<70000)/0 JPY','13,90 (<200)/0 LVL','99 (<2500)/0 NOK','39 (<1000)/0 PLN','1000 (<20000)/0 RUB','49 (<2500)/0 SEK','29 (<600)/0 USD','19,90 (<600)/0 EUR','0 EUR','0 CHF') NOT NULL default '19,90 (<500)/0 EUR'"
+                      => { data_type => 'enum', extra => { list => ['19,90 (<500)/0 EUR','4,90 (<120)/0 EUR','7,90 (<200)/0 CHF','300 (<6000)/0 CZK','4,90 (<100)/0 EUR','39 (<900)/0 DKK','299 (<5000)/0 EEK','9,90 (<250)/0 EUR','3,90 (<100)/0 GBP','3000 (<70000)/0 HUF','4000 (<70000)/0 JPY','13,90 (<200)/0 LVL','99 (<2500)/0 NOK','39 (<1000)/0 PLN','1000 (<20000)/0 RUB','49 (<2500)/0 SEK','29 (<600)/0 USD','19,90 (<600)/0 EUR','0 EUR','0 CHF'] }, default_value => '19,90 (<500)/0 EUR' },
     },
     extra => {
         create => [
-            q{
-                CREATE TABLE mysql_loader_test1 (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
+            qq{
+                CREATE TABLE `mysql_loader-test1` (
+                    id INT AUTO_INCREMENT PRIMARY KEY COMMENT 'The\15\12Column',
                     value varchar(100)
-                )
+                ) $innodb COMMENT 'The\15\12Table'
             },
             q{
-                CREATE VIEW mysql_loader_test2 AS SELECT * FROM mysql_loader_test1
+                CREATE VIEW mysql_loader_test2 AS SELECT * FROM `mysql_loader-test1`
+            },
+            # RT#68717
+            qq{
+                CREATE TABLE `mysql_loader_test3` (
+                  `ISO3_code` char(3) NOT NULL default '',
+                  `lang_pref` enum('de','en','fr','nl','dk','es','se') NOT NULL,
+                  `vat` decimal(4,2) default '16.00',
+                  `price_group` enum('EUR_DEFAULT','GBP_GBR','EUR_AUT_BEL_FRA_IRL_NLD','EUR_DNK_SWE','EUR_AUT','EUR_BEL','EUR_FIN','EUR_FRA','EUR_IRL','EUR_NLD','EUR_DNK','EUR_POL','EUR_PRT','EUR_SWE','CHF_CHE','DKK_DNK','SEK_SWE','NOK_NOR','USD_USA','CZK_CZE','PLN_POL','RUB_RUS','HUF_HUN','SKK_SVK','JPY_JPN','LVL_LVA','ROL_ROU','EEK_EST') NOT NULL default 'EUR_DEFAULT',
+                  `del_group` enum('19,90 (<500)/0 EUR','4,90 (<120)/0 EUR','7,90 (<200)/0 CHF','300 (<6000)/0 CZK','4,90 (<100)/0 EUR','39 (<900)/0 DKK','299 (<5000)/0 EEK','9,90 (<250)/0 EUR','3,90 (<100)/0 GBP','3000 (<70000)/0 HUF','4000 (<70000)/0 JPY','13,90 (<200)/0 LVL','99 (<2500)/0 NOK','39 (<1000)/0 PLN','1000 (<20000)/0 RUB','49 (<2500)/0 SEK','29 (<600)/0 USD','19,90 (<600)/0 EUR','0 EUR','0 CHF') NOT NULL default '19,90 (<500)/0 EUR',
+                  `express_del_group` enum('NO','39 EUR (EXPRESS)','59 EUR (EXPRESS)','79 CHF (EXPRESS)','49 EUR (EXPRESS)','990 CZK (EXPRESS)','19,9 EUR (EXPRESS)','290 DKK (EXPRESS)','990 EEK (EXPRESS)','39 GBP (EXPRESS)','14000 HUF (EXPRESS)','49 LVL (EXPRESS)','590 NOK (EXPRESS)','250 PLN (EXPRESS)','490 SEK (EXPRESS)') NOT NULL default 'NO',
+                  `pmethod` varchar(255) NOT NULL default 'VISA,MASTER',
+                  `delivery_time` varchar(5) default NULL,
+                  `express_delivery_time` varchar(5) default NULL,
+                  `eu` int(1) default '0',
+                  `cod_costs` varchar(12) default NULL,
+                  PRIMARY KEY (`ISO3_code`)
+                ) $innodb
             },
         ],
         pre_drop_ddl => [ 'DROP VIEW mysql_loader_test2', ],
-        drop => [ 'mysql_loader_test1', ],
-        count => 1,
+        drop => [ 'mysql_loader-test1', 'mysql_loader_test3' ],
+        count => 5 + 30 * 2,
         run => sub {
-            my ($schema, $monikers, $classes) = @_;
+            my ($monikers, $classes);
+            ($schema, $monikers, $classes) = @_;
 
-            my $rsrc = $schema->resultset($monikers->{mysql_loader_test2})->result_source;
+            is $monikers->{'mysql_loader-test1'}, 'MysqlLoaderTest1',
+                'table with dash correctly monikerized';
+
+            my $rsrc = $schema->source('MysqlLoaderTest2');
 
             is $rsrc->column_info('value')->{data_type}, 'varchar',
                 'view introspected successfully';
+
+            $rsrc = $schema->source('MysqlLoaderTest3');
+
+            is_deeply $rsrc->column_info('del_group')->{extra}{list}, ['19,90 (<500)/0 EUR','4,90 (<120)/0 EUR','7,90 (<200)/0 CHF','300 (<6000)/0 CZK','4,90 (<100)/0 EUR','39 (<900)/0 DKK','299 (<5000)/0 EEK','9,90 (<250)/0 EUR','3,90 (<100)/0 GBP','3000 (<70000)/0 HUF','4000 (<70000)/0 JPY','13,90 (<200)/0 LVL','99 (<2500)/0 NOK','39 (<1000)/0 PLN','1000 (<20000)/0 RUB','49 (<2500)/0 SEK','29 (<600)/0 USD','19,90 (<600)/0 EUR','0 EUR','0 CHF'],
+                'hairy enum introspected correctly';
+
+            my $class    = $classes->{'mysql_loader-test1'};
+            my $filename = $schema->loader->get_dump_filename($class);
+
+            my $code = slurp_file $filename;
+
+            like $code, qr/^=head1 NAME\n\n^$class - The\nTable\n\n^=cut\n/m,
+                'table comment';
+
+            like $code, qr/^=head2 id\n\n(.+:.+\n)+\nThe\nColumn\n\n/m,
+                'column comment and attrs';
+
+            SKIP: {
+                my $dbh = $schema->storage->dbh;
+
+                try {
+                    $dbh->do('CREATE DATABASE `dbicsl-test`');
+                }
+                catch {
+                    skip "no CREATE DATABASE privileges", 30 * 2;
+                };
+
+                $dbh->do(<<"EOF");
+                    CREATE TABLE `dbicsl-test`.mysql_loader_test4 (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        value VARCHAR(100)
+                    ) $innodb
+EOF
+                $dbh->do(<<"EOF");
+                    CREATE TABLE `dbicsl-test`.mysql_loader_test5 (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        value VARCHAR(100),
+                        four_id INTEGER,
+                        CONSTRAINT loader_test5_uniq UNIQUE (four_id),
+                        FOREIGN KEY (four_id) REFERENCES `dbicsl-test`.mysql_loader_test4 (id)
+                    ) $innodb
+EOF
+
+                $dbh->do('CREATE DATABASE `dbicsl.test`');
+
+                # Test that keys are correctly cached by naming the primary and
+                # unique keys in this table with the same name as a table in
+                # the `dbicsl-test` schema differently.
+                $dbh->do(<<"EOF");
+                    CREATE TABLE `dbicsl.test`.mysql_loader_test5 (
+                        pk INT AUTO_INCREMENT PRIMARY KEY,
+                        value VARCHAR(100),
+                        four_id INTEGER,
+                        CONSTRAINT loader_test5_uniq UNIQUE (four_id),
+                        FOREIGN KEY (four_id) REFERENCES `dbicsl-test`.mysql_loader_test4 (id)
+                    ) $innodb
+EOF
+
+                $dbh->do(<<"EOF");
+                    CREATE TABLE `dbicsl.test`.mysql_loader_test6 (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        value VARCHAR(100),
+                        mysql_loader_test4_id INTEGER,
+                        FOREIGN KEY (mysql_loader_test4_id) REFERENCES `dbicsl-test`.mysql_loader_test4 (id)
+                    ) $innodb
+EOF
+                $dbh->do(<<"EOF");
+                    CREATE TABLE `dbicsl.test`.mysql_loader_test7 (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        value VARCHAR(100),
+                        six_id INTEGER UNIQUE,
+                        FOREIGN KEY (six_id) REFERENCES `dbicsl.test`.mysql_loader_test6 (id)
+                    ) $innodb
+EOF
+                $dbh->do(<<"EOF");
+                    CREATE TABLE `dbicsl-test`.mysql_loader_test8 (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        value VARCHAR(100),
+                        mysql_loader_test7_id INTEGER,
+                        FOREIGN KEY (mysql_loader_test7_id) REFERENCES `dbicsl.test`.mysql_loader_test7 (id)
+                    ) $innodb
+EOF
+                # Test dumping a rel to a table that's not part of the dump.
+                $dbh->do('CREATE DATABASE `dbicsl_test_ignored`');
+                $dbh->do(<<"EOF");
+                    CREATE TABLE `dbicsl_test_ignored`.mysql_loader_test9 (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        value VARCHAR(100)
+                    ) $innodb
+EOF
+                $dbh->do(<<"EOF");
+                    CREATE TABLE `dbicsl-test`.mysql_loader_test10 (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        value VARCHAR(100),
+                        mysql_loader_test9_id INTEGER,
+                        FOREIGN KEY (mysql_loader_test9_id) REFERENCES `dbicsl_test_ignored`.mysql_loader_test9 (id)
+                    ) $innodb
+EOF
+
+                $databases_created = 1;
+
+                SKIP: foreach my $db_schema (['dbicsl-test', 'dbicsl.test'], '%') {
+                    if ($db_schema eq '%') {
+                        try {
+                            $dbh->selectall_arrayref('SHOW DATABASES');
+                        }
+                        catch {
+                            skip 'no SHOW DATABASES privileges', 28;
+                        }
+                    }
+
+                    lives_and {
+                        rmtree EXTRA_DUMP_DIR;
+
+                        my @warns;
+                        local $SIG{__WARN__} = sub {
+                            push @warns, $_[0] unless $_[0] =~ /\bcollides\b/;
+                        };
+
+                        make_schema_at(
+                            'MySQLMultiSchema',
+                            {
+                                naming => 'current',
+                                db_schema => $db_schema,
+                                moniker_parts => ['schema', 'name'],
+                                dump_directory => EXTRA_DUMP_DIR,
+                                quiet => 1,
+                            },
+                            [ $dsn, $user, $password ],
+                        );
+
+                        diag join "\n", @warns if @warns;
+
+                        is @warns, 0;
+                    } 'dumped schema for "dbicsl-test" and "dbicsl.test" databases with no warnings';
+
+                    my ($test_schema, $rsrc, $rs, $row, %uniqs, $rel_info);
+
+                    lives_and {
+                        ok $test_schema = MySQLMultiSchema->connect($dsn, $user, $password);
+                    } 'connected test schema';
+
+                    lives_and {
+                        ok $rsrc = $test_schema->source('DbicslDashTestMysqlLoaderTest4');
+                    } 'got source for table in database name with dash';
+
+                    is try { $rsrc->column_info('id')->{is_auto_increment} }, 1,
+                        'column in database name with dash';
+
+                    is try { $rsrc->column_info('value')->{data_type} }, 'varchar',
+                        'column in database name with dash';
+
+                    is try { $rsrc->column_info('value')->{size} }, 100,
+                        'column in database name with dash';
+
+                    lives_and {
+                        ok $rs = $test_schema->resultset('DbicslDashTestMysqlLoaderTest4');
+                    } 'got resultset for table in database name with dash';
+
+                    lives_and {
+                        ok $row = $rs->create({ value => 'foo' });
+                    } 'executed SQL on table in database name with dash';
+
+                    SKIP: {
+                        skip 'set the environment variable DBICTEST_MYSQL_INNODB=1 to test relationships', 3 unless $test_innodb;
+
+                        $rel_info = try { $rsrc->relationship_info('dbicsl_dash_test_mysql_loader_test5') };
+
+                        is_deeply $rel_info->{cond}, {
+                            'foreign.four_id' => 'self.id'
+                        }, 'relationship in database name with dash';
+
+                        is $rel_info->{attrs}{accessor}, 'single',
+                            'relationship in database name with dash';
+
+                        is $rel_info->{attrs}{join_type}, 'LEFT',
+                            'relationship in database name with dash';
+                    }
+
+                    lives_and {
+                        ok $rsrc = $test_schema->source('DbicslDashTestMysqlLoaderTest5');
+                    } 'got source for table in database name with dash';
+
+                    %uniqs = try { $rsrc->unique_constraints };
+
+                    is keys %uniqs, 2,
+                        'got unique and primary constraint in database name with dash';
+
+                    delete $uniqs{primary};
+
+                    is_deeply ((values %uniqs)[0], ['four_id'],
+                        'unique constraint is correct in database name with dash');
+
+                    lives_and {
+                        ok $rsrc = $test_schema->source('DbicslDotTestMysqlLoaderTest6');
+                    } 'got source for table in database name with dot';
+
+                    is try { $rsrc->column_info('id')->{is_auto_increment} }, 1,
+                        'column in database name with dot introspected correctly';
+
+                    is try { $rsrc->column_info('value')->{data_type} }, 'varchar',
+                        'column in database name with dot introspected correctly';
+
+                    is try { $rsrc->column_info('value')->{size} }, 100,
+                        'column in database name with dot introspected correctly';
+
+                    lives_and {
+                        ok $rs = $test_schema->resultset('DbicslDotTestMysqlLoaderTest6');
+                    } 'got resultset for table in database name with dot';
+
+                    lives_and {
+                        ok $row = $rs->create({ value => 'foo' });
+                    } 'executed SQL on table in database name with dot';
+
+                    SKIP: {
+                        skip 'set the environment variable DBICTEST_MYSQL_INNODB=1 to test relationships', 3 unless $test_innodb;
+
+                        $rel_info = try { $rsrc->relationship_info('mysql_loader_test7') };
+
+                        is_deeply $rel_info->{cond}, {
+                            'foreign.six_id' => 'self.id'
+                        }, 'relationship in database name with dot';
+
+                        is $rel_info->{attrs}{accessor}, 'single',
+                            'relationship in database name with dot';
+
+                        is $rel_info->{attrs}{join_type}, 'LEFT',
+                            'relationship in database name with dot';
+                    }
+
+                    lives_and {
+                        ok $rsrc = $test_schema->source('DbicslDotTestMysqlLoaderTest7');
+                    } 'got source for table in database name with dot';
+
+                    %uniqs = try { $rsrc->unique_constraints };
+
+                    is keys %uniqs, 2,
+                        'got unique and primary constraint in database name with dot';
+
+                    delete $uniqs{primary};
+
+                    is_deeply ((values %uniqs)[0], ['six_id'],
+                        'unique constraint is correct in database name with dot');
+
+                    SKIP: {
+                        skip 'set the environment variable DBICTEST_MYSQL_INNODB=1 to test relationships', 4 unless $test_innodb;
+
+                        lives_and {
+                            ok $test_schema->source('DbicslDotTestMysqlLoaderTest6')
+                                ->has_relationship('mysql_loader_test4');
+                        } 'cross-database relationship in multi-db_schema';
+
+                        lives_and {
+                            ok $test_schema->source('DbicslDashTestMysqlLoaderTest4')
+                                ->has_relationship('mysql_loader_test6s');
+                        } 'cross-database relationship in multi-db_schema';
+
+                        lives_and {
+                            ok $test_schema->source('DbicslDashTestMysqlLoaderTest8')
+                                ->has_relationship('mysql_loader_test7');
+                        } 'cross-database relationship in multi-db_schema';
+
+                        lives_and {
+                            ok $test_schema->source('DbicslDotTestMysqlLoaderTest7')
+                                ->has_relationship('mysql_loader_test8s');
+                        } 'cross-database relationship in multi-db_schema';
+                    }
+                }
+            }
         },
     },
 );
 
 if( !$dsn || !$user ) {
-    $tester->skip_tests('You need to set the DBICTEST_MYSQL_DSN, _USER, and _PASS environment variables');
+    $tester->skip_tests('You need to set the DBICTEST_MYSQL_DSN, DBICTEST_MYSQL_USER, and DBICTEST_MYSQL_PASS environment variables');
 }
 else {
     diag $skip_rels_msg if not $test_innodb;
     $tester->run_tests();
 }
 
+END {
+    if (not $ENV{SCHEMA_LOADER_TESTS_NOCLEANUP}) {
+        if ($databases_created && (my $dbh = try { $schema->storage->dbh })) {
+            foreach my $table ('`dbicsl-test`.mysql_loader_test10',
+                               'dbicsl_test_ignored.mysql_loader_test9',
+                               '`dbicsl-test`.mysql_loader_test8',
+                               '`dbicsl.test`.mysql_loader_test7',
+                               '`dbicsl.test`.mysql_loader_test6',
+                               '`dbicsl.test`.mysql_loader_test5',
+                               '`dbicsl-test`.mysql_loader_test5',
+                               '`dbicsl-test`.mysql_loader_test4') {
+                try {
+                    $dbh->do("DROP TABLE $table");
+                }
+                catch {
+                    diag "Error dropping table: $_";
+                };
+            }
+
+            foreach my $db (qw/dbicsl-test dbicsl.test dbicsl_test_ignored/) {
+                try {
+                    $dbh->do("DROP DATABASE `$db`");
+                }
+                catch {
+                    diag "Error dropping test database $db: $_";
+                };
+            }
+        }
+        rmtree EXTRA_DUMP_DIR;
+    }
+}
 # vim:et sts=4 sw=4 tw=0:

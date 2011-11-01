@@ -2,24 +2,22 @@ package DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_040;
 
 use strict;
 use warnings;
-use mro 'c3';
 use base 'DBIx::Class::Schema::Loader::RelBuilder::Compat::v0_05';
-use Carp::Clan qw/^DBIx::Class/;
-use Lingua::EN::Inflect::Number ();
+use mro 'c3';
 
-our $VERSION = '0.07010';
+our $VERSION = '0.07011';
 
 sub _relnames_and_method {
     my ( $self, $local_moniker, $rel, $cond, $uniqs, $counters ) = @_;
 
     my $remote_moniker = $rel->{remote_source};
-    my $remote_table   = $self->{schema}->source( $remote_moniker )->from;
+    my $remote_table   = $rel->{remote_table};
 
-    my $local_table = $self->{schema}->source($local_moniker)->from;
+    my $local_table = $rel->{local_table};
     my $local_cols  = $rel->{local_columns};
 
     # for single-column case, set the remote relname to just the column name
-    my $remote_relname =
+    my ($remote_relname) =
         scalar keys %{$cond} == 1
             ? $self->_inflect_singular( values %$cond  )
             : $self->_inflect_singular( lc $remote_table );
@@ -30,9 +28,9 @@ sub _relnames_and_method {
     if ($counters->{$remote_moniker} > 1) {
         my $colnames = '_' . join( '_', @$local_cols );
         $remote_relname .= $colnames if keys %$cond > 1;
-        $local_relname = $self->_inflect_plural( lc($local_table) . $colnames );
+        ($local_relname) = $self->_inflect_plural( lc($local_table) . $colnames );
     } else {
-        $local_relname = $self->_inflect_plural(lc $local_table);
+        ($local_relname) = $self->_inflect_plural(lc $local_table);
     }
 
     return ( $local_relname, $remote_relname, 'has_many' );

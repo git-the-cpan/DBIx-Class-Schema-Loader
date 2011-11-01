@@ -1,25 +1,29 @@
 ---
-abstract: 'Dynamic definition of a DBIx::Class::Schema'
+abstract: 'Create a DBIx::Class::Schema based on a database'
 author:
   - 'blblack: Brandon Black <blblack@gmail.com>'
 build_requires:
+  Config::Any: 0
+  Config::General: 0
   DBD::SQLite: 1.29
   DBI: 1.56
-  ExtUtils::MakeMaker: 6.42
+  ExtUtils::MakeMaker: 6.56
   File::Copy: 0
   File::Path: 2.07
   File::Temp: 0.16
   IPC::Open3: 0
   Moose: 1.12
-  MooseX::NonMoose: 0.15
+  MooseX::MarkAsMethods: 0.13
+  MooseX::NonMoose: 0.16
   Test::Exception: 0
   Test::More: 0.94
   Test::Warn: 0.21
   namespace::autoclean: 0.09
 configure_requires:
-  ExtUtils::MakeMaker: 6.42
+  ExtUtils::MakeMaker: 6.56
 distribution_type: module
-generated_by: 'Module::Install version 1.00'
+dynamic_config: 1
+generated_by: 'Module::Install version 1.04'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -34,20 +38,23 @@ requires:
   Class::Accessor::Grouped: 0.10002
   Class::C3::Componentised: 1.0008
   Class::Inspector: 0
-  Class::Load: 0
   Class::Unload: 0
   DBIx::Class: 0.08127
   Data::Dump: 1.06
   Digest::MD5: 2.36
   Exporter: 5.63
-  File::Slurp: 9999.13
   File::Spec: 0
   Lingua::EN::Inflect::Number: 1.1
   Lingua::EN::Inflect::Phrase: 0.02
+  Lingua::EN::Tagger: 0
   List::MoreUtils: 0
   MRO::Compat: 0.09
   Scalar::Util: 0
   Scope::Guard: 0
+  String::CamelCase: 0.02
+  String::ToIdentifier::EN: 0.05
+  Sub::Name: 0
+  Task::Weaken: 0
   Try::Tiny: 0
   namespace::clean: 0.20
   perl: 5.8.1
@@ -56,4 +63,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.07010
+version: 0.07011

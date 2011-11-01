@@ -1,5 +1,75 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.07011  2011-11-01 09:00:00
+        - add -I option to dbicdump
+        - do not delete default custom content comment and ending 1; from custom
+          content in files that are being renamed (RT#70507)
+        - use MooseX::MarkAsMethods instead of namespace::autoclean for the
+          use_moose option, this protects operator overloads, only_autoclean
+          option added for the old behavior
+        - add experimental naming=v8 mode with better CamelCase identifier
+          support, relationship naming and conversion of non-identifier chars
+          (RT#71945)
+        - add naming => { force_ascii => 1 } option for Unicode database names
+        - implement schema_base_class and schema_components for dynamic and
+          working schemas
+        - remove dependency on File::Slurp
+        - allow the constraint and exclude options to be used simultaneously
+          (bphillips)
+        - fix Oracle multi-db_schema unique detection (RT#70851)
+        - fix Oracle common tests fail with multi_schema due to not resetting
+          the preserve_case option after the preserve_case tests (RT#70829)
+        - handle <type> DEFAULT NULL for Pg
+        - handle boolean DEFAULT 0::boolean for Pg
+        - config file support for dbicdump script (alnewkirk)
+        - added filter_generated_code option (RT#53841)
+        - generic table and column comments support
+        - MySQL table and column comments support
+        - support DOS line endings on *nix and *nix line ending on Win32
+        - add quiet option
+        - $schema->loader is now a public method
+        - add schema_components option
+        - sort relationships so they always come out in the same order
+        - also sort unique constraints so they always come out in the same order
+        - multi db_schema support with cross-schema rels (RT#39478)
+        - added moniker_parts option for name clashes in multi db_schema setups
+        - add rel_name_map option
+        - fix the decimal data type for MS Access over ODBC
+        - fix enum/set detection for MySQL (RT#68717)
+        - fix is_nullable detection on MS Access
+        - remove '$table has no primary key' warning
+        - added uniq_to_primary option to promote unique keys to primary keys
+          (RT#25944)
+        - support arrayrefs for result_namespace and resultset_namespace
+          (RT#40214)
+        - add naming => { monikers => 'preserve' } or 'singular'/'plural' to
+          control moniker inflection (RT#44935)
+        - add naming => { column_accessors => 'preserve' } to not normalize
+          CamelCase column names to lower case for accessors (RT#64668)
+        - support quoted PostgreSQL schema names with special chars (RT#64766)
+        - automatically turn on quoting for MySQL (RT#60469)
+        - become utf8-aware (RT#67920)
+        - handle duplicate relationship names (RT#64041)
+        - fix a bug in Sybase ASE foreign key detection
+        - generate POD for result_base_class, additional_classes,
+          additional_base_classes, left_base_classes, components,
+          result_components_map, result_roles, result_roles_map, unique
+          constraints, set_primary_key and table
+        - rename result_component_map to result_components_map (old name still
+          works)
+        - fix accessor collision detection for methods from
+          result_components_map components
+        - add result_roles and result_roles_map options
+        - fix for mysql rel detection in mixed-case tables on mixed-case
+          filesystems (OSX and Windows)
+        - support for DBD::Firebird
+        - support for unicode Firebird data types
+        - handle "use warnings FATAL => 'all';" in custom/external content
+          (RT#59849)
+        - for dynamic schemas, if the naming option is set, will automatically
+          turn on use_namespaces=1 as well. Set use_namespaces=0 to disable
+          this behavior (RT#59849)
+
 0.07010  2011-03-04 08:26:31
         - add result_component_map option
 

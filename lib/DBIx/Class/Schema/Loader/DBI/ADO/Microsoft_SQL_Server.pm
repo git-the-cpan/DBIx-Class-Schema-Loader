@@ -7,10 +7,8 @@ use base qw/
     DBIx::Class::Schema::Loader::DBI::MSSQL
 /;
 use mro 'c3';
-use Carp::Clan qw/^DBIx::Class/;
-use namespace::clean;
 
-our $VERSION = '0.07010';
+our $VERSION = '0.07011';
 
 =head1 NAME
 
@@ -23,8 +21,21 @@ Proxy for L<DBIx::Class::Schema::Loader::DBI::MSSQL> when using L<DBD::ADO>.
 
 See L<DBIx::Class::Schema::Loader::Base> for usage information.
 
+=cut
+
+sub _table_comment {
+    local $^W = 0; # invalid object warnings
+    shift->next::method(@_);
+}
+
+sub _column_comment {
+    local $^W = 0; # invalid object warnings
+    shift->next::method(@_);
+}
+
 =head1 SEE ALSO
 
+L<DBIx::Class::Schema::Loader::DBI::ADO>,
 L<DBIx::Class::Schema::Loader::DBI::MSSQL>,
 L<DBIx::Class::Schema::Loader>, L<DBIx::Class::Schema::Loader::Base>,
 L<DBIx::Class::Schema::Loader::DBI>
