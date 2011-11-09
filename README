@@ -325,5 +325,6 @@ COPYRIGHT & LICENSE
     under the same terms as Perl itself.
 
 SEE ALSO
-    DBIx::Class, DBIx::Class::Manual::ExampleSchema
+    DBIx::Class, DBIx::Class::Manual::Intro, DBIx::Class::Tutorial,
+    DBIx::Class::Schema::Loader::Base
 

@@ -8,12 +8,13 @@ use mro 'c3';
 use Carp::Clan qw/^DBIx::Class/;
 use Scalar::Util 'weaken';
 use Sub::Name 'subname';
+use DBIx::Class::Schema::Loader::Utils 'array_eq';
 use namespace::clean;
 
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.07011';
+our $VERSION = '0.07012';
 
 __PACKAGE__->mk_group_accessors('inherited', qw/
                                 _loader_args
@@ -240,13 +241,29 @@ sub connection {
         use_namespaces => 1,
     );
 
+    my $modify_isa = 0;
+    my @components;
+
     if ($temp_loader->schema_base_class || $temp_loader->schema_components) {
-        my @components = @{ $temp_loader->schema_components }
+        @components = @{ $temp_loader->schema_components }
             if $temp_loader->schema_components;
 
         push @components, ('+'.$temp_loader->schema_base_class)
             if $temp_loader->schema_base_class;
 
+        my $class_isa = do {
+            no strict 'refs';
+            \@{"${class}::ISA"};
+        };
+
+        my @component_classes = map {
+            /^\+/ ? substr($_, 1, length($_) - 1) : "DBIx::Class::$_"
+        } @components;
+
+        $modify_isa++ if not array_eq([ @$class_isa[0..(@components-1)] ], \@component_classes)
+    }
+
+    if ($modify_isa) {
         $class->load_components(@components);
 
         # This hack is necessary because we changed @ISA of $self through
@@ -585,7 +602,8 @@ the same terms as Perl itself.
 
 =head1 SEE ALSO
 
-L<DBIx::Class>, L<DBIx::Class::Manual::ExampleSchema>
+L<DBIx::Class>, L<DBIx::Class::Manual::Intro>, L<DBIx::Class::Tutorial>,
+L<DBIx::Class::Schema::Loader::Base>
 
 =cut
 
