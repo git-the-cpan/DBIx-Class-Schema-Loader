@@ -7,6 +7,7 @@ build_requires:
   Config::General: 0
   DBD::SQLite: 1.29
   DBI: 1.56
+  DBIx::Class::IntrospectableM2M: 0
   ExtUtils::MakeMaker: 6.56
   File::Copy: 0
   File::Path: 2.07
@@ -63,4 +64,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.07014
+version: 0.07015
