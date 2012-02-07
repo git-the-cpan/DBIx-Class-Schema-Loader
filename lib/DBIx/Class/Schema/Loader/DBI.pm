@@ -9,7 +9,7 @@ use List::MoreUtils 'any';
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07015';
+our $VERSION = '0.07016';
 
 __PACKAGE__->mk_group_accessors('simple', qw/
     _disable_pk_detection
@@ -323,32 +323,52 @@ sub _table_uniq_info {
 
 sub _table_comment {
     my ($self, $table) = @_;
+    my $dbh = $self->dbh;
 
     my $comments_table = $table->clone;
     $comments_table->name($self->table_comments_table);
 
-    my ($comment) = try { $self->dbh->selectrow_array(<<"EOF") };
+    my ($comment) =
+        (exists $self->_tables->{$comments_table->sql_name} || undef)
+        && try { $dbh->selectrow_array(<<"EOF") };
 SELECT comment_text
 FROM @{[ $comments_table->sql_name ]}
-WHERE table_name = @{[ $self->dbh->quote($table->name) ]}
+WHERE table_name = @{[ $dbh->quote($table->name) ]}
 EOF
+
+    # Failback: try the REMARKS column on table_info
+    if (!$comment && $dbh->can('table_info')) {
+        my $sth = $self->_dbh_table_info( $dbh, undef, $table->schema, $table->name );
+        my $info = $sth->fetchrow_hashref();
+        $comment = $info->{REMARKS};
+    }
 
     return $comment;
 }
 
 sub _column_comment {
     my ($self, $table, $column_number, $column_name) = @_;
+    my $dbh = $self->dbh;
 
     my $comments_table = $table->clone;
     $comments_table->name($self->column_comments_table);
 
-    my ($comment) = try { $self->dbh->selectrow_array(<<"EOF") };
+    my ($comment) =
+        (exists $self->_tables->{$comments_table->sql_name} || undef)
+        && try { $dbh->selectrow_array(<<"EOF") };
 SELECT comment_text
 FROM @{[ $comments_table->sql_name ]}
-WHERE table_name = @{[ $self->dbh->quote($table->name) ]}
-AND column_name = @{[ $self->dbh->quote($column_name) ]}
+WHERE table_name = @{[ $dbh->quote($table->name) ]}
+AND column_name = @{[ $dbh->quote($column_name) ]}
 EOF
-        
+
+    # Failback: try the REMARKS column on column_info
+    if (!$comment && $dbh->can('column_info')) {
+        my $sth = $self->_dbh_column_info( $dbh, undef, $table->schema, $table->name, $column_name );
+        my $info = $sth->fetchrow_hashref();
+        $comment = $info->{REMARKS};
+    }
+
     return $comment;
 }
 
@@ -515,6 +535,13 @@ sub _dbh_type_info_type_name {
 
 # do not use this, override _columns_info_for instead
 sub _extra_column_info {}
+
+# override to mask warnings if needed
+sub _dbh_table_info {
+    my ($self, $dbh) = (shift, shift);
+
+    return $dbh->table_info(@_);
+}
 
 # override to mask warnings if needed (see mysql)
 sub _dbh_column_info {

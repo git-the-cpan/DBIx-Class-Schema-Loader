@@ -119,7 +119,7 @@ sub run_tests {
     $num_rescans++ if $self->{vendor} eq 'Firebird';
 
     plan tests => @connect_info *
-        (220 + $num_rescans * $col_accessor_map_tests + $extra_count + ($self->{data_type_tests}{test_count} || 0));
+        (221 + $num_rescans * $col_accessor_map_tests + $extra_count + ($self->{data_type_tests}{test_count} || 0));
 
     foreach my $info_idx (0..$#connect_info) {
         my $info = $connect_info[$info_idx];
@@ -210,6 +210,11 @@ my (@statements, @statements_reltests, @statements_advanced,
     @statements_advanced_sqlite, @statements_inline_rels,
     @statements_implicit_rels);
 
+sub CONSTRAINT {
+    my $self = shift;
+return qr/^(?:\S+\.)?(?:(?:$self->{vendor}|extra)[_-]?)?loader[_-]?test[0-9]+(?!.*_)/i;
+}
+
 sub setup_schema {
     my ($self, $connect_info, $expected_count) = @_;
 
@@ -225,8 +230,7 @@ sub setup_schema {
     }
 
     my %loader_opts = (
-        constraint              =>
-          qr/^(?:\S+\.)?(?:(?:$self->{vendor}|extra)[_-]?)?loader[_-]?test[0-9]+(?!.*_)/i,
+        constraint              => $self->CONSTRAINT,
         result_namespace        => RESULT_NAMESPACE,
         resultset_namespace     => RESULTSET_NAMESPACE,
         schema_base_class       => 'TestSchemaBaseClass',
@@ -1215,6 +1219,41 @@ EOF
 
     # run extra tests
     $self->{extra}{run}->($conn, $monikers, $classes, $self) if $self->{extra}{run};
+
+    ## Create a dump from an existing $dbh in a transaction
+
+TODO: {
+    local $TODO = 'dumping in a txn is experimental and Pg-only right now'
+        unless $self->{vendor} eq 'Pg';
+
+    ok eval {
+        my %opts = (
+          naming         => 'current',
+          constraint     => $self->CONSTRAINT,
+          dump_directory => DUMP_DIR,
+          debug          => ($ENV{SCHEMA_LOADER_TESTS_DEBUG}||0)
+        );
+
+        my $guard = $conn->txn_scope_guard;
+
+        my $warn_handler = $SIG{__WARN__} || sub { warn @_ };
+        local $SIG{__WARN__} = sub {
+            $warn_handler->(@_)
+                unless $_[0] =~ RESCAN_WARNINGS
+                    || $_[0] =~ /commit ineffective with AutoCommit enabled/; # FIXME
+        };
+
+        my $schema_from = DBIx::Class::Schema::Loader::make_schema_at(
+            "TestSchemaFromAnother", \%opts, [ sub { $conn->storage->dbh } ]
+        );
+
+        $guard->commit;
+
+        1;
+    }, 'Making a schema from another schema inside a transaction worked';
+
+    diag $@ if $@ && (not $TODO);
+}
 
     $self->drop_tables unless $ENV{SCHEMA_LOADER_TESTS_NOCLEANUP};
 
