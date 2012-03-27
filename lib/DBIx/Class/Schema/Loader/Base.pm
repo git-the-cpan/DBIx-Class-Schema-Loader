@@ -28,7 +28,7 @@ use List::MoreUtils qw/all any firstidx uniq/;
 use File::Temp 'tempfile';
 use namespace::clean;
 
-our $VERSION = '0.07017';
+our $VERSION = '0.07018';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -252,7 +252,7 @@ transition instead of just being lowercased, so C<FooId> becomes C<foo_id>.
 (EXPERIMENTAL)
 
 The default mode is L</v7>, to get L</v8> mode, you have to specify it in
-L</naming> explictly until C<0.08> comes out.
+L</naming> explicitly until C<0.08> comes out.
 
 L</monikers> and L</column_accessors> are created using
 L<String::ToIdentifier::EN::Unicode> or L<String::ToIdentifier::EN> if

@@ -8,7 +8,7 @@ build_requires:
   DBD::SQLite: 1.29
   DBI: 1.56
   DBIx::Class::IntrospectableM2M: 0
-  ExtUtils::MakeMaker: 6.62
+  ExtUtils::MakeMaker: 6.59
   File::Copy: 0
   File::Path: 2.07
   File::Temp: 0.16
@@ -21,9 +21,9 @@ build_requires:
   Test::Warn: 0.21
   namespace::autoclean: 0.09
 configure_requires:
-  ExtUtils::MakeMaker: 6.62
+  ExtUtils::MakeMaker: 6.59
 dynamic_config: 0
-generated_by: 'Module::Install version 1.04, CPAN::Meta::Converter version 2.112150'
+generated_by: 'Module::Install version 1.06, CPAN::Meta::Converter version 2.120630'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -63,4 +63,4 @@ resources:
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
   x_IRC: irc://irc.perl.org/#dbix-class
   x_MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
-version: 0.07017
+version: 0.07018
