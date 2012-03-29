@@ -6,10 +6,11 @@ use base qw/DBIx::Class::Schema::Loader::Base/;
 use mro 'c3';
 use Try::Tiny;
 use List::MoreUtils 'any';
+use Carp::Clan qw/^DBIx::Class/;
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07018';
+our $VERSION = '0.07019';
 
 __PACKAGE__->mk_group_accessors('simple', qw/
     _disable_pk_detection
@@ -467,8 +468,6 @@ sub _columns_info_for {
             my $col_name = $info->{COLUMN_NAME};
             $col_name =~ s/^\"(.*)\"$/$1/;
 
-            $col_name = $self->_lc($col_name);
-
             my $extra_info = $self->_extra_column_info(
                 $table, $col_name, $column_info, $info
             ) || {};
@@ -485,7 +484,7 @@ sub _columns_info_for {
     my @columns = @{ $sth->{NAME} };
 
     COL: for my $i (0 .. $#columns) {
-        next COL if %{ $result{ $self->_lc($columns[$i]) }||{} };
+        next COL if %{ $result{ $columns[$i] }||{} };
 
         my $column_info = {};
         $column_info->{data_type} = lc $sth->{TYPE}[$i];
@@ -509,7 +508,7 @@ sub _columns_info_for {
         my $extra_info = $self->_extra_column_info($table, $columns[$i], $column_info, $sth) || {};
         $column_info = { %$column_info, %$extra_info };
 
-        $result{ $self->_lc($columns[$i]) } = $column_info;
+        $result{ $columns[$i] } = $column_info;
     }
     $sth->finish;
 
@@ -521,6 +520,32 @@ sub _columns_info_for {
             my $type_name = $self->_dbh_type_info_type_name($type_num);
             $colinfo->{data_type} = lc $type_name if $type_name;
         }
+    }
+
+    # check for instances of the same column name with different case in preserve_case=0 mode
+    if (not $self->preserve_case) {
+        my %lc_colnames;
+
+        foreach my $col (keys %result) {
+            push @{ $lc_colnames{lc $col} }, $col;
+        }
+
+        if (keys %lc_colnames != keys %result) {
+            my @offending_colnames = map @$_, grep @$_ > 1, values %lc_colnames;
+
+            my $offending_colnames = join ", ", map "'$_'", @offending_colnames;
+
+            croak "columns $offending_colnames in table @{[ $table->sql_name ]} collide in preserve_case=0 mode. preserve_case=1 mode required";
+        }
+
+        # apply lowercasing
+        my %lc_result;
+
+        while (my ($col, $info) = each %result) {
+            $lc_result{ $self->_lc($col) } = $info;
+        }
+
+        %result = %lc_result;
     }
 
     return \%result;

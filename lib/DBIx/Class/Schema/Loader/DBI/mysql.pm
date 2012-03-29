@@ -8,10 +8,11 @@ use Carp::Clan qw/^DBIx::Class/;
 use List::Util 'first';
 use List::MoreUtils 'any';
 use Try::Tiny;
+use Scalar::Util 'blessed';
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07018';
+our $VERSION = '0.07019';
 
 =head1 NAME
 
@@ -201,10 +202,10 @@ sub _columns_info_for {
         delete $info->{size} if $data_type !~ /^(?: (?:var)?(?:char(?:acter)?|binary) | bit | year)\z/ix;
 
         # information_schema is available in 5.0+
-        my ($precision, $scale, $column_type, $default) = eval { $self->dbh->selectrow_array(<<'EOF', {}, $table, $col) };
+        my ($precision, $scale, $column_type, $default) = eval { $self->dbh->selectrow_array(<<'EOF', {}, $table->name, lc($col)) };
 SELECT numeric_precision, numeric_scale, column_type, column_default
 FROM information_schema.columns
-WHERE table_name = ? AND column_name = ?
+WHERE table_name = ? AND lower(column_name) = ?
 EOF
         my $has_information_schema = not $@;
 
@@ -279,7 +280,8 @@ sub _extra_column_info {
     if ($dbi_info->{mysql_values}) {
         $extra_info{extra}{list} = $dbi_info->{mysql_values};
     }
-    if (   lc($dbi_info->{COLUMN_DEF})      eq 'current_timestamp'
+    if ((not blessed $dbi_info) # isa $sth
+        && lc($dbi_info->{COLUMN_DEF})      eq 'current_timestamp'
         && lc($dbi_info->{mysql_type_name}) eq 'timestamp') {
 
         my $current_timestamp = 'current_timestamp';
@@ -307,7 +309,7 @@ sub _table_comment {
                 FROM information_schema.tables
                 WHERE table_schema = schema()
                   AND table_name = ?
-            }, undef, $table);
+            }, undef, $table->name);
         };
         # InnoDB likes to auto-append crap.
         if (not $comment) {
@@ -332,8 +334,8 @@ sub _column_comment {
                 FROM information_schema.columns
                 WHERE table_schema = schema()
                   AND table_name = ?
-                  AND column_name = ?
-            }, undef, $table, $column_name);
+                  AND lower(column_name) = ?
+            }, undef, $table->name, lc($column_name));
         };
     }
     return $comment;
