@@ -91,6 +91,7 @@ t/60dbicdump_config.t
 t/65dbicdump_invocations.t
 t/70schema_base_dispatched.t
 t/80split_name.t
+t/90bug_58_mro.t
 t/backcompat/0.04006/10sqlite_common.t
 t/backcompat/0.04006/11mysql_common.t
 t/backcompat/0.04006/12pg_common.t

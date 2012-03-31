@@ -10,7 +10,7 @@ use Carp::Clan qw/^DBIx::Class/;
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07019';
+our $VERSION = '0.07020';
 
 __PACKAGE__->mk_group_accessors('simple', qw/
     _disable_pk_detection
@@ -54,9 +54,10 @@ sub new {
         my $driver = $self->dbh->{Driver}->{Name};
 
         my $subclass = 'DBIx::Class::Schema::Loader::DBI::' . $driver;
-        if ($self->load_optional_class($subclass)) {
-            bless $self, $subclass unless $self->isa($subclass);
+        if ((not $self->isa($subclass)) && $self->load_optional_class($subclass)) {
+            bless $self, $subclass;
             $self->_rebless;
+            Class::C3::reinitialize() if $] < 5.009005;
         }
     }
 
@@ -66,7 +67,7 @@ sub new {
 
     $self->_setup;
 
-    $self;
+    return $self;
 }
 
 sub _build_quote_char {

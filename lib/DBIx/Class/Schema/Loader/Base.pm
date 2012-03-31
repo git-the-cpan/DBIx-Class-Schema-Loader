@@ -3,6 +3,7 @@ package DBIx::Class::Schema::Loader::Base;
 use strict;
 use warnings;
 use base qw/Class::Accessor::Grouped Class::C3::Componentised/;
+use MRO::Compat;
 use mro 'c3';
 use Carp::Clan qw/^DBIx::Class/;
 use DBIx::Class::Schema::Loader::RelBuilder ();
@@ -28,7 +29,7 @@ use List::MoreUtils qw/all any firstidx uniq/;
 use File::Temp 'tempfile';
 use namespace::clean;
 
-our $VERSION = '0.07019';
+our $VERSION = '0.07020';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema

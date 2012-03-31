@@ -2,15 +2,12 @@ package DBIx::Class::Schema::Loader::DBI::Oracle;
 
 use strict;
 use warnings;
-use base qw/
-    DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault
-    DBIx::Class::Schema::Loader::DBI
-/;
+use base 'DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault';
 use mro 'c3';
 use Try::Tiny;
 use namespace::clean;
 
-our $VERSION = '0.07019';
+our $VERSION = '0.07020';
 
 =head1 NAME
 

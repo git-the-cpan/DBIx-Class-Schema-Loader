@@ -2,13 +2,10 @@ package DBIx::Class::Schema::Loader::DBI::Pg;
 
 use strict;
 use warnings;
-use base qw/
-    DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault
-    DBIx::Class::Schema::Loader::DBI
-/;
+use base 'DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault';
 use mro 'c3';
 
-our $VERSION = '0.07019';
+our $VERSION = '0.07020';
 
 =head1 NAME
 

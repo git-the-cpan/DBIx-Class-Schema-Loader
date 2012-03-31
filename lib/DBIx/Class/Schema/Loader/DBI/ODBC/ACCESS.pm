@@ -2,15 +2,13 @@ package DBIx::Class::Schema::Loader::DBI::ODBC::ACCESS;
 
 use strict;
 use warnings;
-use base qw/
-    DBIx::Class::Schema::Loader::DBI::ODBC
-/;
+use base 'DBIx::Class::Schema::Loader::DBI::ODBC';
 use mro 'c3';
 use Try::Tiny;
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07019';
+our $VERSION = '0.07020';
 
 __PACKAGE__->mk_group_accessors('simple', qw/
     __ado_connection
