@@ -45,6 +45,7 @@ requires:
   Digest::MD5: 2.36
   Exporter: 5.63
   File::Spec: 0
+  Hash::Merge: 0
   Lingua::EN::Inflect::Number: 1.1
   Lingua::EN::Inflect::Phrase: 0.02
   Lingua::EN::Tagger: 0
@@ -64,4 +65,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.07020
+version: 0.07021
