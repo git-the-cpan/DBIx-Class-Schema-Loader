@@ -10,7 +10,7 @@ use Carp::Clan qw/^DBIx::Class/;
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07022';
+our $VERSION = '0.07023';
 
 __PACKAGE__->mk_group_accessors('simple', qw/
     _disable_pk_detection
@@ -404,6 +404,7 @@ sub _table_fk_info {
         my $uk_col  = $self->_lc($raw_rel->[3]);
         my $fk_scm  = $raw_rel->[5];
         my $fk_col  = $self->_lc($raw_rel->[7]);
+        my $key_seq = $raw_rel->[8] - 1;
         my $relid   = ($raw_rel->[11] || ( "__dcsld__" . $i++ ));
 
         foreach my $var ($uk_scm, $uk_tbl, $uk_col, $fk_scm, $fk_col, $relid) {
@@ -424,15 +425,18 @@ sub _table_fk_info {
                 ignore_schema => 1
             )),
         );
-        $rels{$relid}{cols}{$uk_col} = $fk_col;
+        
+        # Add this data IN ORDER
+        $rels{$relid}{rcols}[$key_seq] = $uk_col;
+        $rels{$relid}{lcols}[$key_seq] = $fk_col;
     }
     $sth->finish;
 
     my @rels;
     foreach my $relid (keys %rels) {
         push(@rels, {
-            remote_columns => [ keys   %{$rels{$relid}->{cols}} ],
-            local_columns  => [ values %{$rels{$relid}->{cols}} ],
+            remote_columns => $rels{$relid}{rcols},
+            local_columns  => $rels{$relid}{lcols},
             remote_table   => $rels{$relid}->{tbl},
         });
     }

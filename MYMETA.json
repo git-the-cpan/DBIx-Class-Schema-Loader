@@ -51,7 +51,7 @@
             "Carp::Clan" : "0",
             "Class::Accessor::Grouped" : "0.10002",
             "Class::C3::Componentised" : "1.0008",
-            "Class::Inspector" : "0",
+            "Class::Inspector" : "1.27",
             "Class::Unload" : "0",
             "DBIx::Class" : "0.08127",
             "Data::Dump" : "1.06",
@@ -87,5 +87,5 @@
       "x_IRC" : "irc://irc.perl.org/#dbix-class",
       "x_MailingList" : "http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class"
    },
-   "version" : "0.07022"
+   "version" : "0.07023"
 }
