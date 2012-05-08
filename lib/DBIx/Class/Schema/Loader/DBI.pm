@@ -10,7 +10,7 @@ use Carp::Clan qw/^DBIx::Class/;
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07023';
+our $VERSION = '0.07024';
 
 __PACKAGE__->mk_group_accessors('simple', qw/
     _disable_pk_detection
@@ -435,8 +435,8 @@ sub _table_fk_info {
     my @rels;
     foreach my $relid (keys %rels) {
         push(@rels, {
-            remote_columns => $rels{$relid}{rcols},
-            local_columns  => $rels{$relid}{lcols},
+            remote_columns => [ grep defined, @{ $rels{$relid}{rcols} } ],
+            local_columns  => [ grep defined, @{ $rels{$relid}{lcols} } ],
             remote_table   => $rels{$relid}->{tbl},
         });
     }
