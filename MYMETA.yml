@@ -64,4 +64,4 @@ resources:
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
   x_IRC: irc://irc.perl.org/#dbix-class
   x_MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
-version: 0.07025
+version: 0.07026
