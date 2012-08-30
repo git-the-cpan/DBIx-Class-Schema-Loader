@@ -5,7 +5,7 @@ use warnings;
 use base 'DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault';
 use mro 'c3';
 
-our $VERSION = '0.07027';
+our $VERSION = '0.07028';
 
 =head1 NAME
 
@@ -83,9 +83,11 @@ EOF
             schema   => $remote_schema,
         ) unless exists $rels{$fk}{remote_table};
 
-        $rels{$fk}{attrs}{on_delete} = uc $delete_rule;
-        $rels{$fk}{attrs}{on_update} = uc $update_rule;
-        $rels{$fk}{attrs}{is_deferrable} = uc $is_deferrable eq 'YES' ? 1 : 0;
+        $rels{$fk}{attrs} ||= {
+            on_delete     => uc $delete_rule,
+            on_update     => uc $update_rule,
+            is_deferrable => uc $is_deferrable eq 'YES' ? 1 : 0,
+        };
     }
 
     return [ values %rels ];

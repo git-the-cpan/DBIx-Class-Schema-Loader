@@ -48,7 +48,7 @@ requires:
   Hash::Merge: 0
   Lingua::EN::Inflect::Number: 1.1
   Lingua::EN::Inflect::Phrase: 0.02
-  Lingua::EN::Tagger: 0
+  Lingua::EN::Tagger: 0.2
   List::MoreUtils: 0
   MRO::Compat: 0.09
   Scalar::Util: 0
@@ -65,4 +65,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.07027
+version: 0.07028
