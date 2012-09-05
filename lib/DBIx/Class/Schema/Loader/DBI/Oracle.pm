@@ -7,11 +7,11 @@ use mro 'c3';
 use Try::Tiny;
 use namespace::clean;
 
-our $VERSION = '0.07028';
+our $VERSION = '0.07029';
 
 =head1 NAME
 
-DBIx::Class::Schema::Loader::DBI::Oracle - DBIx::Class::Schema::Loader::DBI 
+DBIx::Class::Schema::Loader::DBI::Oracle - DBIx::Class::Schema::Loader::DBI
 Oracle Implementation.
 
 =head1 DESCRIPTION
@@ -78,6 +78,32 @@ sub _filter_tables {
     return $self->next::method(@_);
 }
 
+sub _table_fk_info {
+    my $self = shift;
+    my ($table) = @_;
+
+    my $rels = $self->next::method(@_);
+
+    my $deferrable_sth = $self->dbh->prepare_cached(<<'EOF');
+select deferrable from all_constraints
+where owner = ? and table_name = ? and constraint_name = ?
+EOF
+
+    foreach my $rel (@$rels) {
+        # Oracle does not have update rules
+        $rel->{attrs}{on_update} = 'NO ACTION';;
+
+        # DBD::Oracle's foreign_key_info does not return DEFERRABILITY, so we get it ourselves
+        my ($deferrable) = $self->dbh->selectrow_array(
+            $deferrable_sth, undef, $table->schema, $table->name, $rel->{_constraint_name}
+        );
+
+        $rel->{attrs}{is_deferrable} = $deferrable && $deferrable =~ /^DEFERRABLE/i ? 1 : 0;
+    }
+
+    return $rels;
+}
+
 sub _table_uniq_info {
     my ($self, $table) = @_;
 
@@ -100,7 +126,7 @@ EOF
         my $constr_col  = $self->_lc($constr->[1]);
         push @{$constr_names{$constr_name}}, $constr_col;
     }
-    
+
     my @uniqs = map { [ $_ => $constr_names{$_} ] } keys %constr_names;
     return \@uniqs;
 }
@@ -115,7 +141,7 @@ sub _table_comment {
 
     ($table_comment) = $self->dbh->selectrow_array(<<'EOF', {}, $table->schema, $table->name);
 SELECT comments FROM all_tab_comments
-WHERE owner = ? 
+WHERE owner = ?
   AND table_name = ?
   AND (table_type = 'TABLE' OR table_type = 'VIEW')
 EOF
@@ -133,7 +159,7 @@ sub _column_comment {
 
     ($column_comment) = $self->dbh->selectrow_array(<<'EOF', {}, $table->schema, $table->name, $self->_uc($column_name));
 SELECT comments FROM all_col_comments
-WHERE owner = ? 
+WHERE owner = ?
   AND table_name = ?
   AND column_name = ?
 EOF
@@ -315,7 +341,7 @@ EOF
         elsif (lc($info->{data_type}) eq 'binary_float') {
             $info->{data_type}           = 'real';
             $info->{original}{data_type} = 'binary_float';
-        } 
+        }
         elsif (lc($info->{data_type}) eq 'binary_double') {
             $info->{data_type}           = 'double precision';
             $info->{original}{data_type} = 'binary_double';
