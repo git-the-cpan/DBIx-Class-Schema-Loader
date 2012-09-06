@@ -16,7 +16,7 @@ use namespace::clean;
 # Always remember to do all digits for the version even if they're 0
 # i.e. first release of 0.XX *must* be 0.XX000. This avoids fBSD ports
 # brain damage and presumably various other packaging systems too
-our $VERSION = '0.07030';
+our $VERSION = '0.07031';
 
 __PACKAGE__->mk_group_accessors('inherited', qw/
                                 _loader_args
@@ -28,6 +28,8 @@ __PACKAGE__->mk_group_accessors('inherited', qw/
                                 use_namespaces
 /);
 __PACKAGE__->_loader_args({});
+
+=encoding utf8
 
 =head1 NAME
 
@@ -79,7 +81,7 @@ DBIx::Class::Schema::Loader - Create a DBIx::Class::Schema based on a database
   # -or-
   my $schema1 = "My::Schema"; $schema1->connection(as above);
 
-=head1 DESCRIPTION 
+=head1 DESCRIPTION
 
 DBIx::Class::Schema::Loader automates the definition of a
 L<DBIx::Class::Schema> by scanning database table definitions and setting up
