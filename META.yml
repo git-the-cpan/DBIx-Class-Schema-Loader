@@ -16,8 +16,10 @@ build_requires:
   Moose: 1.12
   MooseX::MarkAsMethods: 0.13
   MooseX::NonMoose: 0.16
+  Pod::Simple: 3.22
   Test::Exception: 0
   Test::More: 0.94
+  Test::Pod: 1.14
   Test::Warn: 0.21
   namespace::autoclean: 0.09
 configure_requires:
@@ -65,4 +67,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.07031
+version: 0.07032

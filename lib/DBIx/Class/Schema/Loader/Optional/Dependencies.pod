@@ -18,7 +18,7 @@ Somewhere in your build-file (e.g. L<Module::Install>'s Makefile.PL):
 
   ...
 
-  configure_requires 'DBIx::Class::Schema::Loader' => '0.07031';
+  configure_requires 'DBIx::Class::Schema::Loader' => '0.07032';
 
   require DBIx::Class::Schema::Loader::Optional::Dependencies;
 
@@ -76,6 +76,20 @@ Modules required for using testing using a config file with dbicdump
 =back
 
 Requirement group: B<test_dbicdump_config>
+
+=head2 POD testing
+
+Modules required for testing POD in this distribution
+
+=over
+
+=item * Pod::Simple >= 3.22
+
+=item * Test::Pod >= 1.14
+
+=back
+
+Requirement group: B<test_pod>
 
 =head2 use_moose
 

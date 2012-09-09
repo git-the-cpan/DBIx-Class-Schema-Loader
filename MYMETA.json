@@ -35,8 +35,10 @@
             "Moose" : "1.12",
             "MooseX::MarkAsMethods" : "0.13",
             "MooseX::NonMoose" : "0.16",
+            "Pod::Simple" : "3.22",
             "Test::Exception" : "0",
             "Test::More" : "0.94",
+            "Test::Pod" : "1.14",
             "Test::Warn" : "0.21",
             "namespace::autoclean" : "0.09"
          }
@@ -87,5 +89,5 @@
       "x_IRC" : "irc://irc.perl.org/#dbix-class",
       "x_MailingList" : "http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class"
    },
-   "version" : "0.07031"
+   "version" : "0.07032"
 }

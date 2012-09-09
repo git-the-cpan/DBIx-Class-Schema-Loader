@@ -1,5 +1,9 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.07032  2012-09-09 13:17:20
+        - SQLite: detect is_deferrable for inline FKs
+        - support coderefs for relationship_attrs
+
 0.07031  2012-09-06 15:07:08
         - fix 02pod.t failure due to lack of =encoding utf8 statement (patch by
           Marcel Gruenauer) (RT#79481)
