@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault';
 use mro 'c3';
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07032';
+our $VERSION = '0.07033';
 
 =head1 NAME
 
@@ -172,7 +172,7 @@ EOF
 
                 my ($deferrable_clause) = $ddl =~ /
                     "?\Q$local_col\E"? \s* (?:\w+\s*)* (?: \( \s* \d\+ (?:\s*,\s*\d+)* \s* \) )? \s*
-                    references \s* (?:\S+|".+?(?<!")") (?:\s* \( \s* "?\Q$remote_col\E"? \s* \))? \s*
+                    references \s+ (?:\S+|".+?(?<!")") (?:\s* \( \s* "?\Q$remote_col\E"? \s* \))? \s*
                     (?:(?:
                       on \s+ (?:delete|update) \s+ (?:set \s+ null|set \s+ default|cascade|restrict|no \s+ action)
                     |
