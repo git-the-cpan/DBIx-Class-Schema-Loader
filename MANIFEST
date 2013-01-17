@@ -86,6 +86,7 @@ t/30_02bad_comment_table.t
 t/30_03no_comment_table.t
 t/40overwrite_modifications.t
 t/45relationships.t
+t/46relationships_multi_m2m.t
 t/50rt59849.t
 t/60dbicdump_config.t
 t/65dbicdump_invocations.t
@@ -127,6 +128,7 @@ t/lib/make_dbictest_db.pm
 t/lib/make_dbictest_db_bad_comment_tables.pm
 t/lib/make_dbictest_db_clashing_monikers.pm
 t/lib/make_dbictest_db_comments.pm
+t/lib/make_dbictest_db_multi_m2m.pm
 t/lib/make_dbictest_db_multi_unique.pm
 t/lib/make_dbictest_db_plural_tables.pm
 t/lib/make_dbictest_db_with_unique.pm
