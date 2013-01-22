@@ -55,4 +55,4 @@ requires:
   Try::Tiny: 0
   namespace::clean: 0.23
   perl: 5.008001
-version: 0.07034_01
+version: 0.07034_02
