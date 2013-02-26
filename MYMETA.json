@@ -72,6 +72,6 @@
          }
       }
    },
-   "release_status" : "testing",
-   "version" : "0.07034_02"
+   "release_status" : "stable",
+   "version" : "0.07035"
 }
