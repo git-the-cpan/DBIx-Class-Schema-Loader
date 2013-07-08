@@ -4,7 +4,7 @@
       "blblack: Brandon Black <blblack@gmail.com>"
    ],
    "dynamic_config" : 0,
-   "generated_by" : "ExtUtils::MakeMaker version 6.64, CPAN::Meta::Converter version 2.120921",
+   "generated_by" : "Module::Install version 1.06, CPAN::Meta::Converter version 2.120921",
    "license" : [
       "perl_5"
    ],
@@ -15,34 +15,26 @@
    "name" : "DBIx-Class-Schema-Loader",
    "no_index" : {
       "directory" : [
-         "t",
-         "inc"
+         "inc",
+         "t"
       ]
    },
    "prereqs" : {
       "build" : {
          "requires" : {
-            "Config::Any" : "0",
-            "Config::General" : "0",
             "DBD::SQLite" : "1.29",
             "DBIx::Class::IntrospectableM2M" : "0",
             "ExtUtils::MakeMaker" : "6.59",
             "File::Path" : "2.07",
             "File::Temp" : "0.16",
-            "Moose" : "1.12",
-            "MooseX::MarkAsMethods" : "0.13",
-            "MooseX::NonMoose" : "0.16",
-            "Pod::Simple" : "3.22",
             "Test::Exception" : "0.31",
             "Test::More" : "0.94",
-            "Test::Pod" : "1.14",
-            "Test::Warn" : "0.21",
-            "namespace::autoclean" : "0.09"
+            "Test::Warn" : "0.21"
          }
       },
       "configure" : {
          "requires" : {
-            "ExtUtils::MakeMaker" : "0"
+            "ExtUtils::MakeMaker" : "6.59"
          }
       },
       "runtime" : {
@@ -73,5 +65,16 @@
       }
    },
    "release_status" : "stable",
-   "version" : "0.07035"
+   "resources" : {
+      "license" : [
+         "http://dev.perl.org/licenses/"
+      ],
+      "repository" : {
+         "type" : "git",
+         "url" : "git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git"
+      },
+      "x_IRC" : "irc://irc.perl.org/#dbix-class",
+      "x_MailingList" : "http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class"
+   },
+   "version" : "0.07036"
 }

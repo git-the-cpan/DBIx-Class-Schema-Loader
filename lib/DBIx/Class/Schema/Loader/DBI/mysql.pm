@@ -12,7 +12,7 @@ use Scalar::Util 'blessed';
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07035';
+our $VERSION = '0.07036';
 
 =head1 NAME
 
@@ -269,7 +269,7 @@ EOF
 
             delete $info->{extra}{list};
 
-            while ($column_type =~ /'((?:[^']* (?:''|\\')* [^']*)* [^\\'])',?/xg) {
+            while ($column_type =~ /'((?:[^']* (?:''|\\')* [^']*)* [^\\']?)',?/xg) {
                 my $el = $1;
                 $el =~ s/''/'/g;
                 push @{ $info->{extra}{list} }, $el;
