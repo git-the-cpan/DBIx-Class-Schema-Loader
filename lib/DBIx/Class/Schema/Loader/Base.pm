@@ -29,7 +29,7 @@ use List::MoreUtils qw/all any firstidx uniq/;
 use File::Temp 'tempfile';
 use namespace::clean;
 
-our $VERSION = '0.07036';
+our $VERSION = '0.07036_01';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -109,6 +109,7 @@ __PACKAGE__->mk_group_accessors('simple', qw/
                                 db_schema
                                 qualify_objects
                                 moniker_parts
+                                moniker_part_separator
 /);
 
 my $CURRENT_V = 'v7';
@@ -520,6 +521,7 @@ the table.
 The L</moniker_parts> option is an arrayref of methods on the table class
 corresponding to parts of the fully qualified table name, defaulting to
 C<['name']>, in the order those parts are used to create the moniker name.
+The parts are joined together using L</moniker_part_separator>.
 
 The C<'name'> entry B<must> be present.
 
@@ -537,6 +539,12 @@ C<database>, C<schema>, C<name>
 
 =back
 
+=head2 moniker_part_separator
+
+String used to join L</moniker_parts> when creating the moniker.
+Defaults to the empty string. Use C<::> to get a separate namespace per
+database and/or schema.
+
 =head2 constraint
 
 Only load tables matching regex.  Best specified as a qr// regex.
@@ -547,11 +555,39 @@ Exclude tables matching regex.  Best specified as a qr// regex.
 
 =head2 moniker_map
 
-Overrides the default table name to moniker translation.  Can be either a
-hashref of table keys and moniker values, or a coderef for a translator
-function taking a L<table object|DBIx::Class::Schema::Loader::Table> argument
-(which stringifies to the unqualified table name) and returning a scalar
-moniker.  If the hash entry does not exist, or the function returns a false
+Overrides the default table name to moniker translation. Either
+
+=over
+
+=item *
+
+a nested hashref, which will be traversed according to L</moniker_parts>
+
+For example:
+
+    moniker_parts => [qw(schema name)],
+    moniker_map => {
+        foo => {
+            bar  => "FooishBar",
+        },
+    },
+
+In which case the table C<bar> in the C<foo> schema would get the moniker
+C<FooishBar>.
+
+=item *
+
+a hashref of unqualified table name keys and moniker values
+
+=item *
+
+a coderef for a translator function taking a L<table
+object|DBIx::Class::Schema::Loader::Table> argument (which stringifies to the
+unqualified table name) and returning a scalar moniker
+
+=back
+
+If the hash entry does not exist, or the function returns a false
 value, the code falls back to default behavior for that table name.
 
 The default behavior is to split on case transition and non-alphanumeric
@@ -922,7 +958,7 @@ L<DBIx::Class::Schema::Loader>.
 
 =cut
 
-# ensure that a peice of object data is a valid arrayref, creating
+# ensure that a piece of object data is a valid arrayref, creating
 # an empty one or encapsulating whatever's there.
 sub _ensure_arrayref {
     my $self = shift;
@@ -1173,6 +1209,10 @@ sub new {
         }
     }
 
+    if (not defined $self->moniker_part_separator) {
+        $self->moniker_part_separator('');
+    }
+
     return $self;
 }
 
@@ -1341,7 +1381,7 @@ sub _validate_classes {
 
     foreach my $c (@classes) {
         # components default to being under the DBIx::Class namespace unless they
-        # are preceeded with a '+'
+        # are preceded with a '+'
         if ( $key =~ m/component/ && $c !~ s/^\+// ) {
             $c = 'DBIx::Class::' . $c;
         }
@@ -1365,7 +1405,7 @@ sub _find_file_in_inc {
     foreach my $prefix (@INC) {
         my $fullpath = File::Spec->catfile($prefix, $file);
         return $fullpath if -f $fullpath
-            # abs_path throws on Windows for nonexistant files
+            # abs_path throws on Windows for nonexistent files
             and (try { Cwd::abs_path($fullpath) }) ne
                ((try { Cwd::abs_path(File::Spec->catfile($self->dump_directory, $file)) }) || '');
     }
@@ -1605,8 +1645,8 @@ sub _load_tables {
 
                 my $moniker_parts = [ @{ $self->moniker_parts } ];
 
-                my $have_schema   = 1 if any { $_ eq 'schema'   } @{ $self->moniker_parts };
-                my $have_database = 1 if any { $_ eq 'database' } @{ $self->moniker_parts };
+                my $have_schema   = any { $_ eq 'schema'   } @{ $self->moniker_parts };
+                my $have_database = any { $_ eq 'database' } @{ $self->moniker_parts };
 
                 unshift @$moniker_parts, 'schema'   if $use_schema   && !$have_schema;
                 unshift @$moniker_parts, 'database' if $use_database && !$have_database;
@@ -2343,7 +2383,23 @@ sub _run_user_map {
     my $default_ident = $default_code->( $ident, @extra );
     my $new_ident;
     if( $map && ref $map eq 'HASH' ) {
-        $new_ident = $map->{ $ident };
+        if (my @parts = try{ @{ $ident } }) {
+            my $part_map = $map;
+            while (@parts) {
+                my $part = shift @parts;
+                last unless exists $part_map->{ $part };
+                if ( !ref $part_map->{ $part } && !@parts ) {
+                    $new_ident = $part_map->{ $part };
+                    last;
+                }
+                elsif ( ref $part_map->{ $part } eq 'HASH' ) {
+                    $part_map = $part_map->{ $part };
+                }
+            }
+        }
+        if( !$new_ident && !ref $map->{ $ident } ) {
+            $new_ident = $map->{ $ident };
+        }
     }
     elsif( $map && ref $map eq 'CODE' ) {
         $new_ident = $map->( $ident, $default_ident, @extra );
@@ -2596,10 +2652,10 @@ sub _default_table2moniker {
             @part_parts = split /\s+/, $inflected;
         }
 
-        push @all_parts, map ucfirst, @part_parts;
+        push @all_parts, join '', map ucfirst, @part_parts;
     }
 
-    return join '', @all_parts;
+    return join $self->moniker_part_separator, @all_parts;
 }
 
 sub _table2moniker {
