@@ -29,7 +29,7 @@ use List::MoreUtils qw/all any firstidx uniq/;
 use File::Temp 'tempfile';
 use namespace::clean;
 
-our $VERSION = '0.07036_01';
+our $VERSION = '0.07036_02';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -547,11 +547,28 @@ database and/or schema.
 
 =head2 constraint
 
-Only load tables matching regex.  Best specified as a qr// regex.
+Only load matching tables.
 
 =head2 exclude
 
-Exclude tables matching regex.  Best specified as a qr// regex.
+Exclude matching tables.
+
+These can be specified either as a regex (preferrably on the C<qr//>
+form), or as an arrayref of arrayrefs.  Regexes are matched against
+the (unqualified) table name, while arrayrefs are matched according to
+L</moniker_parts>.
+
+For example:
+
+    db_schema => [qw(some_schema other_schema)],
+    moniker_parts => [qw(schema name)],
+    constraint => [
+        [ qr/\Asome_schema\z/ => qr/\A(?:foo|bar)\z/ ],
+        [ qr/\Aother_schema\z/ => qr/\Abaz\z/ ],
+    ],
+
+In this case only the tables C<foo> and C<bar> in C<some_schema> and
+C<baz> in C<other_schema> will be dumped.
 
 =head2 moniker_map
 
