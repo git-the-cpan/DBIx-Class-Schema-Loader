@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault';
 use mro 'c3';
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07036_03';
+our $VERSION = '0.07036_04';
 
 =head1 NAME
 
@@ -249,6 +249,15 @@ sub _tables_list {
     }
     $sth->finish;
     return $self->_filter_tables(\@tables, $opts);
+}
+
+sub _table_info_matches {
+    my ($self, $table, $info) = @_;
+
+    my $table_schema = $table->schema;
+    $table_schema = 'main' if !defined $table_schema;
+    return $info->{TABLE_SCHEM} eq $table_schema
+        && $info->{TABLE_NAME}  eq $table->name;
 }
 
 =head1 SEE ALSO

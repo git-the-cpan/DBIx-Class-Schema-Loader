@@ -61,4 +61,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: git://git.shadowcat.co.uk/dbsrgits/DBIx-Class-Schema-Loader.git
-version: 0.07036_03
+version: 0.07036_04
