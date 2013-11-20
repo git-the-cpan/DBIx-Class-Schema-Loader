@@ -88,8 +88,11 @@ sub skip_tests {
 
 sub _monikerize {
     my $name = shift;
-    return 'LoaderTest2X' if $name =~ /^loader_test2$/i;
-    return undef;
+    my $orig = pop;
+    return $orig->({
+        loader_test2 => 'LoaderTest2X',
+        LOADER_TEST2 => 'LoaderTest2X',
+    });
 }
 
 sub run_tests {
@@ -2230,8 +2233,10 @@ sub setup_data_type_tests {
         @first_table_types = grep !/$split_off_re/, @types;
     }
 
-    @types = +{ map +($_, $types->{$_}), @first_table_types },
-        map +{ $_, $types->{$_} }, @split_off_types;
+    @types = (
+        +{ map +($_, $types->{$_}), @first_table_types },
+        map +{ $_, $types->{$_} }, @split_off_types,
+    );
 
     my $test_count = 0;
     my $table_num  = 10000;

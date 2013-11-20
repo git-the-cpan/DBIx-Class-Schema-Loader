@@ -182,7 +182,7 @@ my $tester = dbixcsl_common_tests->new(
             },
         ],
         drop  => [qw/oracle_loader_test1 oracle_loader_test9 oracle_loader_test10/],
-        count => 7 + 30 * 2,
+        count => 7 + 31 * 2,
         run   => sub {
             my ($monikers, $classes);
             ($schema, $monikers, $classes) = @_;
@@ -223,7 +223,7 @@ my $tester = dbixcsl_common_tests->new(
                 'DEFERRABLE clause introspected correctly';
 
             SKIP: {
-                skip 'Set the DBICTEST_ORA_EXTRAUSER_DSN, _USER and _PASS environment variables to run the cross-schema relationship tests', 6 * 2
+                skip 'Set the DBICTEST_ORA_EXTRAUSER_DSN, _USER and _PASS environment variables to run the cross-schema relationship tests', 31 * 2
                     unless $ENV{DBICTEST_ORA_EXTRAUSER_DSN};
 
                 $extra_schema = $schema->clone;
@@ -244,7 +244,7 @@ my $tester = dbixcsl_common_tests->new(
                     )
 EOF
 
-                $dbh1->do($_) for $auto_inc_cb->('oracle_loader_test4', 'id');
+                $dbh1->do($_) for $auto_inc_cb->(lc "${schema1}.oracle_loader_test4", 'id');
 
                 $dbh1->do("GRANT ALL ON oracle_loader_test4 TO $schema2");
                 $dbh1->do("GRANT ALL ON oracle_loader_test4_id_seq TO $schema2");
@@ -352,6 +352,9 @@ EOF
 
                     is try { $rsrc->column_info('id')->{is_auto_increment} }, 1,
                         'column in schema1';
+
+                    is try { $rsrc->column_info('id')->{sequence} }, lc "${schema1}.oracle_loader_test4_id_seq",
+                        'sequence in schema1';
 
                     is try { $rsrc->column_info('value')->{data_type} }, 'varchar2',
                         'column in schema1';
