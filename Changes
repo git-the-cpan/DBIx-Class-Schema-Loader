@@ -1,5 +1,10 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.07039  2014-01-06
+        - Fix table listing with DBD::DB2 >= 1.85 (RT#91764)
+        - Add accessor for the list of (re)generated classes
+        - Add dry-run mode for static schema creation
+
 0.07038  2013-11-20
         - Allow coderef maps to call back into the hashref mapping code
         - Fix MySQL column info detection with multiple schemas (RT#82358)

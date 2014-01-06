@@ -29,7 +29,7 @@ use List::MoreUtils qw/all any firstidx uniq/;
 use File::Temp 'tempfile';
 use namespace::clean;
 
-our $VERSION = '0.07038';
+our $VERSION = '0.07039';
 
 __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 schema
@@ -61,6 +61,8 @@ __PACKAGE__->mk_group_ro_accessors('simple', qw/
                                 use_moose
                                 only_autoclean
                                 overwrite_modifications
+                                dry_run
+                                generated_classes
 
                                 relationship_attrs
 
@@ -304,6 +306,11 @@ next major version upgrade:
 If true, will not print the usual C<Dumping manual schema ... Schema dump
 completed.> messages. Does not affect warnings (except for warnings related to
 L</really_erase_my_files>.)
+
+=head2 dry_run
+
+If true, don't actually write out the generated files.  This can only be
+used with static schema generation.
 
 =head2 generate_pod
 
@@ -1123,6 +1130,7 @@ sub new {
     $self->{class_to_table} = {};
     $self->{classes}  = {};
     $self->{_upgrading_classes} = {};
+    $self->{generated_classes} = [];
 
     $self->{schema_class} ||= ( ref $self->{schema} || $self->{schema} );
     $self->{schema} ||= $self->{schema_class};
@@ -1134,6 +1142,10 @@ sub new {
             if $self->{dump_overwrite};
 
     $self->{dynamic} = ! $self->{dump_directory};
+
+    croak "dry_run can only be used with static schema generation"
+        if $self->dynamic and $self->dry_run;
+
     $self->{temp_directory} ||= File::Temp::tempdir( 'dbicXXXX',
                                                      TMPDIR  => 1,
                                                      CLEANUP => 1,
@@ -1747,6 +1759,8 @@ sub _load_tables {
         # The relationship loader needs a working schema
         local $self->{quiet} = 1;
         local $self->{dump_directory} = $self->{temp_directory};
+        local $self->{generated_classes} = [];
+        local $self->{dry_run} = 0;
         $self->_reload_classes(\@tables);
         $self->_load_relationships(\@tables);
 
@@ -1781,6 +1795,8 @@ sub _reload_classes {
     $self->_dump_to_dir(map { $self->classes->{$_->sql_name} } @tables);
 
     unshift @INC, $self->dump_directory;
+
+    return if $self->dry_run;
 
     my @to_register;
     my %have_source = map { $_ => $self->schema->source($_) }
@@ -1876,6 +1892,8 @@ sub get_dump_filename {
 
 sub _ensure_dump_subdirs {
     my ($self, $class) = (@_);
+
+    return if $self->dry_run;
 
     my @name_parts = split(/::/, $class);
     pop @name_parts; # we don't care about the very last element,
@@ -2024,7 +2042,7 @@ sub _write_classfile {
     my $filename = $self->_get_dump_filename($class);
     $self->_ensure_dump_subdirs($class);
 
-    if (-f $filename && $self->really_erase_my_files) {
+    if (-f $filename && $self->really_erase_my_files && !$self->dry_run) {
         warn "Deleting existing file '$filename' due to "
             . "'really_erase_my_files' setting\n" unless $self->quiet;
         unlink($filename);
@@ -2048,7 +2066,7 @@ sub _write_classfile {
         if (-f $old_filename) {
             $custom_content = ($self->_parse_generated_file ($old_filename))[4];
 
-            unlink $old_filename;
+            unlink $old_filename unless $self->dry_run;
         }
     }
 
@@ -2130,6 +2148,10 @@ sub _write_classfile {
         return unless $self->_upgrading_from && $is_schema;
       }
     }
+
+    push @{$self->generated_classes}, $class;
+
+    return if $self->dry_run;
 
     $text .= $self->_sig_comment(
       $self->version_to_dump,
@@ -3103,6 +3125,11 @@ definitions, or what-have-you).
 Returns a hashref of table to class mappings.  In some cases it will
 contain multiple entries per table for the original and normalized table
 names, as above in L</monikers>.
+
+=head2 generated_classes
+
+Returns an arrayref of classes that were actually generated (i.e. not
+skipped because there were no changes).
 
 =head1 NON-ENGLISH DATABASES
 

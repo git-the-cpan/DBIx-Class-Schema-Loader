@@ -27,14 +27,18 @@ my $dump_path = "$tdir/dump";
     );
 }
 
-plan tests => 7;
-
 rmtree($dump_path, 1, 1);
 
 lives_ok {
   warnings_exist { DBICTest::Schema::1->connect($make_dbictest_db::dsn) }
     [ qr|^Dumping manual schema|, qr|^Schema dump completed| ];
 } 'no death with dump_directory set' or diag "Dump failed: $@";
+
+is_deeply(
+    [ sort @{ DBICTest::Schema::1->loader->generated_classes } ],
+    [ sort 'DBICTest::Schema::1', map "DBICTest::Schema::1::Result::$_", qw(Foo Bar) ],
+    'generated_classes has schema and result classes'
+);
 
 DBICTest::Schema::1->_loader_invoked(undef);
 
@@ -45,6 +49,12 @@ SKIP: {
   warnings_exist { DBICTest::Schema::1->connect($make_dbictest_db::dsn) }
     [ qr|^Dumping manual schema|, qr|^Schema dump completed| ];
 
+  is_deeply(
+      [ sort @{ DBICTest::Schema::1->loader->generated_classes } ],
+      [ ],
+      'no classes generated on second dump'
+  );
+
   rmtree($dump_path, 1, 1);
 }
 
@@ -52,6 +62,12 @@ lives_ok {
   warnings_exist { DBICTest::Schema::2->connect($make_dbictest_db::dsn) }
     [ qr|^Dumping manual schema|, qr|^Schema dump completed| ];
 } 'no death with dump_directory set (overwrite1)' or diag "Dump failed: $@";
+
+is_deeply(
+    [ sort @{ DBICTest::Schema::2->loader->generated_classes } ],
+    [ sort 'DBICTest::Schema::2', map "DBICTest::Schema::2::Result::$_", qw(Foo Bar) ],
+    'generated_classes has schema and result classes'
+);
 
 DBICTest::Schema::2->_loader_invoked(undef);
 
@@ -65,5 +81,13 @@ lives_ok {
     qr/^Schema dump completed/
   ];
 } 'no death with dump_directory set (overwrite2)' or diag "Dump failed: $@";
+
+is_deeply(
+    [ sort @{ DBICTest::Schema::2->loader->generated_classes } ],
+    [ sort 'DBICTest::Schema::2', map "DBICTest::Schema::2::Result::$_", qw(Foo Bar) ],
+    'all classes regenerated with really_erase_my_files',
+);
+
+done_testing();
 
 END { rmtree($dump_path, 1, 1); }
