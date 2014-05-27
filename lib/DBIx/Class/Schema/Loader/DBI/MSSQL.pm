@@ -10,7 +10,7 @@ use namespace::clean;
 
 use DBIx::Class::Schema::Loader::Table::Sybase ();
 
-our $VERSION = '0.07039';
+our $VERSION = '0.07040';
 
 =head1 NAME
 
@@ -366,7 +366,7 @@ EOF
         push @{ $uniq{$constr} }, $self->_lc($col);
     }
 
-    return [ map [ $_ => $uniq{$_} ], keys %uniq ];
+    return [ map [ $_ => $uniq{$_} ], sort keys %uniq ];
 }
 
 sub _columns_info_for {

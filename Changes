@@ -1,5 +1,13 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.07040  2014-05-27
+        - Add options to omit the version and timestamp from the
+          generated code (RT#92300)
+        - Skip dumping unique indexes with expressions (RT#93613)
+        - Fix dumping unique indexes with DBD::Pg < 1.50
+        - Fix inconsistent naming of duplicate unique constraints
+        - Avoid clobbering caller's $_ (RT#96010)
+
 0.07039  2014-01-06
         - Fix table listing with DBD::DB2 >= 1.85 (RT#91764)
         - Add accessor for the list of (re)generated classes

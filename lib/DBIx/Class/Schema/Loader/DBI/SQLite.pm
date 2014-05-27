@@ -6,7 +6,7 @@ use base 'DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault';
 use mro 'c3';
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07039';
+our $VERSION = '0.07040';
 
 =head1 NAME
 
@@ -226,7 +226,7 @@ sub _table_uniq_info {
         push @uniqs, [ $name => \@cols ];
     }
     $sth->finish;
-    return \@uniqs;
+    return [ sort { $a->[0] cmp $b->[0] } @uniqs ];
 }
 
 sub _tables_list {

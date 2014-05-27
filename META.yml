@@ -5,25 +5,25 @@ author:
 build_requires:
   Config::Any: 0
   Config::General: 0
-  DBD::SQLite: 1.29
+  DBD::SQLite: '1.29'
   DBIx::Class::IntrospectableM2M: 0
   ExtUtils::MakeMaker: 6.59
-  File::Path: 2.07
-  File::Temp: 0.16
-  Moose: 1.12
-  MooseX::MarkAsMethods: 0.13
-  MooseX::NonMoose: 0.16
-  Pod::Simple: 3.22
-  Test::Exception: 0.31
-  Test::More: 0.94
-  Test::Pod: 1.14
-  Test::Warn: 0.21
-  namespace::autoclean: 0.09
+  File::Path: '2.07'
+  File::Temp: '0.16'
+  Moose: '1.12'
+  MooseX::MarkAsMethods: '0.13'
+  MooseX::NonMoose: '0.16'
+  Pod::Simple: '3.22'
+  Test::Exception: '0.31'
+  Test::More: '0.94'
+  Test::Pod: '1.14'
+  Test::Warn: '0.21'
+  namespace::autoclean: '0.09'
 configure_requires:
   ExtUtils::MakeMaker: 6.59
 distribution_type: module
 dynamic_config: 1
-generated_by: 'Module::Install version 1.06'
+generated_by: 'Module::Install version 1.08'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -35,30 +35,30 @@ no_index:
     - t
 requires:
   Carp::Clan: 0
-  Class::Accessor::Grouped: 0.10008
-  Class::C3::Componentised: 1.0008
-  Class::Inspector: 1.27
-  Class::Unload: 0.07
-  DBIx::Class: 0.08127
-  Data::Dump: 1.06
-  Digest::MD5: 2.36
-  Exporter: 5.63
-  Hash::Merge: 0.12
-  Lingua::EN::Inflect::Number: 1.1
-  Lingua::EN::Inflect::Phrase: 0.15
-  Lingua::EN::Tagger: 0.23
-  List::MoreUtils: 0.32
-  MRO::Compat: 0.09
-  Scope::Guard: 0.20
-  String::CamelCase: 0.02
-  String::ToIdentifier::EN: 0.05
+  Class::Accessor::Grouped: '0.10008'
+  Class::C3::Componentised: '1.0008'
+  Class::Inspector: '1.27'
+  Class::Unload: '0.07'
+  DBIx::Class: '0.08127'
+  Data::Dump: '1.06'
+  Digest::MD5: '2.36'
+  Exporter: '5.63'
+  Hash::Merge: '0.12'
+  Lingua::EN::Inflect::Number: '1.1'
+  Lingua::EN::Inflect::Phrase: '0.15'
+  Lingua::EN::Tagger: '0.23'
+  List::MoreUtils: '0.32'
+  MRO::Compat: '0.09'
+  Scope::Guard: '0.20'
+  String::CamelCase: '0.02'
+  String::ToIdentifier::EN: '0.05'
   Sub::Name: 0
   Try::Tiny: 0
-  namespace::clean: 0.23
+  namespace::clean: '0.23'
   perl: 5.8.1
 resources:
   IRC: irc://irc.perl.org/#dbix-class
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: https://github.com/dbsrgits/dbix-class-schema-loader
-version: 0.07039
+version: '0.07040'

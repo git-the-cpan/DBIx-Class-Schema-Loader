@@ -9,7 +9,7 @@ use namespace::clean;
 
 use DBIx::Class::Schema::Loader::Table::Sybase ();
 
-our $VERSION = '0.07039';
+our $VERSION = '0.07040';
 
 =head1 NAME
 
@@ -346,11 +346,9 @@ EOF
         }
     }
 
-    my @uniqs = map { [ $_ => $uniqs{$_} ] } keys %uniqs;
-
     $self->dbh->do("USE [$current_db]");
 
-    return \@uniqs;
+    return [ map { [ $_ => $uniqs{$_} ] } sort keys %uniqs ];
 }
 
 sub _columns_info_for {

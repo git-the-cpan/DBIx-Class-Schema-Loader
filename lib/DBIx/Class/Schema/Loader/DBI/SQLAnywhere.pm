@@ -8,7 +8,7 @@ use List::MoreUtils 'any';
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07039';
+our $VERSION = '0.07040';
 
 =head1 NAME
 
@@ -274,8 +274,7 @@ EOF
         push @{$constraints->{$constraint_name}}, $self->_lc($column);
     }
 
-    my @uniqs = map { [ $_ => $constraints->{$_} ] } keys %$constraints;
-    return \@uniqs;
+    return [ map { [ $_ => $constraints->{$_} ] } sort keys %$constraints ];
 }
 
 =head1 SEE ALSO

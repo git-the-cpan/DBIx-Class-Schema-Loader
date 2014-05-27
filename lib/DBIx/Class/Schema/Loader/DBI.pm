@@ -10,7 +10,7 @@ use Carp::Clan qw/^DBIx::Class/;
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07039';
+our $VERSION = '0.07040';
 
 __PACKAGE__->mk_group_accessors('simple', qw/
     _disable_pk_detection
@@ -340,17 +340,18 @@ sub _table_uniq_info {
         next if $row->{TYPE} eq 'table'
             || defined $row->{FILTER_CONDITION}
             || !$row->{INDEX_NAME}
-            || !defined $row->{ORDINAL_POSITION}
-            || !$row->{COLUMN_NAME};
+            || !defined $row->{ORDINAL_POSITION};
 
-        $indices{$row->{INDEX_NAME}}[$row->{ORDINAL_POSITION}] = $self->_lc($row->{COLUMN_NAME});
+        $indices{$row->{INDEX_NAME}}[$row->{ORDINAL_POSITION}] = $self->_lc($row->{COLUMN_NAME} || '');
     }
     $sth->finish;
 
     my @retval;
-    foreach my $index_name (keys %indices) {
-        my $index = $indices{$index_name};
-        push(@retval, [ $index_name => [ @$index[1..$#$index] ] ]);
+    foreach my $index_name (sort keys %indices) {
+        my (undef, @cols) = @{$indices{$index_name}};
+        # skip indexes with missing column names (e.g. expression indexes)
+        next unless @cols == grep $_, @cols;
+        push(@retval, [ $index_name => \@cols ]);
     }
 
     return \@retval;

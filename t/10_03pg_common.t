@@ -246,6 +246,34 @@ my $tester = dbixcsl_common_tests->new(
                 create view pg_loader_test11 as
                     select * from pg_loader_test1
             },
+            q{
+                create table pg_loader_test12 (
+                    id integer not null,
+                    value integer,
+                    active boolean,
+                    name text
+                )
+            },
+            q{
+                create unique index uniq_id_lc_name on pg_loader_test12 (
+                    id, lower(name)
+                )
+            },
+            q{
+                create unique index uniq_uc_name_id on pg_loader_test12 (
+                    upper(name), id
+                )
+            },
+            q{
+                create unique index pg_loader_test12_value on pg_loader_test12 (
+                    value
+                )
+            },
+            q{
+                create unique index pg_loader_test12_name_active on pg_loader_test12 (
+                    name
+                ) where active
+            },
         ],
         pre_drop_ddl => [
             'DROP SCHEMA dbicsl_test CASCADE',
@@ -254,8 +282,8 @@ my $tester = dbixcsl_common_tests->new(
             'DROP TYPE pg_loader_test_enum',
             'DROP VIEW pg_loader_test11',
         ],
-        drop  => [ qw/pg_loader_test1 pg_loader_test2 pg_loader_test9 pg_loader_test10/ ],
-        count => 9 + 30 * 2,
+        drop  => [ qw/pg_loader_test1 pg_loader_test2 pg_loader_test9 pg_loader_test10 pg_loader_test12/ ],
+        count => 10 + 30 * 2,
         run   => sub {
             my ($schema, $monikers, $classes) = @_;
 
@@ -449,6 +477,11 @@ my $tester = dbixcsl_common_tests->new(
             # test that views are marked as such
             isa_ok $schema->resultset($monikers->{pg_loader_test11})->result_source, 'DBIx::Class::ResultSource::View',
                 'views have table_class set correctly';
+
+            is_deeply
+                { $schema->source($monikers->{pg_loader_test12})->unique_constraints },
+                { pg_loader_test12_value => ['value'] },
+                'unique indexes are dumped correctly';
         },
     },
 );

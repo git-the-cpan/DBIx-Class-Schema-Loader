@@ -8,7 +8,7 @@ use Try::Tiny;
 use DBIx::Class::Schema::Loader::Utils qw/sigwarn_silencer/;
 use namespace::clean;
 
-our $VERSION = '0.07039';
+our $VERSION = '0.07040';
 
 =head1 NAME
 
@@ -126,8 +126,7 @@ EOF
         push @{$constr_names{$constr_name}}, $constr_col;
     }
 
-    my @uniqs = map { [ $_ => $constr_names{$_} ] } keys %constr_names;
-    return \@uniqs;
+    return [ map { [ $_ => $constr_names{$_} ] } sort keys %constr_names ];
 }
 
 sub _table_comment {

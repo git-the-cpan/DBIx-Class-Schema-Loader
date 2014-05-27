@@ -10,7 +10,7 @@ use Try::Tiny;
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table::Informix ();
 
-our $VERSION = '0.07039';
+our $VERSION = '0.07040';
 
 =head1 NAME
 
@@ -277,8 +277,7 @@ sub _table_uniq_info {
 
     my $constraints = $self->_constraints_for($table, 'U');
 
-    my @uniqs = map { [ $_ => $constraints->{$_} ] } keys %$constraints;
-    return \@uniqs;
+    return [ map { [ $_ => $constraints->{$_} ] } sort keys %$constraints ];
 }
 
 sub _table_fk_info {

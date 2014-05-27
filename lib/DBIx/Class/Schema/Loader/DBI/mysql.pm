@@ -13,7 +13,7 @@ use DBIx::Class::Schema::Loader::Utils qw/sigwarn_silencer/;
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07039';
+our $VERSION = '0.07040';
 
 =head1 NAME
 
@@ -204,7 +204,7 @@ sub _table_uniq_info {
 
     my @uniqs;
     my $keydata = $self->_mysql_table_get_keys($table);
-    foreach my $keyname (keys %$keydata) {
+    foreach my $keyname (sort keys %$keydata) {
         next if $keyname eq 'PRIMARY';
         push(@uniqs, [ $keyname => $keydata->{$keyname} ]);
     }

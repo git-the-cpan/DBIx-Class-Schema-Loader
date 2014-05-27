@@ -5,7 +5,7 @@ use warnings;
 use base 'DBIx::Class::Schema::Loader::DBI::Component::QuotedDefault';
 use mro 'c3';
 
-our $VERSION = '0.07039';
+our $VERSION = '0.07040';
 
 =head1 NAME
 
@@ -125,15 +125,15 @@ sub _table_uniq_info {
           pg_catalog.pg_index x
           JOIN pg_catalog.pg_class c ON c.oid = x.indrelid
           JOIN pg_catalog.pg_class i ON i.oid = x.indexrelid
-          JOIN pg_catalog.pg_constraint con ON con.conname = i.relname
-          LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE
           x.indisunique = 't' AND
+          x.indpred     IS NULL AND
           c.relkind     = 'r' AND
           i.relkind     = 'i' AND
-          con.contype   = 'u' AND
           n.nspname     = ? AND
-          c.relname     = ?}
+          c.relname     = ?
+        ORDER BY i.relname}
     );
 
     $uniq_sth->execute($table->schema, $table->name);
@@ -149,10 +149,8 @@ sub _table_uniq_info {
             push(@col_names, $self->_lc($name_aref->[0])) if $name_aref;
         }
 
-        if(!@col_names) {
-            warn "Failed to parse UNIQUE constraint $indexname on $table";
-        }
-        else {
+        # skip indexes with missing column names (e.g. expression indexes)
+        if(@col_names == @col_nums) {
             push(@uniqs, [ $indexname => \@col_names ]);
         }
     }
