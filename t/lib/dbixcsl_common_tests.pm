@@ -4,12 +4,13 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Deep;
 use Test::Exception;
+use Test::Differences;
 use DBIx::Class::Schema::Loader;
 use Class::Unload;
 use File::Path 'rmtree';
 use DBI;
-use Digest::MD5;
 use File::Find 'find';
 use Class::Unload ();
 use DBIx::Class::Schema::Loader::Utils qw/dumper_squashed slurp_file sigwarn_silencer/;
@@ -122,7 +123,7 @@ sub run_tests {
     $num_rescans++ if $self->{vendor} eq 'Firebird';
 
     plan tests => @connect_info *
-        (228 + $num_rescans * $col_accessor_map_tests + $extra_count + ($self->{data_type_tests}{test_count} || 0));
+        (225 + $num_rescans * $col_accessor_map_tests + $extra_count + ($self->{data_type_tests}{test_count} || 0));
 
     foreach my $info_idx (0..$#connect_info) {
         my $info = $connect_info[$info_idx];
@@ -628,7 +629,7 @@ qr/\n__PACKAGE__->load_components\("TestSchemaComponent", "\+TestSchemaComponent
         'is_nullable=1 detection';
 
     SKIP: {
-        skip $self->{skip_rels}, 137 if $self->{skip_rels};
+        skip $self->{skip_rels}, 142 if $self->{skip_rels};
 
         my $moniker3 = $monikers->{loader_test3};
         my $class3   = $classes->{loader_test3};
@@ -923,28 +924,61 @@ qr/\n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
         isa_ok(try { $rs_rel17->single }, $class17);
         is(try { $rs_rel17->single->id }, 3, "search_related with multiple FKs from same table");
 
-        # XXX test m:m 18 <- 20 -> 19
+        # test many_to_many detection 18 -> 20 -> 19 and 19 -> 20 -> 18
         ok($class20->column_info('parent')->{is_foreign_key}, 'Foreign key detected');
         ok($class20->column_info('child')->{is_foreign_key}, 'Foreign key detected');
 
-        # XXX test double-fk m:m 21 <- 22 -> 21
+        cmp_deeply(
+            $class18->_m2m_metadata->{children},
+            superhashof({
+                relation => 'loader_test20s',
+                foreign_relation => 'child',
+                attrs => superhashof({ order_by => 'me.id' })
+            }),
+            'children m2m correct with ordering'
+        );
+
+        cmp_deeply(
+            $class19->_m2m_metadata->{parents},
+            superhashof({
+                relation => 'loader_test20s',
+                foreign_relation => 'parent',
+                attrs => superhashof({ order_by => 'me.id' })
+            }),
+            'parents m2m correct with ordering'
+        );
+
+
+        # test double-fk m:m 21 <- 22 -> 21
         ok($class22->column_info('parent')->{is_foreign_key}, 'Foreign key detected');
         ok($class22->column_info('child')->{is_foreign_key}, 'Foreign key detected');
+        is_deeply(
+            $class21->relationship_info("loader_test22_parents")->{cond},
+            { 'foreign.parent' => 'self.id' },
+            'rel to foreign.parent correct'
+        );
+        is_deeply(
+            $class21->relationship_info("loader_test22_children")->{cond},
+            { 'foreign.child' => 'self.id' },
+            'rel to foreign.child correct'
+        );
 
-        # test many_to_many detection 18 -> 20 -> 19 and 19 -> 20 -> 18
-        my $m2m;
-
-        ok($m2m = (try { $class18->_m2m_metadata->{children} }), 'many_to_many created');
-
-        is $m2m->{relation}, 'loader_test20s', 'm2m near rel';
-        is $m2m->{foreign_relation}, 'child', 'm2m far rel';
-        is $m2m->{attrs}->{order_by}, 'me.id', 'm2m bridge attrs';
-
-        ok($m2m = (try { $class19->_m2m_metadata->{parents} }), 'many_to_many created');
-
-        is $m2m->{relation}, 'loader_test20s', 'm2m near rel';
-        is $m2m->{foreign_relation}, 'parent', 'm2m far rel';
-        is $m2m->{attrs}->{order_by}, 'me.id', 'm2m bridge attrs';
+        cmp_deeply(
+            $class21->_m2m_metadata,
+            {
+                parents => superhashof({
+                    accessor => 'parents',
+                    relation => 'loader_test22_children',
+                    foreign_relation => 'parent',
+                }),
+                children => superhashof({
+                    accessor => 'children',
+                    relation => 'loader_test22_parents',
+                    foreign_relation => 'child',
+                }),
+            },
+            'self-m2m correct'
+        );
 
         ok( $class37->relationship_info('parent'), 'parents rel created' );
         ok( $class37->relationship_info('child'), 'child rel created' );
@@ -1178,8 +1212,8 @@ EOF
             q{ INSERT INTO loader_test30 (id,loader_test2) VALUES(321, 2) },
         );
 
-        # get md5
-        my $digest  = Digest::MD5->new;
+        # get contents
+        my %contents;
 
         my $find_cb = sub {
             return if -d;
@@ -1187,17 +1221,17 @@ EOF
 
             open my $fh, '<', $_ or die "Could not open $_ for reading: $!";
             binmode $fh;
-            $digest->addfile($fh);
+            local $/;
+            $contents{$File::Find::name} = <$fh>;
         };
 
         find $find_cb, DUMP_DIR;
+        my %contents_before = %contents;
 
 #        system "rm -rf /tmp/before_rescan /tmp/after_rescan";
 #        system "mkdir /tmp/before_rescan";
 #        system "mkdir /tmp/after_rescan";
 #        system "cp -a @{[DUMP_DIR]} /tmp/before_rescan";
-
-        my $before_digest = $digest->b64digest;
 
         $conn->storage->disconnect; # needed for Firebird and Informix
         my $dbh = $self->dbconnect(1);
@@ -1212,12 +1246,21 @@ EOF
 
 #        system "cp -a @{[DUMP_DIR]} /tmp/after_rescan";
 
-        $digest = Digest::MD5->new;
+        undef %contents;
         find $find_cb, DUMP_DIR;
-        my $after_digest = $digest->b64digest;
+        my %contents_after = %contents;
 
-        is $before_digest, $after_digest,
-            'dumped files are not rewritten when there is no modification';
+        subtest 'dumped files are not rewritten when there is no modification' => sub {
+            plan tests => 1 + scalar keys %contents_before;
+            is_deeply
+                [sort keys %contents_before],
+                [sort keys %contents_after],
+                'same files dumped';
+            for my $file (sort keys %contents_before) {
+                eq_or_diff $contents_before{$file}, $contents_after{$file},
+                    "$file not rewritten";
+            }
+        };
 
         my $rsobj30   = $conn->resultset('LoaderTest30');
         isa_ok($rsobj30, 'DBIx::Class::ResultSet');

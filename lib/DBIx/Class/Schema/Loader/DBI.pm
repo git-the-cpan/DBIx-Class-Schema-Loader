@@ -10,7 +10,7 @@ use Carp::Clan qw/^DBIx::Class/;
 use namespace::clean;
 use DBIx::Class::Schema::Loader::Table ();
 
-our $VERSION = '0.07040';
+our $VERSION = '0.07041';
 
 __PACKAGE__->mk_group_accessors('simple', qw/
     _disable_pk_detection
@@ -270,8 +270,6 @@ sub load {
     local $self->dbh->{PrintError} = 0;
 
     $self->next::method(@_);
-
-    $self->schema->storage->disconnect unless $self->dynamic;
 }
 
 sub _sth_for {
