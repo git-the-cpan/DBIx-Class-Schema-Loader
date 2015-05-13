@@ -1,5 +1,16 @@
 Revision history for Perl extension DBIx::Class::Schema::Loader
 
+0.07043  2015-05-13
+        - Fix many_to_many bridges with overlapping foreign keys
+        - Add option to allow extra columns in many_to_many link tables
+        - Document how to add perltidy markers via filter_generated_code
+        - Fix DB2 foreign-key introspection
+        - Remove dependency on List::MoreUtils and Sub::Name
+        - Ensure schema files are generated as binary files on Windows
+        - Fix overwrite_modifications not overwriting if the table hasn't changed
+        - Filter out disabled constraints and triggers for Oracle (GH#5)
+
+0.07042  2014-08-20
         - Fix unescaped left braces in regexes in tests
         - Use undef instead of '%' for the table and type arguments
           to $dbh->tables (fixes breakage with DBD::Pg 3.4.0)

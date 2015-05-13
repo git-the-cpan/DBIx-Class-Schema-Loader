@@ -5,7 +5,7 @@ use Test::More;
 use File::Path;
 use IPC::Open3;
 use IO::Handle;
-use List::MoreUtils 'any';
+use List::Util 'any';
 use DBIx::Class::Schema::Loader::Utils 'dumper_squashed';
 use DBIx::Class::Schema::Loader ();
 use Class::Unload ();
@@ -210,19 +210,21 @@ sub _test_dumps {
     }
 }
 
-sub _dump_file_like {
+sub _slurp {
     my $path = shift;
-    open(my $dumpfh, '<', $path) or die "Failed to open '$path': $!";
+    open(my $dumpfh, '<:raw', $path) or die "Failed to open '$path': $!";
     my $contents = do { local $/; <$dumpfh>; };
     close($dumpfh);
+    return ($path, $contents);
+}
+
+sub _dump_file_like {
+    my ($path, $contents) = _slurp shift;
     like($contents, $_, "$path matches $_") for @_;
 }
 
 sub _dump_file_not_like {
-    my $path = shift;
-    open(my $dumpfh, '<', $path) or die "Failed to open '$path': $!";
-    my $contents = do { local $/; <$dumpfh>; };
-    close($dumpfh);
+    my ($path, $contents) = _slurp shift;
     unlike($contents, $_, "$path does not match $_") for @_;
 }
 

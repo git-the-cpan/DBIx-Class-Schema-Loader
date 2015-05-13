@@ -436,7 +436,11 @@ sub run_tests {
                 $obj10_2->loader_test11( $obj11->id11() );
                 $obj10_2->update();
             };
-            is($@, '', 'No errors after eval{}');
+            is($@, '', 'No errors after eval{}')
+                or do {
+                    diag explain $rsobj10->result_source->relationship_info('loader_test11');
+                    diag explain $rsobj11->result_source->relationship_info('loader_test10');
+                };
 
             SKIP: {
                 skip 'Previous eval block failed', 3
