@@ -43,11 +43,11 @@ sub new {
     my $self;
 
     if( ref($_[0]) eq 'HASH') {
-       my $args = shift;
-       $self = { (%$args) };
+        my $args = shift;
+        $self = { (%$args) };
     }
     else {
-       $self = { @_ };
+        $self = { @_ };
     }
 
     # Only MySQL uses this
@@ -122,7 +122,7 @@ sub run_tests {
     $num_rescans++ if $self->{vendor} eq 'Firebird';
 
     plan tests => @connect_info *
-        (232 + $num_rescans * $col_accessor_map_tests + $extra_count + ($self->{data_type_tests}{test_count} || 0));
+        (233 + $num_rescans * $col_accessor_map_tests + $extra_count + ($self->{data_type_tests}{test_count} || 0));
 
     foreach my $info_idx (0..$#connect_info) {
         my $info = $connect_info[$info_idx];
@@ -272,13 +272,13 @@ sub setup_schema {
     {
         my @loader_warnings;
         local $SIG{__WARN__} = sub { push(@loader_warnings, @_); };
-         eval qq{
-             package @{[SCHEMA_CLASS]};
-             use base qw/DBIx::Class::Schema::Loader/;
+        eval qq{
+            package @{[SCHEMA_CLASS]};
+            use base qw/DBIx::Class::Schema::Loader/;
 
-             __PACKAGE__->loader_options(\%loader_opts);
-             __PACKAGE__->connection(\@\$connect_info);
-         };
+            __PACKAGE__->loader_options(\%loader_opts);
+            __PACKAGE__->connection(\@\$connect_info);
+        };
 
         ok(!$@, "Loader initialization") or diag $@;
 
@@ -418,7 +418,7 @@ qr/\n__PACKAGE__->load_components\("TestSchemaComponent", "\+TestSchemaComponent
         'fully qualified schema component works';
 
     my @columns_lt2 = $class2->columns;
-    is_deeply( \@columns_lt2, [ qw/id dat dat2 set_primary_key can dbix_class_testcomponent dbix_class_testcomponentmap testcomponent_fqn meta test_role_method test_role_for_map_method crumb_crisp_coating/ ], "Column Ordering" );
+    is_deeply( \@columns_lt2, [ qw/id dat dat2 set_primary_key can dbix_class_testcomponent dbix_class_testcomponentmap testcomponent_fqn meta test_role_method test_role_for_map_method crumb_crisp_coating sticky_filling/ ], "Column Ordering" );
 
     is $class2->column_info('can')->{accessor}, 'caught_collision_can',
         'accessor for column name that conflicts with a UNIVERSAL method renamed based on col_collision_map';
@@ -468,8 +468,8 @@ qr/\n__PACKAGE__->load_components\("TestSchemaComponent", "\+TestSchemaComponent
     foreach my $ucname (keys %uniq1) {
         my $cols_arrayref = $uniq1{$ucname};
         if(@$cols_arrayref == 1 && $cols_arrayref->[0] eq 'dat') {
-           $uniq1_test = 1;
-           last;
+            $uniq1_test = 1;
+            last;
         }
     }
     ok($uniq1_test, "Unique constraint");
@@ -480,9 +480,10 @@ qr/\n__PACKAGE__->load_components\("TestSchemaComponent", "\+TestSchemaComponent
     my $uniq2_test = 0;
     foreach my $ucname (keys %uniq2) {
         my $cols_arrayref = $uniq2{$ucname};
-        if(@$cols_arrayref == 2
-           && $cols_arrayref->[0] eq 'dat2'
-           && $cols_arrayref->[1] eq 'dat') {
+        if (@$cols_arrayref == 2
+            && $cols_arrayref->[0] eq 'dat2'
+            && $cols_arrayref->[1] eq 'dat'
+        ) {
             $uniq2_test = 2;
             last;
         }
@@ -620,6 +621,9 @@ qr/\n__PACKAGE__->load_components\("TestSchemaComponent", "\+TestSchemaComponent
 
     is( $class2->column_info('crumb_crisp_coating')->{accessor},  'trivet',
         'col_accessor_map is being run' );
+
+    is( $class2->column_info('sticky_filling')->{accessor},  'goo',
+        'multi-level hash col_accessor_map works' );
 
     is $class1->column_info('dat')->{is_nullable}, 0,
         'is_nullable=0 detection';
@@ -863,7 +867,7 @@ qr/\n__PACKAGE__->load_components\("TestSchemaComponent", "\+TestSchemaComponent
             is $obj5->i_d2, 1, 'Find on multi-col PK';
         }
         else {
-	    my $obj5 = $rsobj5->find({id1 => 1, id2 => 1});
+            my $obj5 = $rsobj5->find({id1 => 1, id2 => 1});
             is $obj5->id2, 1, 'Find on multi-col PK';
         }
 
@@ -875,25 +879,29 @@ qr/\n__PACKAGE__->load_components\("TestSchemaComponent", "\+TestSchemaComponent
         ok($class6->column_info('loader_test2_id')->{is_foreign_key}, 'Foreign key detected');
         ok($class6->column_info('id')->{is_foreign_key}, 'Foreign key detected');
 
-	my $id2_info = try { $class6->column_info('id2') } ||
-			$class6->column_info('Id2');
+        my $id2_info = try { $class6->column_info('id2') } ||
+            $class6->column_info('Id2');
         ok($id2_info->{is_foreign_key}, 'Foreign key detected');
 
         unlike slurp_file $conn->_loader->get_dump_filename($class6),
-qr/\n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
-    \s+ "(\w+?)"
-    .*?
-   \n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
-    \s+ "\1"/xs,
-'did not create two relationships with the same name';
+            qr{
+                \n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
+                \s+ "(\w+?)"
+                .*?
+                \n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
+                \s+ "\1"
+            }xs,
+            'did not create two relationships with the same name';
 
         unlike slurp_file $conn->_loader->get_dump_filename($class8),
-qr/\n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
-    \s+ "(\w+?)"
-    .*?
-   \n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
-    \s+ "\1"/xs,
-'did not create two relationships with the same name';
+            qr{
+                \n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
+                \s+ "(\w+?)"
+                .*?
+                \n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
+                \s+ "\1"
+            }xs,
+            'did not create two relationships with the same name';
 
         # check naming of ambiguous relationships
         my $rel_info = $class6->relationship_info('lovely_loader_test7') || {};
@@ -1079,7 +1087,7 @@ qr/\n__PACKAGE__->(?:belongs_to|has_many|might_have|has_one|many_to_many)\(
 
         # test outer join for nullable referring columns:
         is $class32->column_info('rel2')->{is_nullable}, 1,
-          'is_nullable detection';
+            'is_nullable detection';
 
         ok($class32->column_info('rel1')->{is_foreign_key}, 'Foreign key detected');
         ok($class32->column_info('rel2')->{is_foreign_key}, 'Foreign key detected');
@@ -1324,8 +1332,8 @@ EOF
             my $obj30 = try { $rsobj30->find(123) } || $rsobj30->search({ id => 123 })->single;
             isa_ok( $obj30->loader_test2, $class2);
 
-            ok($rsobj30->result_source->column_info('loader_test2')->{is_foreign_key},
-               'Foreign key detected');
+            ok $rsobj30->result_source->column_info('loader_test2')->{is_foreign_key},
+                'Foreign key detected';
         }
 
         $conn->storage->disconnect; # for Firebird
@@ -1355,10 +1363,10 @@ TODO: {
 
     ok eval {
         my %opts = (
-          naming         => 'current',
-          constraint     => $self->CONSTRAINT,
-          dump_directory => DUMP_DIR,
-          debug          => ($ENV{SCHEMA_LOADER_TESTS_DEBUG}||0)
+            naming         => 'current',
+            constraint     => $self->CONSTRAINT,
+            dump_directory => DUMP_DIR,
+            debug          => ($ENV{SCHEMA_LOADER_TESTS_DEBUG}||0)
         );
 
         my $guard = $conn->txn_scope_guard;
@@ -1576,7 +1584,7 @@ sub create {
         q{ INSERT INTO loader_test1s (dat) VALUES('baz') },
 
         # also test method collision
-        # crumb_crisp_coating is for col_accessor_map tests
+        # crumb_crisp_coating and sticky_filling are for col_accessor_map tests
         qq{
             CREATE TABLE loader_test2 (
                 id $self->{auto_inc_pk},
@@ -1591,6 +1599,7 @@ sub create {
                 test_role_method INTEGER $self->{null},
                 test_role_for_map_method INTEGER $self->{null},
                 crumb_crisp_coating VARCHAR(32) $self->{null},
+                sticky_filling VARCHAR(32) $self->{null},
                 UNIQUE (dat2, dat)
             ) $self->{innodb}
         },
@@ -1871,7 +1880,7 @@ sub create {
         q{ INSERT INTO loader_test22 (parent, child) VALUES (11,13)},
         q{ INSERT INTO loader_test22 (parent, child) VALUES (13,17)},
 
-	qq{
+        qq{
             CREATE TABLE loader_test25 (
                 id1 INTEGER NOT NULL,
                 id2 INTEGER NOT NULL,
@@ -2439,7 +2448,7 @@ sub rescan_without_warnings {
 }
 
 sub test_col_accessor_map {
-    my ( $column_name, $default_name, $context ) = @_;
+    my ( $column_name, $default_name, $context, $default_map ) = @_;
     if( lc($column_name) eq 'crumb_crisp_coating' ) {
 
         is( $default_name, 'crumb_crisp_coating', 'col_accessor_map was passed the default name' );
@@ -2448,15 +2457,22 @@ sub test_col_accessor_map {
 
         return 'trivet';
     } else {
-        return $default_name;
+        return $default_map->({
+            LOADER_TEST2 => {
+                sticky_filling => 'goo',
+            },
+            loader_test2 => {
+                sticky_filling => 'goo',
+            },
+        });
     }
 }
 
 sub DESTROY {
     my $self = shift;
     unless ($ENV{SCHEMA_LOADER_TESTS_NOCLEANUP}) {
-      $self->drop_tables if $self->{_created};
-      rmtree DUMP_DIR
+        $self->drop_tables if $self->{_created};
+        rmtree DUMP_DIR
     }
 }
 

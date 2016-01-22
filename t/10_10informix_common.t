@@ -1,10 +1,12 @@
+use DBIx::Class::Schema::Loader::Optional::Dependencies
+    -skip_all_without => 'test_rdbms_informix';
+
 use strict;
 use warnings;
 use Test::More;
 use Test::Exception;
 use Try::Tiny;
 use File::Path 'rmtree';
-use DBIx::Class::Optional::Dependencies;
 use DBIx::Class::Schema::Loader 'make_schema_at';
 use DBIx::Class::Schema::Loader::Utils 'split_name';
 use String::ToIdentifier::EN::Unicode 'to_identifier';
@@ -28,7 +30,7 @@ my $password = $ENV{DBICTEST_INFORMIX_PASS} || '';
 
 my ($schema, $extra_schema); # for cleanup in END for extra tests
 
-my $tester = dbixcsl_common_tests->new(
+dbixcsl_common_tests->new(
     vendor         => 'Informix',
     auto_inc_pk    => 'serial primary key',
     null           => '',
@@ -64,9 +66,9 @@ my $tester = dbixcsl_common_tests->new(
         numeric            => { data_type => 'numeric' },
         decimal            => { data_type => 'numeric' },
         dec                => { data_type => 'numeric' },
-	'numeric(6,3)'     => { data_type => 'numeric', size => [6,3] },
-	'decimal(6,3)'     => { data_type => 'numeric', size => [6,3] },
-	'dec(6,3)'         => { data_type => 'numeric', size => [6,3] },
+        'numeric(6,3)'     => { data_type => 'numeric', size => [6,3] },
+        'decimal(6,3)'     => { data_type => 'numeric', size => [6,3] },
+        'dec(6,3)'         => { data_type => 'numeric', size => [6,3] },
 
         # Boolean Type
         # XXX this should map to 'boolean'
@@ -207,7 +209,7 @@ EOF
                             push @warns, $_[0] unless $_[0] =~ /\bcollides\b/
                                 || $_[0] =~ /unreferencable/;
                         };
-     
+
                         make_schema_at(
                             'InformixMultiDatabase',
                             {
@@ -331,17 +333,7 @@ EOF
             }
         },
     },
-);
-
-if( !$dsn ) {
-    $tester->skip_tests('You need to set the DBICTEST_INFORMIX_DSN, _USER, and _PASS environment variables');
-}
-elsif (!DBIx::Class::Optional::Dependencies->req_ok_for ('rdbms_informix')) {
-    $tester->skip_tests('You need to install ' . DBIx::Class::Optional::Dependencies->req_missing_for ('rdbms_informix'));
-}
-else {
-    $tester->run_tests();
-}
+)->run_tests();
 
 sub db_name {
     my $schema = shift;
@@ -372,7 +364,7 @@ END {
         }
 
         if (my $dbh1 = try { $schema->storage->dbh }) {
-            
+
             try {
                 $dbh1->do('DROP TABLE informix_loader_test5');
                 $dbh1->do('DROP TABLE informix_loader_test4');

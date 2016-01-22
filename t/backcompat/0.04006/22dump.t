@@ -1,12 +1,13 @@
+use DBIx::Class::Schema::Loader::Optional::Dependencies
+    -skip_all_without => 'test_backcompat';
+
 use strict;
+use warnings;
 use Test::More;
 use lib qw(t/backcompat/0.04006/lib);
 use File::Path;
 use make_dbictest_db;
 use dbixcsl_test_dir qw/$tdir/;
-
-plan skip_all => 'set SCHEMA_LOADER_TESTS_BACKCOMPAT to enable these tests'
-    unless $ENV{SCHEMA_LOADER_TESTS_BACKCOMPAT};
 
 my $dump_path = "$tdir/dump";
 
@@ -42,23 +43,23 @@ ok(!$@, 'no death with dump_directory set') or diag "Dump failed: $@";
 DBICTest::Schema::1->_loader_invoked(undef);
 
 SKIP: {
-  my @warnings_regexes = (
-      qr|Dumping manual schema|,
-      qr|Schema dump completed|,
-  );
+    my @warnings_regexes = (
+        qr|Dumping manual schema|,
+        qr|Schema dump completed|,
+    );
 
-  skip "ActiveState perl produces additional warnings", scalar @warnings_regexes
-    if ($^O eq 'MSWin32');
+    skip "ActiveState perl produces additional warnings", scalar @warnings_regexes
+        if ($^O eq 'MSWin32');
 
-  my @warn_output;
-  {
-      local $SIG{__WARN__} = sub { push(@warn_output, @_) };
-      DBICTest::Schema::1->connect($make_dbictest_db::dsn);
-  }
+    my @warn_output;
+    {
+        local $SIG{__WARN__} = sub { push(@warn_output, @_) };
+        DBICTest::Schema::1->connect($make_dbictest_db::dsn);
+    }
 
-  like(shift @warn_output, $_) foreach (@warnings_regexes);
+    like(shift @warn_output, $_) foreach (@warnings_regexes);
 
-  rmtree($dump_path, 1, 1);
+    rmtree($dump_path, 1, 1);
 }
 
 eval { DBICTest::Schema::2->connect($make_dbictest_db::dsn) };

@@ -1,4 +1,8 @@
+use DBIx::Class::Schema::Loader::Optional::Dependencies
+    -skip_all_without => 'test_backcompat';
+
 use strict;
+use warnings;
 use Test::More;
 use lib qw(t/backcompat/0.04006/lib);
 use File::Path;
@@ -7,9 +11,6 @@ use dbixcsl_test_dir qw/$tdir/;
 use Class::Unload ();
 
 require DBIx::Class::Schema::Loader;
-
-plan skip_all => 'set SCHEMA_LOADER_TESTS_BACKCOMPAT to enable these tests'
-    unless $ENV{SCHEMA_LOADER_TESTS_BACKCOMPAT};
 
 my $DUMP_PATH = "$tdir/dump";
 
@@ -45,7 +46,7 @@ sub do_dump_test {
     my $file_regexes = $tdata{regexes};
     my $file_neg_regexes = $tdata{neg_regexes} || {};
     my $schema_regexes = delete $file_regexes->{schema};
-    
+
     my $schema_path = $DUMP_PATH . '/' . $schema_class;
     $schema_path =~ s{::}{/}g;
     dump_file_like($schema_path . '.pm', @$schema_regexes);

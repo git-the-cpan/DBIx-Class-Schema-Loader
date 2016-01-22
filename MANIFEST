@@ -1,6 +1,7 @@
 Changes
 inc/Module/AutoInstall.pm
 inc/Module/Install.pm
+inc/Module/Install/AuthorTests.pm
 inc/Module/Install/AutoInstall.pm
 inc/Module/Install/Base.pm
 inc/Module/Install/Can.pm
@@ -14,6 +15,7 @@ inc/Module/Install/Win32.pm
 inc/Module/Install/WriteAll.pm
 lib/DBIx/Class/Schema/Loader.pm
 lib/DBIx/Class/Schema/Loader/Base.pm
+lib/DBIx/Class/Schema/Loader/Column.pm
 lib/DBIx/Class/Schema/Loader/DBI.pm
 lib/DBIx/Class/Schema/Loader/DBI/ADO.pm
 lib/DBIx/Class/Schema/Loader/DBI/ADO/Microsoft_SQL_Server.pm
@@ -59,7 +61,6 @@ META.yml
 README
 script/dbicdump
 t/01use.t
-t/02pod.t
 t/10_01sqlite_common.t
 t/10_02mysql_common.t
 t/10_03pg_common.t
@@ -144,3 +145,6 @@ t/lib/TestRole2.pm
 t/lib/TestRoleForMap.pm
 t/lib/TestSchemaBaseClass.pm
 t/lib/TestSchemaComponentFQN.pm
+xt/pod_validity.t
+xt/strictures.t
+xt/whitespace.t

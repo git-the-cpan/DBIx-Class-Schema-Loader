@@ -7,14 +7,14 @@ use inc::Module::Install 1.00;
 use Getopt::Long();
 
 my $getopt = Getopt::Long::Parser->new(
-  config => [qw/gnu_getopt bundling_override no_ignore_case pass_through/]
+    config => [qw/gnu_getopt bundling_override no_ignore_case pass_through/]
 );
 my $args = {
-  skip_author_deps => undef,
+    skip_author_deps => undef,
 };
 $getopt->getoptions($args, 'skip_author_deps');
 if (@ARGV) {
-  warn "\nIgnoring unrecognized option(s): @ARGV\n\n";
+    warn "\nIgnoring unrecognized option(s): @ARGV\n\n";
 }
 
 use FindBin;
@@ -85,16 +85,23 @@ EOF
 
 if ($Module::Install::AUTHOR && ! $args->{skip_author_deps}) {
     eval { require Module::Install::ReadmeFromPod }
-      or die "\nYou need Module::Install::ReadmeFromPod installed to run this Makefile.PL in author mode:\n\n$@\n";
+        or die "\nYou need Module::Install::ReadmeFromPod installed to run this Makefile.PL in author mode:\n\n$@\n";
 
     warn "\n*** AUTHOR MODE: some optional dependencies converted to hard requires.\n\n";
 
     require DBIx::Class::Schema::Loader::Optional::Dependencies;
 
-    test_requires map %$_, values %{ DBIx::Class::Schema::Loader::Optional::Dependencies->req_group_list };
+    test_requires %{DBIx::Class::Schema::Loader::Optional::Dependencies
+        ->modreq_list_for([
+            grep { !/rdbms/ }
+            keys %{ DBIx::Class::Schema::Loader::Optional::Dependencies
+                ->req_group_list
+            }
+        ])};
 
-    DBIx::Class::Schema::Loader::Optional::Dependencies->_gen_pod;
+    DBIx::Class::Schema::Loader::Optional::Dependencies->_gen_pod(undef, 'lib');
 
+    author_tests( 'xt' );
     readme_from( 'lib/DBIx/Class/Schema/Loader.pm' );
     realclean_files( qw[README MANIFEST lib/DBIx/Class/Schema/Loader/Optional/Dependencies.pod] );
 }
