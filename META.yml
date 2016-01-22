@@ -3,31 +3,16 @@ abstract: 'Create a DBIx::Class::Schema based on a database'
 author:
   - 'Caelum: Rafael Kitover <rkitover@cpan.org>'
 build_requires:
-  Config::Any: 0
-  Config::General: 0
   DBD::SQLite: '1.29'
   DBIx::Class::IntrospectableM2M: 0
   ExtUtils::MakeMaker: 6.59
   File::Path: '2.07'
   File::Temp: '0.16'
-  Math::Base36: '0.07'
-  Math::BigInt: '1.80'
-  Moose: '1.12'
-  MooseX::MarkAsMethods: '0.13'
-  MooseX::NonMoose: '0.25'
-  Pod::Coverage: '0.20'
-  Pod::Simple: '3.22'
   Test::Deep: '0.107'
   Test::Differences: '0.60'
-  Test::EOL: '1.0'
   Test::Exception: '0.31'
   Test::More: '0.94'
-  Test::NoTabs: '0.9'
-  Test::Pod: '1.14'
-  Test::Pod::Coverage: '1.08'
-  Test::Strict: '0.20'
   Test::Warn: '0.21'
-  namespace::autoclean: '0.09'
 configure_requires:
   ExtUtils::MakeMaker: 6.59
 distribution_type: module
@@ -71,4 +56,4 @@ resources:
   MailingList: http://lists.scsys.co.uk/cgi-bin/mailman/listinfo/dbix-class
   license: http://dev.perl.org/licenses/
   repository: https://github.com/dbsrgits/dbix-class-schema-loader
-version: '0.07044'
+version: '0.07045'
